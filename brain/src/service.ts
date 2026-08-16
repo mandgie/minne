@@ -1,5 +1,12 @@
 import { join } from "node:path";
-import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import type {
+  Api,
+  AuthEvent,
+  AuthInteraction,
+  AuthPrompt,
+  Model,
+} from "@earendil-works/pi-ai";
 import { loadConfig, saveConfig, type MinneConfig } from "./config";
 import { FileCredentialStore } from "./credentials";
 import {
@@ -10,6 +17,7 @@ import {
   type AuthReplyRequest,
   type BrainEvent,
   type BrainRequest,
+  type ChatRequest,
   type ConfigureRequest,
   type LoginRequest,
   type LogoutRequest,
@@ -21,6 +29,15 @@ interface PromptWaiter {
   resolve(value: string): void;
   reject(err: Error): void;
 }
+
+/**
+ * System prompt for the chat agent. Memory tools arrive in a later story, so
+ * the prompt promises nothing the brain can't do yet.
+ */
+const MINNE_SYSTEM_PROMPT = `You are Minne, a local memory companion that lives in the macOS menu bar. \
+You chat with the user about whatever they bring up. Your memory of their work \
+(a local markdown wiki) is not wired up yet, so answer from this conversation \
+alone and say so if asked about past activity. Be concise and direct.`;
 
 export interface MinneBrainDeps {
   send: (event: BrainEvent) => void;
@@ -47,8 +64,13 @@ export class MinneBrain {
 
   /** pending auth prompts by promptId */
   private prompts = new Map<string, PromptWaiter>();
-  /** in-flight abortable requests (logins) by request id */
+  /** in-flight abortable requests (logins, chats) by request id */
   private aborters = new Map<string, AbortController>();
+
+  /** one chat session, kept in memory across `chat` requests */
+  private chatAgent: Agent | null = null;
+  /** id of the chat request currently streaming, if any */
+  private activeChatId: string | null = null;
 
   constructor(deps: MinneBrainDeps) {
     this.send = deps.send;
@@ -92,6 +114,8 @@ export class MinneBrain {
       }
       case "status":
         return this.handleStatus(request.id);
+      case "chat":
+        return this.handleChat(request);
       case "login":
         return this.handleLogin(request);
       case "auth_reply":
@@ -109,6 +133,120 @@ export class MinneBrain {
       default:
         this.send(errorEvent(request.id, "unimplemented", `"${request.type}" is not implemented yet`));
     }
+  }
+
+  // ---- chat ----
+
+  /**
+   * Runs one user turn through a pi-agent-core Agent. Deltas stream out as
+   * `text_delta` events on the request id; the terminal event is `done` with
+   * `{ model, stopReason, usage?, aborted? }` (aborted chats keep their
+   * partial text in the session) or a typed error (`busy`,
+   * `not_authenticated`, `provider_error`). Errored exchanges are rolled out
+   * of the session so a retry starts clean.
+   */
+  private async handleChat(request: ChatRequest): Promise<void> {
+    const { id } = request;
+    if (this.activeChatId !== null) {
+      this.send(errorEvent(id, "busy", "a chat is already streaming; abort it first"));
+      return;
+    }
+
+    const providerId = this.config.provider;
+    let check;
+    try {
+      check = await this.registry.models.checkAuth(providerId);
+    } catch (err) {
+      this.log(`checkAuth(${providerId}) failed:`, err);
+    }
+    if (check === undefined) {
+      this.send(
+        errorEvent(
+          id,
+          "not_authenticated",
+          `provider "${providerId}" is not authenticated — sign in first`,
+        ),
+      );
+      return;
+    }
+    const modelId = this.selectedModel();
+    const model = modelId ? this.registry.models.getModel(providerId, modelId) : undefined;
+    if (!model) {
+      this.send(
+        errorEvent(
+          id,
+          "invalid_request",
+          `model "${modelId ?? "(none)"}" not found for provider "${providerId}"`,
+        ),
+      );
+      return;
+    }
+
+    const agent = this.ensureChatAgent(model);
+    if (request.newChat) agent.reset();
+    // Provider/model selection may have changed since the session started.
+    agent.state.model = model;
+
+    const aborter = new AbortController();
+    aborter.signal.addEventListener("abort", () => agent.abort(), { once: true });
+    this.aborters.set(id, aborter);
+    this.activeChatId = id;
+    const transcriptLength = agent.state.messages.length;
+    try {
+      await agent.prompt(request.message);
+      const last = agent.state.messages.at(-1);
+      if (last === undefined || !("role" in last) || last.role !== "assistant") {
+        this.send(errorEvent(id, "internal", "agent produced no assistant message"));
+        return;
+      }
+      if (last.stopReason === "error") {
+        // Drop the failed exchange (user turn + error message) from the session.
+        agent.state.messages = agent.state.messages.slice(0, transcriptLength);
+        this.send(errorEvent(id, "provider_error", last.errorMessage ?? "provider request failed"));
+        return;
+      }
+      const aborted = last.stopReason === "aborted";
+      this.log(`chat ${id}: ${last.model} stopReason=${last.stopReason}`);
+      this.send(
+        doneEvent(id, {
+          model: last.model,
+          stopReason: last.stopReason,
+          usage: {
+            input: last.usage.input,
+            output: last.usage.output,
+            totalTokens: last.usage.totalTokens,
+          },
+          ...(aborted ? { aborted: true } : {}),
+        }),
+      );
+    } catch (err) {
+      // agent.prompt should encode failures in the transcript, but never let
+      // a surprise reject crash the brain.
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`chat ${id} failed:`, err);
+      this.send(errorEvent(id, "provider_error", message));
+    } finally {
+      this.activeChatId = null;
+      this.aborters.delete(id);
+    }
+  }
+
+  /** Lazily creates the session Agent and bridges its deltas to the protocol. */
+  private ensureChatAgent(model: Model<Api>): Agent {
+    if (this.chatAgent) return this.chatAgent;
+    const agent = new Agent({
+      initialState: { systemPrompt: MINNE_SYSTEM_PROMPT, model },
+      streamFn: this.registry.models.streamSimple.bind(this.registry.models),
+    });
+    agent.subscribe((event) => {
+      if (event.type !== "message_update" || this.activeChatId === null) return;
+      const streamEvent = event.assistantMessageEvent;
+      if (streamEvent.type === "text_delta") {
+        this.send({ type: "text_delta", id: this.activeChatId, delta: streamEvent.delta });
+      }
+    });
+    this.chatAgent = agent;
+    return agent;
   }
 
   // ---- login ----

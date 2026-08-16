@@ -62,6 +62,25 @@ final class BrainProtocolTests: XCTestCase {
         XCTAssertNil(options)
     }
 
+    func testChatDoneResultDecoding() throws {
+        // Terminal event of an aborted chat, as emitted by the US-004 brain.
+        let json = """
+            {"type":"done","id":"c1","result":{"model":"mock-model","stopReason":"aborted",\
+            "aborted":true,"usage":{"input":3,"output":12,"totalTokens":15}}}
+            """
+        let event = try JSONDecoder().decode(BrainEvent.self, from: Data(json.utf8))
+        guard case let .done(id, result) = event else {
+            return XCTFail("expected done, got \(event)")
+        }
+        XCTAssertEqual(id, "c1")
+        let object = try XCTUnwrap(result?.objectValue)
+        XCTAssertEqual(object["model"]?.stringValue, "mock-model")
+        XCTAssertEqual(object["stopReason"]?.stringValue, "aborted")
+        XCTAssertEqual(object["aborted"], .bool(true))
+        let usage = try XCTUnwrap(object["usage"]?.objectValue)
+        XCTAssertEqual(usage["totalTokens"]?.intValue, 15)
+    }
+
     func testAuthPromptSelectDecoding() throws {
         let json = """
             {"type":"auth_prompt","id":"l1","promptId":"l1:2","prompt":"Pick one",\

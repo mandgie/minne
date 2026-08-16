@@ -68,7 +68,8 @@ describe("brain subprocess", () => {
     const { events, exitCode } = await runBrain([
       "this is not json",
       { type: "frobnicate", id: "u1" },
-      { type: "chat", id: "c1", message: "hi" },
+      // ingest is still a stub; chat is live as of US-004 and would need auth.
+      { type: "ingest", id: "c1" },
       { type: "status", id: "s1" },
     ]);
     expect(exitCode).toBe(0);

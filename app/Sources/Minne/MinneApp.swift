@@ -34,6 +34,11 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             title: "Sign in to Claude…", action: #selector(signInAnthropic), keyEquivalent: "")
         signIn.target = self
         menu.addItem(signIn)
+        // Temporary debug entry until US-013 builds the real chat UI.
+        let testChat = NSMenuItem(
+            title: "Test chat", action: #selector(testChat), keyEquivalent: "")
+        testChat.target = self
+        menu.addItem(testChat)
         menu.addItem(.separator())
         menu.addItem(
             NSMenuItem(
@@ -95,9 +100,31 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Sends a canned chat prompt and logs the streamed reply (US-013 builds real UI).
+    @objc private func testChat() {
+        guard let client = brainClient else {
+            BrainClient.log("test chat: brain not connected")
+            return
+        }
+        Task {
+            do {
+                let result = try await client.request(
+                    .chat(
+                        id: UUID().uuidString,
+                        message: "Say hello in one short sentence.",
+                        newChat: true))
+                BrainClient.log("test chat done: \(String(describing: result))")
+            } catch {
+                BrainClient.log("test chat failed: \(error)")
+            }
+        }
+    }
+
     private func handleBrainEvent(_ event: BrainEvent) async {
         guard let client = brainClient else { return }
         switch event {
+        case .textDelta(let id, let delta):
+            BrainClient.log("chat \(id) delta: \(delta)")
         case .authURL(_, let url):
             BrainClient.log("auth: opening \(url)")
             if let parsed = URL(string: url) { NSWorkspace.shared.open(parsed) }

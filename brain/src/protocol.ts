@@ -16,6 +16,15 @@ export interface HelloRequest {
   client?: string;
 }
 
+/**
+ * One user turn against the in-memory chat session. The brain streams
+ * `text_delta` events carrying this request's id, then terminates with `done`
+ * whose result is `{ model, stopReason, usage?: {input, output, totalTokens},
+ * aborted?: true }`, or a typed `error` (`busy` while another chat streams,
+ * `not_authenticated` when the selected provider has no credentials,
+ * `provider_error` for network/API failures). `newChat: true` clears the
+ * session before this message.
+ */
 export interface ChatRequest {
   type: "chat";
   id: string;
@@ -23,6 +32,12 @@ export interface ChatRequest {
   newChat?: boolean;
 }
 
+/**
+ * Cancels the in-flight request `targetId`. An aborted *chat* still terminates
+ * with `done` — carrying `aborted: true` — because the partial text already
+ * streamed is valid content. An aborted *login* terminates with an `error` of
+ * code "aborted" (nothing useful was produced).
+ */
 export interface AbortRequest {
   type: "abort";
   id: string;
@@ -152,6 +167,12 @@ export type ErrorCode =
   | "unimplemented"
   | "auth_failed"
   | "aborted"
+  /** a chat is already streaming; abort it before sending another */
+  | "busy"
+  /** the selected provider has no credentials — run `login` first */
+  | "not_authenticated"
+  /** the provider request failed (network, rate limit, API error) */
+  | "provider_error"
   | "internal";
 
 export interface ErrorEvent {

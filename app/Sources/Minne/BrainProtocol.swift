@@ -66,7 +66,14 @@ enum JSONValue: Codable, Sendable, Equatable {
 /// Requests the app sends to the brain. `id` correlates the brain's events.
 enum BrainRequest: Encodable, Sendable {
     case hello(id: String, protocolVersion: Int, client: String)
+    /// Streams `textDelta` events on this id, then `done` whose result is
+    /// `{model, stopReason, usage?: {input, output, totalTokens}, aborted?: true}`,
+    /// or a typed error (code "busy", "not_authenticated", or "provider_error").
+    /// `newChat: true` clears the brain's in-memory session first.
     case chat(id: String, message: String, newChat: Bool?)
+    /// Cancels the in-flight request `targetId`. An aborted chat still ends
+    /// with `done` (result carries `aborted: true`; partial text stands);
+    /// an aborted login ends with an error of code "aborted".
     case abort(id: String, targetId: String)
     /// `method` is "oauth" or "api_key"; nil lets the brain pick the provider default.
     case login(id: String, provider: String, method: String?)

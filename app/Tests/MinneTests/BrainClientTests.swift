@@ -41,8 +41,9 @@ final class BrainClientTests: XCTestCase {
         let client = try makeClient()
         _ = try await client.start()
         do {
-            _ = try await client.request(.chat(id: UUID().uuidString, message: "hi", newChat: nil))
-            XCTFail("chat should not be implemented yet")
+            // ingest is still a stub; chat is live as of US-004 and would need auth.
+            _ = try await client.request(.ingest(id: UUID().uuidString))
+            XCTFail("ingest should not be implemented yet")
         } catch let BrainClientError.brain(code, _) {
             XCTAssertEqual(code, "unimplemented")
         }
