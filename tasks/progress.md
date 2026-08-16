@@ -7,10 +7,10 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 
 ## Phase 0 — Scaffolding
 - [x] US-001 Repo scaffolding and build pipeline
-- [~] US-002 Stdio JSON-lines protocol
+- [x] US-002 Stdio JSON-lines protocol
 
 ## Phase 1 — Brain
-- [ ] US-003 pi providers and OAuth login flow  ← needs one human browser sign-in to verify
+- [~] US-003 pi providers and OAuth login flow  ← needs one human browser sign-in to verify
 - [ ] US-004 Streaming chat through the agent loop
 
 ## Phase 2 — Capture
@@ -38,3 +38,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 ## Log
 <!-- orchestrator appends one line per story: date · story · agent · verification result -->
 - 2026-08-16 · US-001 · minne-us001 · verified green (swift build, typecheck, 1 test, build.sh bundle) · 3ff5499
+- 2026-08-16 · US-002 · minne-us002 · verified green (13 bun tests, 2 swift tests, live restart-backoff check by agent) · bbe3f8b
