@@ -30,10 +30,34 @@ export interface AbortRequest {
   targetId: string;
 }
 
+export type LoginMethod = "oauth" | "api_key";
+
 export interface LoginRequest {
   type: "login";
   id: string;
   provider: string;
+  /** Defaults to the provider's preferred method (oauth when available). */
+  method?: LoginMethod;
+}
+
+/** Answers an `auth_prompt` event emitted by an in-flight `login`. */
+export interface AuthReplyRequest {
+  type: "auth_reply";
+  id: string;
+  /** id of the login request whose prompt this answers */
+  targetId: string;
+  promptId: string;
+  value?: string;
+  cancel?: boolean;
+}
+
+/** Updates selected provider/model and the local-server base URL; persisted. */
+export interface ConfigureRequest {
+  type: "configure";
+  id: string;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
 }
 
 export interface LogoutRequest {
@@ -57,6 +81,8 @@ export type BrainRequest =
   | ChatRequest
   | AbortRequest
   | LoginRequest
+  | AuthReplyRequest
+  | ConfigureRequest
   | LogoutRequest
   | IngestRequest
   | StatusRequest;
@@ -82,10 +108,28 @@ export interface AuthUrlEvent {
   url: string;
 }
 
+export type AuthPromptType = "text" | "secret" | "select" | "manual_code";
+
+export interface AuthPromptOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+/**
+ * A login flow needs user input. The app answers with an `auth_reply` request
+ * carrying the same `promptId`; the login stays in flight until then.
+ */
 export interface AuthPromptEvent {
   type: "auth_prompt";
+  /** id of the login request that raised the prompt */
   id: string;
+  promptId: string;
   prompt: string;
+  promptType: AuthPromptType;
+  placeholder?: string;
+  /** present for promptType "select"; reply value is the chosen option id */
+  options?: AuthPromptOption[];
 }
 
 export interface ProgressEvent {
@@ -106,6 +150,8 @@ export type ErrorCode =
   | "invalid_request"
   | "unsupported_version"
   | "unimplemented"
+  | "auth_failed"
+  | "aborted"
   | "internal";
 
 export interface ErrorEvent {
@@ -219,7 +265,51 @@ export function decodeRequest(line: string): DecodeResult {
       if (typeof provider !== "string" || provider === "") {
         return fail(id, "invalid_request", "login requires a non-empty string `provider`");
       }
-      return ok({ type: "login", id, provider });
+      const method = parsed["method"];
+      if (method !== undefined && method !== "oauth" && method !== "api_key") {
+        return fail(id, "invalid_request", 'login `method` must be "oauth" or "api_key"');
+      }
+      return ok(
+        method === undefined ? { type: "login", id, provider } : { type: "login", id, provider, method },
+      );
+    }
+    case "auth_reply": {
+      const targetId = parsed["targetId"];
+      if (typeof targetId !== "string" || targetId === "") {
+        return fail(id, "invalid_request", "auth_reply requires a non-empty string `targetId`");
+      }
+      const promptId = parsed["promptId"];
+      if (typeof promptId !== "string" || promptId === "") {
+        return fail(id, "invalid_request", "auth_reply requires a non-empty string `promptId`");
+      }
+      const value = parsed["value"];
+      if (value !== undefined && typeof value !== "string") {
+        return fail(id, "invalid_request", "auth_reply `value` must be a string when present");
+      }
+      const cancel = parsed["cancel"];
+      if (cancel !== undefined && typeof cancel !== "boolean") {
+        return fail(id, "invalid_request", "auth_reply `cancel` must be a boolean when present");
+      }
+      if (value === undefined && cancel !== true) {
+        return fail(id, "invalid_request", "auth_reply requires `value` unless `cancel` is true");
+      }
+      const request: AuthReplyRequest = { type: "auth_reply", id, targetId, promptId };
+      if (value !== undefined) request.value = value;
+      if (cancel !== undefined) request.cancel = cancel;
+      return ok(request);
+    }
+    case "configure": {
+      for (const field of ["provider", "model", "baseUrl"] as const) {
+        const value = parsed[field];
+        if (value !== undefined && (typeof value !== "string" || value === "")) {
+          return fail(id, "invalid_request", `configure \`${field}\` must be a non-empty string when present`);
+        }
+      }
+      const request: ConfigureRequest = { type: "configure", id };
+      if (parsed["provider"] !== undefined) request.provider = parsed["provider"] as string;
+      if (parsed["model"] !== undefined) request.model = parsed["model"] as string;
+      if (parsed["baseUrl"] !== undefined) request.baseUrl = parsed["baseUrl"] as string;
+      return ok(request);
     }
     case "logout": {
       const provider = parsed["provider"];

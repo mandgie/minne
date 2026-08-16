@@ -1,0 +1,84 @@
+import XCTest
+
+@testable import Minne
+
+/// Codable checks for the messages added in US-003; keeps the Swift mirror
+/// honest against brain/src/protocol.ts.
+final class BrainProtocolTests: XCTestCase {
+    private func encodeToJSON(_ request: BrainRequest) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(request)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    func testLoginEncodesOptionalMethod() throws {
+        let bare = try encodeToJSON(.login(id: "l1", provider: "anthropic", method: nil))
+        XCTAssertEqual(bare["type"] as? String, "login")
+        XCTAssertEqual(bare["provider"] as? String, "anthropic")
+        XCTAssertNil(bare["method"])
+
+        let keyed = try encodeToJSON(.login(id: "l2", provider: "openai", method: "api_key"))
+        XCTAssertEqual(keyed["method"] as? String, "api_key")
+    }
+
+    func testAuthReplyEncoding() throws {
+        let reply = try encodeToJSON(
+            .authReply(id: "r1", targetId: "l1", promptId: "l1:1", value: "424242", cancel: nil))
+        XCTAssertEqual(reply["type"] as? String, "auth_reply")
+        XCTAssertEqual(reply["targetId"] as? String, "l1")
+        XCTAssertEqual(reply["promptId"] as? String, "l1:1")
+        XCTAssertEqual(reply["value"] as? String, "424242")
+        XCTAssertNil(reply["cancel"])
+
+        let cancel = try encodeToJSON(
+            .authReply(id: "r2", targetId: "l1", promptId: "l1:1", value: nil, cancel: true))
+        XCTAssertEqual(cancel["cancel"] as? Bool, true)
+        XCTAssertNil(cancel["value"])
+    }
+
+    func testConfigureEncoding() throws {
+        let configure = try encodeToJSON(
+            .configure(id: "c1", provider: "ollama", model: "qwen3", baseUrl: "http://localhost:9999/v1"))
+        XCTAssertEqual(configure["type"] as? String, "configure")
+        XCTAssertEqual(configure["provider"] as? String, "ollama")
+        XCTAssertEqual(configure["model"] as? String, "qwen3")
+        XCTAssertEqual(configure["baseUrl"] as? String, "http://localhost:9999/v1")
+    }
+
+    func testAuthPromptDecoding() throws {
+        let json = """
+            {"type":"auth_prompt","id":"l1","promptId":"l1:1","prompt":"Enter the code",\
+            "promptType":"manual_code","placeholder":"000000"}
+            """
+        let event = try JSONDecoder().decode(BrainEvent.self, from: Data(json.utf8))
+        guard case let .authPrompt(id, promptId, prompt, promptType, placeholder, options) = event
+        else {
+            return XCTFail("expected auth_prompt, got \(event)")
+        }
+        XCTAssertEqual(id, "l1")
+        XCTAssertEqual(promptId, "l1:1")
+        XCTAssertEqual(prompt, "Enter the code")
+        XCTAssertEqual(promptType, "manual_code")
+        XCTAssertEqual(placeholder, "000000")
+        XCTAssertNil(options)
+    }
+
+    func testAuthPromptSelectDecoding() throws {
+        let json = """
+            {"type":"auth_prompt","id":"l1","promptId":"l1:2","prompt":"Pick one",\
+            "promptType":"select","options":[{"id":"a","label":"Option A"},\
+            {"id":"b","label":"Option B","description":"the other one"}]}
+            """
+        let event = try JSONDecoder().decode(BrainEvent.self, from: Data(json.utf8))
+        guard case let .authPrompt(_, _, _, promptType, placeholder, options) = event else {
+            return XCTFail("expected auth_prompt, got \(event)")
+        }
+        XCTAssertEqual(promptType, "select")
+        XCTAssertNil(placeholder)
+        XCTAssertEqual(
+            options,
+            [
+                AuthPromptOption(id: "a", label: "Option A", description: nil),
+                AuthPromptOption(id: "b", label: "Option B", description: "the other one"),
+            ])
+    }
+}

@@ -68,7 +68,11 @@ enum BrainRequest: Encodable, Sendable {
     case hello(id: String, protocolVersion: Int, client: String)
     case chat(id: String, message: String, newChat: Bool?)
     case abort(id: String, targetId: String)
-    case login(id: String, provider: String)
+    /// `method` is "oauth" or "api_key"; nil lets the brain pick the provider default.
+    case login(id: String, provider: String, method: String?)
+    /// Answers an `auth_prompt` event raised by the login with id `targetId`.
+    case authReply(id: String, targetId: String, promptId: String, value: String?, cancel: Bool?)
+    case configure(id: String, provider: String?, model: String?, baseUrl: String?)
     case logout(id: String, provider: String?)
     case ingest(id: String)
     case status(id: String)
@@ -78,7 +82,9 @@ enum BrainRequest: Encodable, Sendable {
         case .hello(let id, _, _): return id
         case .chat(let id, _, _): return id
         case .abort(let id, _): return id
-        case .login(let id, _): return id
+        case .login(let id, _, _): return id
+        case .authReply(let id, _, _, _, _): return id
+        case .configure(let id, _, _, _): return id
         case .logout(let id, _): return id
         case .ingest(let id): return id
         case .status(let id): return id
@@ -87,6 +93,7 @@ enum BrainRequest: Encodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case type, id, protocolVersion, client, message, newChat, targetId, provider
+        case method, promptId, value, cancel, model, baseUrl
     }
 
     func encode(to encoder: Encoder) throws {
@@ -104,9 +111,21 @@ enum BrainRequest: Encodable, Sendable {
         case let .abort(_, targetId):
             try container.encode("abort", forKey: .type)
             try container.encode(targetId, forKey: .targetId)
-        case let .login(_, provider):
+        case let .login(_, provider, method):
             try container.encode("login", forKey: .type)
             try container.encode(provider, forKey: .provider)
+            try container.encodeIfPresent(method, forKey: .method)
+        case let .authReply(_, targetId, promptId, value, cancel):
+            try container.encode("auth_reply", forKey: .type)
+            try container.encode(targetId, forKey: .targetId)
+            try container.encode(promptId, forKey: .promptId)
+            try container.encodeIfPresent(value, forKey: .value)
+            try container.encodeIfPresent(cancel, forKey: .cancel)
+        case let .configure(_, provider, model, baseUrl):
+            try container.encode("configure", forKey: .type)
+            try container.encodeIfPresent(provider, forKey: .provider)
+            try container.encodeIfPresent(model, forKey: .model)
+            try container.encodeIfPresent(baseUrl, forKey: .baseUrl)
         case let .logout(_, provider):
             try container.encode("logout", forKey: .type)
             try container.encodeIfPresent(provider, forKey: .provider)
@@ -118,13 +137,24 @@ enum BrainRequest: Encodable, Sendable {
     }
 }
 
+/// One choice in a "select" auth prompt; the reply value is the chosen `id`.
+struct AuthPromptOption: Decodable, Sendable, Equatable {
+    let id: String
+    let label: String
+    let description: String?
+}
+
 /// Events the brain streams back. Terminal events (`done`/`error`) settle the
 /// request carrying the same `id`; the rest are intermediate.
 enum BrainEvent: Decodable, Sendable {
     case textDelta(id: String, delta: String)
     case toolCall(id: String, name: String, args: JSONValue)
     case authURL(id: String, url: String)
-    case authPrompt(id: String, prompt: String)
+    /// promptType: "text" | "secret" | "select" | "manual_code". Answer with
+    /// a `BrainRequest.authReply` carrying the same promptId.
+    case authPrompt(
+        id: String, promptId: String, prompt: String, promptType: String,
+        placeholder: String?, options: [AuthPromptOption]?)
     case progress(id: String, message: String, fraction: Double?)
     case done(id: String, result: JSONValue?)
     case error(id: String, code: String, message: String)
@@ -134,7 +164,7 @@ enum BrainEvent: Decodable, Sendable {
         case .textDelta(let id, _): return id
         case .toolCall(let id, _, _): return id
         case .authURL(let id, _): return id
-        case .authPrompt(let id, _): return id
+        case .authPrompt(let id, _, _, _, _, _): return id
         case .progress(let id, _, _): return id
         case .done(let id, _): return id
         case .error(let id, _, _): return id
@@ -150,6 +180,7 @@ enum BrainEvent: Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case type, id, delta, name, args, url, prompt, message, fraction, result, code
+        case promptId, promptType, placeholder, options
     }
 
     init(from decoder: Decoder) throws {
@@ -167,7 +198,13 @@ enum BrainEvent: Decodable, Sendable {
         case "auth_url":
             self = .authURL(id: id, url: try container.decode(String.self, forKey: .url))
         case "auth_prompt":
-            self = .authPrompt(id: id, prompt: try container.decode(String.self, forKey: .prompt))
+            self = .authPrompt(
+                id: id,
+                promptId: try container.decode(String.self, forKey: .promptId),
+                prompt: try container.decode(String.self, forKey: .prompt),
+                promptType: try container.decode(String.self, forKey: .promptType),
+                placeholder: try container.decodeIfPresent(String.self, forKey: .placeholder),
+                options: try container.decodeIfPresent([AuthPromptOption].self, forKey: .options))
         case "progress":
             self = .progress(
                 id: id,

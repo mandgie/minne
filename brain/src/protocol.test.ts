@@ -16,10 +16,16 @@ describe("decodeRequest", () => {
       { type: "chat", id: "4", message: "hi" },
       { type: "abort", id: "5", targetId: "3" },
       { type: "login", id: "6", provider: "anthropic" },
+      { type: "login", id: "6b", provider: "anthropic", method: "oauth" },
+      { type: "login", id: "6c", provider: "openai", method: "api_key" },
       { type: "logout", id: "7", provider: "anthropic" },
       { type: "logout", id: "8" },
       { type: "ingest", id: "9" },
       { type: "status", id: "10" },
+      { type: "auth_reply", id: "11", targetId: "6", promptId: "6:1", value: "code" },
+      { type: "auth_reply", id: "12", targetId: "6", promptId: "6:1", cancel: true },
+      { type: "configure", id: "13", provider: "ollama", model: "qwen3", baseUrl: "http://x/v1" },
+      { type: "configure", id: "14" },
     ];
     for (const message of valid) {
       const decoded = decodeRequest(JSON.stringify(message));
@@ -77,7 +83,14 @@ describe("decodeRequest", () => {
       '{"type":"abort","id":"a"}',
       '{"type":"abort","id":"a","targetId":""}',
       '{"type":"login","id":"a"}',
+      '{"type":"login","id":"a","provider":"p","method":"password"}',
       '{"type":"logout","id":"a","provider":3}',
+      '{"type":"auth_reply","id":"a","promptId":"p"}',
+      '{"type":"auth_reply","id":"a","targetId":"t","promptId":"p"}',
+      '{"type":"auth_reply","id":"a","targetId":"t","promptId":"p","cancel":false}',
+      '{"type":"auth_reply","id":"a","targetId":"t","promptId":"p","value":7}',
+      '{"type":"configure","id":"a","provider":""}',
+      '{"type":"configure","id":"a","model":3}',
     ];
     for (const line of bad) {
       const decoded = decodeRequest(line);
