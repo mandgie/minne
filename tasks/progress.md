@@ -10,8 +10,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-002 Stdio JSON-lines protocol
 
 ## Phase 1 — Brain
-- [~] US-003 pi providers and OAuth login flow  ← needs one human browser sign-in to verify
-- [ ] US-004 Streaming chat through the agent loop
+- [x] US-003 pi providers and OAuth login flow  (code verified; PENDING one human browser sign-in: scripts/dev.sh → menu-bar icon → "Sign in to Claude…")
+- [~] US-004 Streaming chat through the agent loop
 
 ## Phase 2 — Capture
 - [ ] US-005 Menu-bar app and sidecar supervision
@@ -39,3 +39,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 <!-- orchestrator appends one line per story: date · story · agent · verification result -->
 - 2026-08-16 · US-001 · minne-us001 · verified green (swift build, typecheck, 1 test, build.sh bundle) · 3ff5499
 - 2026-08-16 · US-002 · minne-us002 · verified green (13 bun tests, 2 swift tests, live restart-backoff check by agent) · bbe3f8b
+- 2026-08-16 · US-003 · minne-us003 · verified green (30 bun tests incl. mocked OAuth, 7 swift tests, compiled-bundle OAuth URL emission) · eaf64b6 · human browser sign-in still pending
