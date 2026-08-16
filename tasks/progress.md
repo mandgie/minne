@@ -6,8 +6,8 @@ orchestrator has verified it (build + tests green, acceptance criteria met, comm
 Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 
 ## Phase 0 — Scaffolding
-- [~] US-001 Repo scaffolding and build pipeline
-- [ ] US-002 Stdio JSON-lines protocol
+- [x] US-001 Repo scaffolding and build pipeline
+- [~] US-002 Stdio JSON-lines protocol
 
 ## Phase 1 — Brain
 - [ ] US-003 pi providers and OAuth login flow  ← needs one human browser sign-in to verify
@@ -37,3 +37,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 
 ## Log
 <!-- orchestrator appends one line per story: date · story · agent · verification result -->
+- 2026-08-16 · US-001 · minne-us001 · verified green (swift build, typecheck, 1 test, build.sh bundle) · 3ff5499
