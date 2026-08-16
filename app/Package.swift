@@ -5,6 +5,7 @@ let package = Package(
     name: "Minne",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "Minne")
+        .executableTarget(name: "Minne"),
+        .testTarget(name: "MinneTests", dependencies: ["Minne"])
     ]
 )

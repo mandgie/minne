@@ -1,0 +1,188 @@
+import Foundation
+
+/// Wire protocol shared with the brain over JSON-lines stdio.
+/// Mirrors brain/src/protocol.ts — keep the two in sync.
+enum BrainProtocol {
+    static let version = 1
+}
+
+/// Arbitrary JSON payload (e.g. `done.result`).
+enum JSONValue: Codable, Sendable, Equatable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let bool = try? container.decode(Bool.self) {
+            self = .bool(bool)
+        } else if let number = try? container.decode(Double.self) {
+            self = .number(number)
+        } else if let string = try? container.decode(String.self) {
+            self = .string(string)
+        } else if let array = try? container.decode([JSONValue].self) {
+            self = .array(array)
+        } else if let object = try? container.decode([String: JSONValue].self) {
+            self = .object(object)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container, debugDescription: "not a JSON value")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null: try container.encodeNil()
+        case .bool(let bool): try container.encode(bool)
+        case .number(let number): try container.encode(number)
+        case .string(let string): try container.encode(string)
+        case .array(let array): try container.encode(array)
+        case .object(let object): try container.encode(object)
+        }
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case .object(let object) = self { return object }
+        return nil
+    }
+
+    var stringValue: String? {
+        if case .string(let string) = self { return string }
+        return nil
+    }
+
+    var intValue: Int? {
+        if case .number(let number) = self, number == number.rounded() { return Int(number) }
+        return nil
+    }
+}
+
+/// Requests the app sends to the brain. `id` correlates the brain's events.
+enum BrainRequest: Encodable, Sendable {
+    case hello(id: String, protocolVersion: Int, client: String)
+    case chat(id: String, message: String, newChat: Bool?)
+    case abort(id: String, targetId: String)
+    case login(id: String, provider: String)
+    case logout(id: String, provider: String?)
+    case ingest(id: String)
+    case status(id: String)
+
+    var id: String {
+        switch self {
+        case .hello(let id, _, _): return id
+        case .chat(let id, _, _): return id
+        case .abort(let id, _): return id
+        case .login(let id, _): return id
+        case .logout(let id, _): return id
+        case .ingest(let id): return id
+        case .status(let id): return id
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, id, protocolVersion, client, message, newChat, targetId, provider
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        switch self {
+        case let .hello(_, protocolVersion, client):
+            try container.encode("hello", forKey: .type)
+            try container.encode(protocolVersion, forKey: .protocolVersion)
+            try container.encode(client, forKey: .client)
+        case let .chat(_, message, newChat):
+            try container.encode("chat", forKey: .type)
+            try container.encode(message, forKey: .message)
+            try container.encodeIfPresent(newChat, forKey: .newChat)
+        case let .abort(_, targetId):
+            try container.encode("abort", forKey: .type)
+            try container.encode(targetId, forKey: .targetId)
+        case let .login(_, provider):
+            try container.encode("login", forKey: .type)
+            try container.encode(provider, forKey: .provider)
+        case let .logout(_, provider):
+            try container.encode("logout", forKey: .type)
+            try container.encodeIfPresent(provider, forKey: .provider)
+        case .ingest:
+            try container.encode("ingest", forKey: .type)
+        case .status:
+            try container.encode("status", forKey: .type)
+        }
+    }
+}
+
+/// Events the brain streams back. Terminal events (`done`/`error`) settle the
+/// request carrying the same `id`; the rest are intermediate.
+enum BrainEvent: Decodable, Sendable {
+    case textDelta(id: String, delta: String)
+    case toolCall(id: String, name: String, args: JSONValue)
+    case authURL(id: String, url: String)
+    case authPrompt(id: String, prompt: String)
+    case progress(id: String, message: String, fraction: Double?)
+    case done(id: String, result: JSONValue?)
+    case error(id: String, code: String, message: String)
+
+    var id: String {
+        switch self {
+        case .textDelta(let id, _): return id
+        case .toolCall(let id, _, _): return id
+        case .authURL(let id, _): return id
+        case .authPrompt(let id, _): return id
+        case .progress(let id, _, _): return id
+        case .done(let id, _): return id
+        case .error(let id, _, _): return id
+        }
+    }
+
+    var isTerminal: Bool {
+        switch self {
+        case .done, .error: return true
+        default: return false
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, id, delta, name, args, url, prompt, message, fraction, result, code
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        let id = try container.decode(String.self, forKey: .id)
+        switch type {
+        case "text_delta":
+            self = .textDelta(id: id, delta: try container.decode(String.self, forKey: .delta))
+        case "tool_call":
+            self = .toolCall(
+                id: id,
+                name: try container.decode(String.self, forKey: .name),
+                args: try container.decode(JSONValue.self, forKey: .args))
+        case "auth_url":
+            self = .authURL(id: id, url: try container.decode(String.self, forKey: .url))
+        case "auth_prompt":
+            self = .authPrompt(id: id, prompt: try container.decode(String.self, forKey: .prompt))
+        case "progress":
+            self = .progress(
+                id: id,
+                message: try container.decode(String.self, forKey: .message),
+                fraction: try container.decodeIfPresent(Double.self, forKey: .fraction))
+        case "done":
+            self = .done(id: id, result: try container.decodeIfPresent(JSONValue.self, forKey: .result))
+        case "error":
+            self = .error(
+                id: id,
+                code: try container.decode(String.self, forKey: .code),
+                message: try container.decode(String.self, forKey: .message))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type, in: container, debugDescription: "unknown event type \"\(type)\"")
+        }
+    }
+}
