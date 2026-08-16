@@ -11,10 +11,10 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 
 ## Phase 1 — Brain
 - [x] US-003 pi providers and OAuth login flow  (code verified; PENDING one human browser sign-in: scripts/dev.sh → menu-bar icon → "Sign in to Claude…")
-- [~] US-004 Streaming chat through the agent loop
+- [x] US-004 Streaming chat through the agent loop
 
 ## Phase 2 — Capture
-- [ ] US-005 Menu-bar app and sidecar supervision
+- [~] US-005 Menu-bar app and sidecar supervision
 - [ ] US-006 Accessibility permission onboarding
 - [ ] US-007 Foreground text capture engine
 - [ ] US-008 Masking, blacklist, and pause
@@ -40,3 +40,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-16 · US-001 · minne-us001 · verified green (swift build, typecheck, 1 test, build.sh bundle) · 3ff5499
 - 2026-08-16 · US-002 · minne-us002 · verified green (13 bun tests, 2 swift tests, live restart-backoff check by agent) · bbe3f8b
 - 2026-08-16 · US-003 · minne-us003 · verified green (30 bun tests incl. mocked OAuth, 7 swift tests, compiled-bundle OAuth URL emission) · eaf64b6 · human browser sign-in still pending
+- 2026-08-16 · US-004 · minne-us004 · verified green (36 bun tests, 8 swift tests, compiled-binary mock chat smoke) · c75191c · Phase 1 complete
