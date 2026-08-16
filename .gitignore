@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# Bun / Node
+node_modules/
+*.bun-build
+
+# Assembled bundles and binaries
+build/

@@ -26,6 +26,25 @@ Minne.app (Swift)              minne-brain (TypeScript, Bun binary)
 
 Early development. The plan lives in [`tasks/prd-minne.md`](tasks/prd-minne.md).
 
+## Building from source
+
+Requirements: macOS 14+, Swift 6.0+, [Bun](https://bun.sh) 1.2+.
+
+```sh
+# Full bundle → build/Minne.app (compiled brain included)
+scripts/build.sh
+
+# Development: brain uncompiled + debug app (bare executable, Ctrl-C to quit)
+scripts/dev.sh
+
+# Individual pieces
+cd app && swift build
+cd brain && bun install && bun run typecheck && bun test
+```
+
+There is no Xcode project — the app is plain SwiftPM, and `scripts/build.sh`
+assembles the `.app` bundle itself.
+
 ## A note on subscription OAuth
 
 Using your Claude or ChatGPT subscription from a third-party app is a gray area under provider terms of service. You authenticate with your own account and the risk sits with that account. The API-key and local-model paths are always-safe alternatives.

@@ -18,3 +18,10 @@ Format: `- [US-xxx] the gotcha, and what to do about it.`
 - [general] Only touch `tasks/GOTCHAS.md` (append) among the tasks/ files — `progress.md` and the PRD are orchestrator/human-owned.
 
 ## Learnings (append below)
+
+- [US-001] `bun add --exact -d typescript` now resolves to TypeScript 7.x (the Go-based compiler); `tsc --noEmit` works fine with it under strict settings. Pinned: typescript 7.0.2, @types/bun 1.3.14.
+- [US-001] Swift 6 menu-bar skeleton: `@main @MainActor final class ... : NSObject, NSApplicationDelegate` with a custom `static func main()` that sets `NSApp.setActivationPolicy(.accessory)` (Dock-less for the bare dev executable; the bundle gets LSUIElement from Info.plist).
+- [US-001] Locate SwiftPM's output with `swift build -c release --show-bin-path` instead of hardcoding `.build/release` — the path is arch-specific (`.build/arm64-apple-macosx/release`).
+- [US-001] `bun build --compile src/main.ts --outfile <path>` produces the single-file brain binary (~57MB, embeds the Bun runtime); it runs standalone with no bun install on the target.
+- [US-001] `bun build --compile` leaves stray temp files named `.<hash>-00000000.bun-build` in the cwd; add `*.bun-build` to .gitignore or they end up committed.
+- [US-001] Minimal working Info.plist keys for the manual bundle: CFBundleExecutable, CFBundleIdentifier, CFBundleName, CFBundlePackageType=APPL, CFBundleShortVersionString, CFBundleVersion, LSMinimumSystemVersion, LSUIElement, NSPrincipalClass=NSApplication. Validate with `plutil -lint`.
