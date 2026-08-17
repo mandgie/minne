@@ -18,10 +18,10 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-006 Accessibility permission onboarding
 - [x] US-007 Foreground text capture engine
 - [x] US-008 Masking, blacklist, and pause
-- [~] US-009 Raw source store and full-text index
+- [x] US-009 Raw source store and full-text index
 
 ## Phase 3 — Wiki memory
-- [ ] US-010 Wiki schema and conventions
+- [~] US-010 Wiki schema and conventions
 - [ ] US-011 Agent memory tools
 - [ ] US-012 Ingestion job (/sync)
 
@@ -45,3 +45,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-17 · US-006 · minne-us006 · verified green (36 bun tests, 34 swift tests, orchestrator re-ran suites + screenshot of onboarding window in simulated no-permission mode; agent verified deep link, live AXIsProcessTrusted auto-advance, degraded menu hint) · 2876cf3
 - 2026-08-17 · US-007 · minne-us007 · verified green (36 bun tests, 75 swift tests re-run by orchestrator; agent live smoke: TextEdit/Chrome/Finder capture with URLs, dedup on revisit, 0.1% avg CPU) · a28ad73
 - 2026-08-17 · US-008 · minne-us008 · verified green (36 bun tests, 128 swift tests re-run by orchestrator; agent live smoke: TextEdit redactions, blacklisted-domain + incognito Chrome skipped, menu pause/resume honored) · ae76a0a
+- 2026-08-17 · US-009 · minne-us009 · verified green (49 bun tests, 159 swift tests re-run by orchestrator; agent headless e2e: locked-screen capture → source file + FTS row + search_sources round-trip via compiled brain) · aeca188 · Phase 2 complete
