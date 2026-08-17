@@ -63,6 +63,20 @@ struct SettingsStore {
         defaults.set(enabled, forKey: Self.chatHotKeyKey)
     }
 
+    static let minneKeyKey = "minneKeyEnabled"
+
+    /// On unless the user turned it off. A bare tap of right-Option types
+    /// nothing, and holding it still reaches every ⌥ character and shortcut
+    /// (see `MinneKeyDiscriminator`), so an on-by-default key costs nobody
+    /// their keyboard.
+    var minneKeyEnabled: Bool {
+        defaults.object(forKey: Self.minneKeyKey) as? Bool ?? true
+    }
+
+    func setMinneKeyEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.minneKeyKey)
+    }
+
     // MARK: - Retention
 
     var retention: RetentionPolicy { .fromUserDefaults(defaults) }

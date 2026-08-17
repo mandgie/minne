@@ -458,6 +458,8 @@ final class GeneralSectionView: NSView {
     private let launchCheckbox: NSButton
     private let hotKeyCheckbox: NSButton
     private let hotKeyNote = NSTextField(wrappingLabelWithString: "")
+    private let minneKeyCheckbox: NSButton
+    private let minneKeyNote = NSTextField(wrappingLabelWithString: "")
 
     init(model: SettingsModel, width: CGFloat) {
         self.model = model
@@ -465,15 +467,22 @@ final class GeneralSectionView: NSView {
             checkboxWithTitle: "Launch Minne at login", target: nil, action: nil)
         hotKeyCheckbox = NSButton(
             checkboxWithTitle: "Open chat with ⌥Space", target: nil, action: nil)
+        minneKeyCheckbox = NSButton(
+            checkboxWithTitle: "Wake Minne at the caret with right-Option", target: nil,
+            action: nil)
         super.init(frame: .zero)
 
         launchCheckbox.target = self
         launchCheckbox.action = #selector(launchToggled)
         hotKeyCheckbox.target = self
         hotKeyCheckbox.action = #selector(hotKeyToggled)
-        hotKeyNote.font = .systemFont(ofSize: 11)
-        hotKeyNote.textColor = .secondaryLabelColor
-        hotKeyNote.preferredMaxLayoutWidth = width
+        minneKeyCheckbox.target = self
+        minneKeyCheckbox.action = #selector(minneKeyToggled)
+        for note in [hotKeyNote, minneKeyNote] {
+            note.font = .systemFont(ofSize: 11)
+            note.textColor = .secondaryLabelColor
+            note.preferredMaxLayoutWidth = width
+        }
 
         let stack = SettingsStyle.section(
             [
@@ -482,10 +491,13 @@ final class GeneralSectionView: NSView {
                 separator(width: width),
                 SettingsStyle.heading("Shortcuts"),
                 shortcutRow("Open chat", "⌥Space", width: width),
+                shortcutRow("Wake Minne at the caret", "right ⌥", width: width),
                 shortcutRow("Settings", "⌘,", width: width),
                 shortcutRow("Close a Minne window", "esc", width: width),
                 hotKeyCheckbox,
                 hotKeyNote,
+                minneKeyCheckbox,
+                minneKeyNote,
             ], width: width)
         SettingsStyle.fill(self, with: stack, width: width)
 
@@ -524,6 +536,8 @@ final class GeneralSectionView: NSView {
             ? nil : "Only available when running from Minne.app (build with scripts/build.sh)"
         hotKeyCheckbox.state = model.hotKeyEnabled ? .on : .off
         hotKeyNote.stringValue = model.hotKeyLine
+        minneKeyCheckbox.state = model.minneKeyEnabled ? .on : .off
+        minneKeyNote.stringValue = model.minneKeyLine
     }
 
     @objc private func launchToggled() {
@@ -537,5 +551,9 @@ final class GeneralSectionView: NSView {
 
     @objc private func hotKeyToggled() {
         model.setHotKeyEnabled(hotKeyCheckbox.state == .on)
+    }
+
+    @objc private func minneKeyToggled() {
+        model.setMinneKeyEnabled(minneKeyCheckbox.state == .on)
     }
 }

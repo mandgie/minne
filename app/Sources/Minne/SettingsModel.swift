@@ -93,6 +93,8 @@ final class SettingsModel {
     var onOpenFolder: (@MainActor (URL) -> Void)?
     /// Registers or unregisters the ⌥Space hotkey, live.
     var onHotKeyChange: (@MainActor (Bool) -> Void)?
+    /// Installs or removes the right-Option event tap, live.
+    var onMinneKeyChange: (@MainActor (Bool) -> Void)?
 
     private var observers = ObserverRegistry<SettingsModel>()
 
@@ -107,6 +109,7 @@ final class SettingsModel {
         self.blacklist = store.blacklist
         self.retentionDays = store.retention.days
         self.hotKeyEnabled = store.chatHotKeyEnabled
+        self.minneKeyEnabled = store.minneKeyEnabled
         // Account state is live in Settings for the same reason it is live in
         // the menu bar: one model, rendered wherever it is shown.
         auth.observe(self) { [weak self] _ in self?.notify() }
@@ -247,6 +250,40 @@ final class SettingsModel {
         return hotKeyRegistered
             ? "Press ⌥Space in any app to open the chat window."
             : "⌥Space is taken by another app — open chat from the menu bar instead."
+    }
+
+    // MARK: - General: the Minne key
+
+    /// Whether right-Option should wake Minne at the caret (US-017).
+    private(set) var minneKeyEnabled: Bool
+    /// Whether the event tap is actually installed. It needs Accessibility, so
+    /// the preference being on is not the same as the key working.
+    private(set) var minneKeyActive = false
+
+    func setMinneKeyEnabled(_ enabled: Bool) {
+        guard enabled != minneKeyEnabled else { return }
+        minneKeyEnabled = enabled
+        store.setMinneKeyEnabled(enabled)
+        onMinneKeyChange?(enabled)
+        notify()
+    }
+
+    func adopt(minneKeyActive: Bool) {
+        guard minneKeyActive != self.minneKeyActive else { return }
+        self.minneKeyActive = minneKeyActive
+        notify()
+    }
+
+    var minneKeyLine: String {
+        guard minneKeyEnabled else {
+            return "Right-Option behaves like any other Option key."
+        }
+        if minneKeyActive {
+            return "Tap right-Option in any text field to bring Minne to your caret."
+        }
+        return permission.isGranted
+            ? "The Minne key could not start — Minne cannot watch the keyboard."
+            : "Grant Accessibility access in Privacy to use the Minne key."
     }
 
     // MARK: - Memory

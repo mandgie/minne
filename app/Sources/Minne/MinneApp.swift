@@ -17,6 +17,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var settings: SettingsWindowController?
     private var chat: ChatWindowController?
     private var chatHotKey: GlobalHotKey?
+    private var minneKey: MinneKeyController?
     private var capture: CaptureEngine?
     private var store: SourceStore?
     private var retentionTimer: Timer?
@@ -57,6 +58,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
 
         startChat()
+        startMinneKey()
         startCapture()
         startPermissionTracking()
         connectBrain()
@@ -86,6 +88,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         // point is to look inside the wiki (or drag it onto Obsidian).
         model.onOpenFolder = { url in NSWorkspace.shared.open(url) }
         model.onHotKeyChange = { [weak self] enabled in self?.updateChatHotKey(enabled: enabled) }
+        model.onMinneKeyChange = { [weak self] enabled in self?.minneKey?.setEnabled(enabled) }
         model.onWipe = { [weak self] paths in
             guard let self else { return MemoryWipe.wipe(paths: paths) }
             return self.wipeMemory(paths: paths)
@@ -151,6 +154,21 @@ final class MinneApp: NSObject, NSApplicationDelegate {
 
     private func showChat() {
         chat?.show()
+    }
+
+    // MARK: - The Minne key
+
+    /// Right-Option at the caret (US-017). Unlike ⌥Space, this one needs
+    /// Accessibility — it is a `CGEventTap` — so it comes and goes with the
+    /// grant as well as with the setting.
+    private func startMinneKey() {
+        let controller = MinneKeyController(
+            enabled: settingsModel?.minneKeyEnabled ?? true, permission: permission.state)
+        controller.onActiveChange = { [weak self] active in
+            self?.settingsModel?.adopt(minneKeyActive: active)
+        }
+        minneKey = controller
+        settingsModel?.adopt(minneKeyActive: controller.isActive)
     }
 
     // MARK: - Capture
@@ -237,6 +255,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             self.statusController?.update(permission: state)
             self.onboarding?.permissionChanged(state)
             self.capture?.update(permission: state)
+            self.minneKey?.update(permission: state)
             self.settingsModel?.adopt(permission: state)
         }
         permission.startPolling(interval: AccessibilityPermission.backgroundInterval)

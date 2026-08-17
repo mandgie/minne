@@ -199,6 +199,38 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertTrue(model.hotKeyLine.contains("taken by another app"))
     }
 
+    func testMinneKeyToggleIsAppliedLiveAndRemembered() {
+        let model = makeModel()
+        var applied: [Bool] = []
+        model.onMinneKeyChange = { applied.append($0) }
+        XCTAssertTrue(model.minneKeyEnabled, "on unless the user turns it off")
+
+        model.setMinneKeyEnabled(false)
+        XCTAssertEqual(applied, [false])
+        XCTAssertFalse(reloaded().minneKeyEnabled)
+        XCTAssertEqual(model.minneKeyLine, "Right-Option behaves like any other Option key.")
+
+        model.setMinneKeyEnabled(true)
+        model.adopt(minneKeyActive: true)
+        XCTAssertTrue(model.minneKeyLine.contains("Tap right-Option"))
+    }
+
+    /// The Minne key is an event tap, so it needs Accessibility. On but
+    /// inactive has to say *why*, or the user presses a dead key.
+    func testTheMinneKeyExplainsAMissingGrant() {
+        let model = SettingsModel(
+            auth: AuthModel(), paths: paths, store: SettingsStore(defaults: defaults),
+            permission: .missing)
+        XCTAssertTrue(model.minneKeyEnabled)
+        XCTAssertFalse(model.minneKeyActive)
+        XCTAssertTrue(model.minneKeyLine.contains("Grant Accessibility access"))
+
+        model.adopt(permission: .granted)
+        XCTAssertTrue(model.minneKeyLine.contains("could not start"))
+        model.adopt(minneKeyActive: true)
+        XCTAssertTrue(model.minneKeyLine.contains("Tap right-Option"))
+    }
+
     // MARK: - Sync
 
     func testSyncNowRunsAPassAndRereadsStatus() {
