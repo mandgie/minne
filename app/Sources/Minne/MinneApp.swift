@@ -10,6 +10,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var brainClient: BrainClient?
     private let permission = AccessibilityPermission()
     private var onboarding: OnboardingWindowController?
+    private let authModel = AuthModel()
     private let chatModel = ChatModel()
     private var chat: ChatWindowController?
     private var chatHotKey: GlobalHotKey?
@@ -32,8 +33,12 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         let controller = StatusItemController(
             permission: permission.state,
             debugActions: [
-                // Temporary debug entries until US-014 builds the real UI.
-                .init(title: "Sign in to Claude…") { [weak self] in self?.signInAnthropic() },
+                // Until Settings exists (US-015), these are how the account is
+                // reached; the live state itself is the menu's Account row.
+                .init(title: "Sign In…") { [weak self] in
+                    self?.showOnboarding(startingAt: .chooseProvider)
+                },
+                .init(title: "Sign Out") { [weak self] in self?.authModel.signOut() },
                 .init(title: "Search memory…") { [weak self] in self?.testSearchSources() },
                 .init(title: "Show Onboarding…") { [weak self] in self?.showOnboarding() },
             ])
@@ -44,6 +49,11 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         controller.onOpenOnboarding = { [weak self] in self?.showOnboarding() }
         controller.onPauseChange = { [weak self] pause in self?.capture?.update(pause: pause) }
         statusController = controller
+        // Auth state is live in the menu bar the moment the brain reports it,
+        // and after every login, logout and provider switch.
+        authModel.observe(controller) { [weak controller] auth in
+            controller?.update(account: auth.state)
+        }
 
         startChat()
         startCapture()
@@ -152,13 +162,55 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
         permission.startPolling(interval: AccessibilityPermission.backgroundInterval)
 
-        if !UserDefaults.standard.bool(forKey: Self.onboardingSeenKey) {
+        if let step = Self.launchOnboardingStep() {
+            showOnboarding(startingAt: step)
+        } else if !UserDefaults.standard.bool(forKey: Self.onboardingSeenKey) {
             showOnboarding()
         }
     }
 
-    private func showOnboarding() {
-        let controller = onboarding ?? OnboardingWindowController(permission: permission.state)
+    /// Debug hook: `-onboardingStep provider` opens the first-run flow straight
+    /// at the provider step. It exists because a UI state can only be verified
+    /// on a machine where it can be reached, and clicking through onboarding is
+    /// not always available (a locked screen drives nothing).
+    private static func launchOnboardingStep() -> OnboardingStep? {
+        switch UserDefaults.standard.string(forKey: "onboardingStep") {
+        case "provider": return .chooseProvider
+        case "welcome": return .welcome
+        default: return nil
+        }
+    }
+
+    /// Debug hook: `-autoSignIn claude|chatgpt|local|apiKey|mock` picks that
+    /// card and presses Sign In as soon as the brain answers, so the sign-in
+    /// states can be reached without a click.
+    private func startAutoSignIn() {
+        guard let raw = UserDefaults.standard.string(forKey: "autoSignIn"),
+            let choice = ProviderChoice(rawValue: raw)
+        else { return }
+        Task { [weak self] in
+            // Wait for the first `status`, so the sign-in carries the model the
+            // picker would have shown rather than none at all.
+            for _ in 0..<20 {
+                if self?.authModel.state != nil { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard let self else { return }
+            BrainClient.log("debug: auto sign-in with the \(raw) card")
+            self.authModel.select(choice)
+            self.authModel.signIn()
+        }
+    }
+
+    /// Opens the first-run flow. Reopened from the menu it starts wherever the
+    /// caller asks: the capture hint sends the user back to the beginning, the
+    /// account entry straight to the provider step, which then shows what the
+    /// brain is currently signed in to and lets it be changed.
+    private func showOnboarding(startingAt step: OnboardingStep = .welcome) {
+        let controller =
+            onboarding
+            ?? OnboardingWindowController(
+                permission: permission.state, auth: authModel, step: step)
         onboarding = controller
         controller.onFinished = { [weak self] in
             guard let self else { return }
@@ -187,11 +239,14 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         let client = BrainClient(launch: launch)
         brainClient = client
         chatModel.backend = BrainChatBackend(client: client)
-        Task {
+        authModel.backend = BrainAuthBackend(client: client)
+        Task { [weak self] in
             do {
                 let hello = try await client.start()
                 BrainClient.log(
                     "handshake OK: protocol \(hello.protocolVersion), brain v\(hello.brainVersion)")
+                self?.authModel.refresh()
+                self?.startAutoSignIn()
             } catch {
                 BrainClient.log("handshake failed: \(error)")
             }
@@ -202,32 +257,11 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 self?.statusController?.update(connection: connection)
             }
         }
-        // Single consumer of the brain's intermediate events. Drives the OAuth
-        // login UX until US-014: open auth URLs in the browser, answer auth
-        // prompts with a modal input, log progress to stderr.
+        // Single consumer of the brain's intermediate events, fanned out to the
+        // two models that care: the chat window and the sign-in flow.
         Task { [weak self] in
             for await event in client.events {
-                await self?.handleBrainEvent(event)
-            }
-        }
-    }
-
-    // MARK: - Debug sign-in (temporary until US-014)
-
-    private func signInAnthropic() {
-        guard let client = brainClient else {
-            BrainClient.log("sign-in: brain not connected")
-            return
-        }
-        Task {
-            do {
-                let result = try await client.request(
-                    .login(id: UUID().uuidString, provider: "anthropic", method: nil))
-                BrainClient.log("sign-in complete: \(String(describing: result))")
-                let status = try await client.status()
-                BrainClient.log("status after sign-in: \(String(describing: status))")
-            } catch {
-                BrainClient.log("sign-in failed: \(error)")
+                self?.handleBrainEvent(event)
             }
         }
     }
@@ -256,30 +290,19 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func handleBrainEvent(_ event: BrainEvent) async {
-        guard let client = brainClient else { return }
+    private func handleBrainEvent(_ event: BrainEvent) {
         switch event {
         case .textDelta, .toolCall:
             // The chat window is the only consumer of a turn's intermediate
             // events; it ignores anything that isn't its in-flight request.
             chatModel.apply(event)
-        case .authURL(_, let url):
-            BrainClient.log("auth: opening \(url)")
-            if let parsed = URL(string: url) { NSWorkspace.shared.open(parsed) }
-        case let .authPrompt(loginId, promptId, prompt, promptType, placeholder, _):
-            BrainClient.log("auth prompt [\(promptType)]: \(prompt)")
-            let answer = promptUser(
-                message: prompt, placeholder: placeholder, secure: promptType == "secret")
-            do {
-                _ = try await client.request(
-                    .authReply(
-                        id: UUID().uuidString, targetId: loginId, promptId: promptId,
-                        value: answer, cancel: answer == nil ? true : nil))
-            } catch {
-                BrainClient.log("auth reply failed: \(error)")
-            }
+        case .authURL, .authPrompt:
+            // The provider step opens the browser and renders prompts natively;
+            // events from any other request are ignored there.
+            authModel.apply(event)
         case .progress(_, let message, _):
             BrainClient.log("brain progress: \(message)")
+            authModel.apply(event)
         default:
             break
         }

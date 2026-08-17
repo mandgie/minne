@@ -39,6 +39,8 @@ struct MenuAppearance: Equatable {
     let appearsDisabled: Bool
     /// Disabled status row at the top of the menu.
     let statusText: String
+    /// Disabled row naming the signed-in provider and model.
+    let accountText: String
     /// Title of the "Pause Capture" submenu parent item.
     let pauseItemTitle: String
     /// Persistent hint row shown while capture cannot run; `nil` hides it.
@@ -47,9 +49,11 @@ struct MenuAppearance: Equatable {
 }
 
 enum MenuModel {
+    /// `account` is the brain's last reported auth state; nil means no `status`
+    /// has answered yet, which is a different thing from being signed out.
     static func appearance(
         connection: BrainConnectionState, permission: CapturePermissionState, pause: PauseState,
-        now: Date
+        account: AuthState? = nil, now: Date
     ) -> MenuAppearance {
         let pause = pause.resolved(now: now)
 
@@ -105,6 +109,7 @@ enum MenuModel {
             symbolName: symbolName,
             appearsDisabled: disconnected,
             statusText: statusText,
+            accountText: "Account: \(account?.accountSummary ?? "checking…")",
             pauseItemTitle: pauseItemTitle,
             hintText: permission.isGranted
                 ? nil : "Capture off — grant Accessibility access…")

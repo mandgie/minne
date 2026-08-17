@@ -47,7 +47,7 @@ final class OnboardingModelTests: XCTestCase {
         var state = OnboardingState(permission: .missing, step: .requestPermission)
         XCTAssertTrue(state.permissionObserved(.granted))
         XCTAssertEqual(state.step, .granted)
-        XCTAssertEqual(state.page?.primaryAction, .finish)
+        XCTAssertEqual(state.page?.primaryAction, .advance)
     }
 
     func testRepeatedPollsWithoutChangeReportNoTransition() {
@@ -64,11 +64,57 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(state.step, .requestPermission)
     }
 
-    func testFinishFromGrantedScreen() {
+    // MARK: - Provider step (US-014)
+
+    func testGrantedContinuesToTheProviderStep() {
         var state = OnboardingState(permission: .granted, step: .granted)
+        state.advance()
+        XCTAssertEqual(state.step, .chooseProvider)
+        XCTAssertEqual(state.page?.kind, .providers)
+        XCTAssertEqual(state.page?.secondaryTitle, "Set Up Later")
+    }
+
+    func testEveryStepBeforeTheProviderStepIsStaticText() {
+        for step in [OnboardingStep.welcome, .requestPermission, .granted, .ready] {
+            XCTAssertEqual(OnboardingModel.page(for: step)?.kind, .info, "\(step)")
+        }
+    }
+
+    func testSigningInAdvancesPastTheProviderStep() {
+        var state = OnboardingState(permission: .granted, step: .chooseProvider)
+        XCTAssertTrue(state.signedIn("Claude (Pro/Max) — Claude Sonnet 5"))
+        XCTAssertEqual(state.step, .ready)
+        // The closing screen names the account that was just set up.
+        XCTAssertEqual(state.page?.body.contains("Claude Sonnet 5"), true)
+        XCTAssertEqual(state.page?.primaryAction, .finish)
+    }
+
+    func testSigningInAgainOnALaterStepDoesNotMoveTheFlowBack() {
+        var state = OnboardingState(permission: .granted, step: .ready)
+        XCTAssertFalse(state.signedIn("Local (Ollama) — llama3.1"))
+        XCTAssertEqual(state.step, .ready)
+        XCTAssertEqual(state.page?.body.contains("llama3.1"), true)
+    }
+
+    func testDoneOnTheProviderStepFinishesWithoutSigningIn() {
+        var state = OnboardingState(permission: .granted, step: .chooseProvider)
         state.advance()
         XCTAssertEqual(state.step, .finished)
         XCTAssertNil(state.page, "no page means the window closes")
+    }
+
+    func testFinishFromTheReadyScreen() {
+        var state = OnboardingState(permission: .granted, step: .ready)
+        state.advance()
+        XCTAssertEqual(state.step, .finished)
+        XCTAssertNil(state.page, "no page means the window closes")
+    }
+
+    /// Reopening onboarding straight at the provider step is how the menu bar
+    /// gets to "switch provider" before Settings exists.
+    func testFlowCanStartAtTheProviderStep() {
+        let state = OnboardingState(permission: .granted, step: .chooseProvider)
+        XCTAssertEqual(state.page?.kind, .providers)
     }
 
     func testSkipLeavesFlowFinishedWithPermissionStillMissing() {

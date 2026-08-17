@@ -11,10 +11,13 @@ import { BrainSession, hello } from "./test-support";
 let dirs: string[] = [];
 let sessions: BrainSession[] = [];
 
-function makeSession(dataDir?: string): { session: BrainSession; dataDir: string } {
+function makeSession(
+  dataDir?: string,
+  env?: Record<string, string | undefined>,
+): { session: BrainSession; dataDir: string } {
   const dir = dataDir ?? mkdtempSync(join(tmpdir(), "minne-auth-"));
   if (!dirs.includes(dir)) dirs.push(dir);
-  const session = new BrainSession(dir);
+  const session = new BrainSession(dir, env);
   sessions.push(session);
   return { session, dataDir: dir };
 }
@@ -126,6 +129,34 @@ describe("login over the protocol", () => {
     expect(events.at(-1)).toMatchObject({ type: "error", id: "l1", code: "aborted" });
   }, 15000);
 
+  // pi's Anthropic flow races the manual-code prompt against a localhost
+  // callback; when the callback wins, the prompt is cancelled through its
+  // signal and the login finishes without an answer. A client showing that
+  // prompt has to survive it being pulled away.
+  test("a prompt the flow abandons still completes the login, and a late reply is rejected", async () => {
+    const { session } = makeSession(undefined, {
+      MINNE_MOCK_AUTO_CODE: MOCK_LOGIN_CODE,
+      MINNE_MOCK_AUTO_CODE_MS: "50",
+    });
+    await hello(session);
+    const promptId = await loginToPrompt(session);
+    const events = await session.collectUntilTerminal("l1");
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      id: "l1",
+      result: { provider: "mock", authenticated: true },
+    });
+    // The UI may only learn the prompt was stale by answering it.
+    const late = await session.request({
+      type: "auth_reply",
+      id: "r1",
+      targetId: "l1",
+      promptId,
+      value: MOCK_LOGIN_CODE,
+    });
+    expect(late.at(-1)).toMatchObject({ type: "error", id: "r1", code: "invalid_request" });
+  }, 15000);
+
   test("stale auth_reply and unknown provider are typed errors", async () => {
     const { session } = makeSession();
     await hello(session);
@@ -139,6 +170,46 @@ describe("login over the protocol", () => {
     expect(stale.at(-1)).toMatchObject({ type: "error", id: "r9", code: "invalid_request" });
     const unknown = await session.request({ type: "login", id: "l9", provider: "nope" });
     expect(unknown.at(-1)).toMatchObject({ type: "error", id: "l9", code: "invalid_request" });
+  }, 15000);
+});
+
+describe("status as the provider picker sees it", () => {
+  test("each provider reports its login methods, default model and model catalog", async () => {
+    const { session } = makeSession();
+    await hello(session);
+    const events = await session.request({ type: "status", id: "s1" });
+    const status = events.at(-1);
+    if (status?.type !== "done") throw new Error("status did not complete");
+    const result = status.result as {
+      providers: {
+        id: string;
+        label: string;
+        methods: string[];
+        defaultModel: string | null;
+        baseUrl?: string;
+        models: { id: string; name: string }[];
+      }[];
+    };
+    const byId = new Map(result.providers.map((p) => [p.id, p]));
+
+    // The onboarding cards (Claude, ChatGPT, Local, API key) map onto exactly
+    // these registered provider ids — a rename here breaks the UI silently.
+    const anthropic = byId.get("anthropic");
+    expect(anthropic).toBeDefined();
+    expect(anthropic?.methods).toEqual(["oauth", "api_key"]);
+    expect(byId.get("openai-codex")?.methods).toEqual(["oauth"]);
+    expect(byId.get("openai")?.methods).toEqual(["api_key"]);
+
+    // A picker can be populated without signing in: the catalog is static.
+    expect(anthropic?.models.length).toBeGreaterThan(1);
+    expect(anthropic?.models.map((m) => m.id)).toContain(anthropic?.defaultModel ?? "");
+    expect(anthropic?.models.find((m) => m.id === "claude-sonnet-5")?.name).toBe("Claude Sonnet 5");
+
+    // The local server needs no login, and its base URL is part of its state.
+    const ollama = byId.get("ollama");
+    expect(ollama?.methods).toEqual([]);
+    expect(ollama?.baseUrl).toBe("http://localhost:11434/v1");
+    expect(ollama?.models.map((m) => m.id)).toEqual(["llama3.1"]);
   }, 15000);
 });
 

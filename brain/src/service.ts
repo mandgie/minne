@@ -605,6 +605,12 @@ export class MinneBrain {
         source: check?.source ?? null,
         authType: check?.type ?? null,
         defaultModel: this.defaultModelFor(spec.id),
+        // The catalog the app's model picker offers for this provider (US-014).
+        // Last-known list, synchronous: static providers hold their whole
+        // catalog, so no login is needed to populate the picker.
+        models: this.registry.models
+          .getModels(spec.id)
+          .map((model) => ({ id: model.id, name: model.name })),
         ...(spec.id === "ollama" ? { baseUrl: this.config.ollama.baseUrl } : {}),
       });
     }

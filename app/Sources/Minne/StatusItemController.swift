@@ -25,6 +25,7 @@ final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let statusRow: NSMenuItem
+    private let accountRow: NSMenuItem
     private let hintItem: NSMenuItem
     private let pauseItem: NSMenuItem
     private let resumeItem: NSMenuItem
@@ -34,6 +35,7 @@ final class StatusItemController: NSObject {
     private var connection: BrainConnectionState = .connecting
     private var permission: CapturePermissionState
     private var pause: PauseState = .active
+    private var account: AuthState?
     private var resumeTimer: Timer?
 
     init(permission: CapturePermissionState, debugActions: [DebugAction]) {
@@ -41,6 +43,7 @@ final class StatusItemController: NSObject {
         self.debugActions = debugActions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.statusRow = NSMenuItem(title: "Brain: starting…", action: nil, keyEquivalent: "")
+        self.accountRow = NSMenuItem(title: "Account: checking…", action: nil, keyEquivalent: "")
         self.hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         self.pauseItem = NSMenuItem(title: "Pause Capture", action: nil, keyEquivalent: "")
         self.resumeItem = NSMenuItem(title: "Resume Now", action: nil, keyEquivalent: "")
@@ -60,6 +63,12 @@ final class StatusItemController: NSObject {
 
     func update(permission: CapturePermissionState) {
         self.permission = permission
+        applyAppearance()
+    }
+
+    /// The brain's auth state changed (a login, a logout, a provider switch).
+    func update(account: AuthState?) {
+        self.account = account
         applyAppearance()
     }
 
@@ -89,6 +98,9 @@ final class StatusItemController: NSObject {
 
         statusRow.isEnabled = false
         menu.addItem(statusRow)
+
+        accountRow.isEnabled = false
+        menu.addItem(accountRow)
 
         hintItem.action = #selector(openOnboardingAction)
         hintItem.target = self
@@ -168,7 +180,8 @@ final class StatusItemController: NSObject {
 
     private func applyAppearance() {
         let appearance = MenuModel.appearance(
-            connection: connection, permission: permission, pause: pause, now: Date())
+            connection: connection, permission: permission, pause: pause, account: account,
+            now: Date())
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: appearance.symbolName, accessibilityDescription: "Minne")
@@ -176,6 +189,7 @@ final class StatusItemController: NSObject {
             button.toolTip = appearance.hintText
         }
         statusRow.title = appearance.statusText
+        accountRow.title = appearance.accountText
         hintItem.title = appearance.hintText ?? ""
         hintItem.isHidden = appearance.hintText == nil
         pauseItem.title = appearance.pauseItemTitle

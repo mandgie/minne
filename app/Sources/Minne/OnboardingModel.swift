@@ -8,8 +8,19 @@ enum OnboardingStep: Equatable, Sendable {
     case requestPermission
     /// Permission observed as granted — confirmation screen.
     case granted
+    /// Pick an AI provider and sign in to it.
+    case chooseProvider
+    /// Signed in — confirmation screen naming the account and model.
+    case ready
     /// Nothing left to show; the window should close.
     case finished
+}
+
+/// What a step renders below its bullets. The provider step owns a live view
+/// of `AuthModel`; every other step is static text.
+enum OnboardingPageKind: Equatable, Sendable {
+    case info
+    case providers
 }
 
 /// What the primary button does on the current step. Keeps the window
@@ -37,6 +48,23 @@ struct OnboardingPage: Equatable, Sendable {
     let secondaryTitle: String?
     /// Show the "still watching for the grant" spinner and note.
     let isWaiting: Bool
+    /// What the body of the step is: static text, or the provider picker.
+    let kind: OnboardingPageKind
+
+    init(
+        title: String, body: String, bullets: [OnboardingBullet], primaryTitle: String,
+        primaryAction: OnboardingAction, secondaryTitle: String?, isWaiting: Bool,
+        kind: OnboardingPageKind = .info
+    ) {
+        self.title = title
+        self.body = body
+        self.bullets = bullets
+        self.primaryTitle = primaryTitle
+        self.primaryAction = primaryAction
+        self.secondaryTitle = secondaryTitle
+        self.isWaiting = isWaiting
+        self.kind = kind
+    }
 }
 
 /// First-run state machine. Pure and unit-tested; `OnboardingWindowController`
@@ -44,6 +72,8 @@ struct OnboardingPage: Equatable, Sendable {
 struct OnboardingState: Equatable, Sendable {
     private(set) var step: OnboardingStep
     private(set) var permission: CapturePermissionState
+    /// Account line of the last successful sign-in, for the closing screen.
+    private(set) var signInSummary: String?
 
     init(permission: CapturePermissionState, step: OnboardingStep = .welcome) {
         self.permission = permission
@@ -60,9 +90,21 @@ struct OnboardingState: Equatable, Sendable {
             step = permission == .granted ? .granted : .requestPermission
         case .requestPermission:
             break
-        case .granted, .finished:
+        case .granted:
+            step = .chooseProvider
+        case .chooseProvider, .ready, .finished:
             step = .finished
         }
+    }
+
+    /// Fed by `AuthModel`: a provider was signed in to. Returns true when the
+    /// step changed, so the controller only re-renders on real transitions.
+    @discardableResult
+    mutating func signedIn(_ summary: String) -> Bool {
+        signInSummary = summary
+        guard step == .chooseProvider else { return false }
+        step = .ready
+        return true
     }
 
     /// "Set Up Later" — leaves the app in degraded no-capture mode, with the
@@ -91,12 +133,12 @@ struct OnboardingState: Equatable, Sendable {
 
     /// `nil` once the flow is over: the window should close.
     var page: OnboardingPage? {
-        OnboardingModel.page(for: step)
+        OnboardingModel.page(for: step, signInSummary: signInSummary)
     }
 }
 
 enum OnboardingModel {
-    static func page(for step: OnboardingStep) -> OnboardingPage? {
+    static func page(for step: OnboardingStep, signInSummary: String? = nil) -> OnboardingPage? {
         switch step {
         case .welcome:
             return OnboardingPage(
@@ -162,9 +204,39 @@ enum OnboardingModel {
             return OnboardingPage(
                 title: "Accessibility granted",
                 body: """
-                    Minne can read your foreground window now. Everything else lives \
-                    in the menu bar: chat with your memory, pause capture whenever you \
-                    want, and open Settings to sign in to your AI provider.
+                    Minne can read your foreground window now. One thing left: \
+                    choose which AI you want it to think with.
+                    """,
+                bullets: [],
+                primaryTitle: "Continue",
+                primaryAction: .advance,
+                secondaryTitle: nil,
+                isWaiting: false)
+
+        case .chooseProvider:
+            return OnboardingPage(
+                title: "Choose your AI provider",
+                body: """
+                    Minne talks to one provider, with your own account. Your memory \
+                    stays on this Mac either way — only the text of a question and the \
+                    pages it needs are ever sent.
+                    """,
+                bullets: [],
+                primaryTitle: "Done",
+                primaryAction: .finish,
+                secondaryTitle: "Set Up Later",
+                isWaiting: false,
+                kind: .providers)
+
+        case .ready:
+            return OnboardingPage(
+                title: "You're all set",
+                body: """
+                    \(signInSummary ?? "Signed in").
+
+                    Minne lives in the menu bar from here: press ⌥Space to ask it \
+                    something, pause capture whenever you want, and change any of this \
+                    in Settings.
                     """,
                 bullets: [],
                 primaryTitle: "Start Using Minne",

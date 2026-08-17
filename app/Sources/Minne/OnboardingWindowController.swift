@@ -14,6 +14,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
     private var state: OnboardingState
     private let window: NSWindow
+    private let auth: AuthModel
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
@@ -23,9 +24,11 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private let waitingRow = NSStackView()
     private let secondaryButton = NSButton(title: "", target: nil, action: nil)
     private let primaryButton = NSButton(title: "", target: nil, action: nil)
+    private var providerSetup: ProviderSetupView?
 
-    init(permission: CapturePermissionState) {
-        state = OnboardingState(permission: permission)
+    init(permission: CapturePermissionState, auth: AuthModel, step: OnboardingStep = .welcome) {
+        state = OnboardingState(permission: permission, step: step)
+        self.auth = auth
         window = NSWindow(
             contentRect: NSRect(
                 x: 0, y: 0, width: OnboardingWindowController.contentWidth, height: 420),
@@ -38,6 +41,14 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = buildContentView()
+        // A successful sign-in advances the flow on its own — the user does
+        // not have to notice a button changing.
+        auth.onSignedIn = { [weak self] summary in
+            guard let self, self.state.signedIn(summary) else { return }
+            self.render()
+        }
+        // The setup view redraws itself; the window has to follow its height.
+        auth.observe(self) { [weak self] _ in self?.resizeToFit() }
         render()
     }
 
@@ -106,8 +117,11 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         buttonContainer.setViews([spacer, buttonRow], in: .leading)
 
+        let setup = ProviderSetupView(model: auth, width: textWidth)
+        providerSetup = setup
+
         let stack = NSStackView(views: [
-            titleLabel, bodyLabel, bulletStack, waitingRow, buttonContainer,
+            titleLabel, bodyLabel, bulletStack, setup, waitingRow, buttonContainer,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -166,19 +180,28 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         bulletStack.isHidden = page.bullets.isEmpty
 
         waitingRow.isHidden = !page.isWaiting
+        providerSetup?.isHidden = page.kind != .providers
 
         primaryButton.title = page.primaryTitle
         secondaryButton.title = page.secondaryTitle ?? ""
         secondaryButton.isHidden = page.secondaryTitle == nil
+        // On the provider step the card's own button is the one to press;
+        // Return there should not close the window.
+        primaryButton.keyEquivalent = page.kind == .providers ? "" : "\r"
 
-        if let container = window.contentView {
-            container.layoutSubtreeIfNeeded()
-            window.setContentSize(
-                NSSize(
-                    width: OnboardingWindowController.contentWidth,
-                    height: container.fittingSize.height))
-        }
-        window.makeFirstResponder(primaryButton)
+        resizeToFit()
+        if page.kind != .providers { window.makeFirstResponder(primaryButton) }
+    }
+
+    /// The provider step grows and shrinks under the window (a prompt appears,
+    /// a card's extra field shows), so the window follows its content.
+    private func resizeToFit() {
+        guard let container = window.contentView else { return }
+        container.layoutSubtreeIfNeeded()
+        let height = container.fittingSize.height
+        guard abs(height - window.contentLayoutRect.height) > 0.5 else { return }
+        window.setContentSize(
+            NSSize(width: OnboardingWindowController.contentWidth, height: height))
     }
 
     private func finishIfDone() {

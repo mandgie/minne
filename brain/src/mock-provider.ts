@@ -2,6 +2,7 @@ import {
   createAssistantMessageEventStream,
   createProvider,
   type AssistantMessage,
+  type AuthInteraction,
   type AssistantMessageEventStream,
   type Context,
   type Model,
@@ -17,6 +18,11 @@ import {
  * Scripted OAuth provider for protocol tests: notify(auth_url) -> prompt for a
  * manual code -> notify(progress) -> credential. Registered only when
  * MINNE_MOCK_PROVIDER=1 (see providers.ts); never used against the network.
+ *
+ * MINNE_MOCK_AUTO_CODE replaces the typed code with pi's other path: the
+ * prompt goes up, a callback beats it, and the flow abandons the prompt
+ * through its signal. That drives a login to completion with no input at all,
+ * and puts a client through the stale-prompt case on the way.
  *
  * Its models stream deterministically (no HTTP), scripted by the last user
  * message:
@@ -311,6 +317,32 @@ function mockStreams(): ProviderStreams {
   return { stream: run, streamSimple: run };
 }
 
+/**
+ * The manual-code prompt losing its race, the way pi's real Anthropic flow
+ * works: the prompt goes up, the callback server delivers the code, and the
+ * flow cancels the prompt through its `signal` and carries on. The prompt
+ * stays up for MINNE_MOCK_AUTO_CODE_MS (default 4 s) so a UI showing it can be
+ * observed before it is pulled away.
+ */
+async function codeFromCallback(interaction: AuthInteraction, code: string): Promise<string> {
+  const abandon = new AbortController();
+  // Nobody awaits this: the flow is walking away from the prompt on purpose,
+  // and an unobserved rejection would be an unhandled one.
+  interaction
+    .prompt({
+      type: "manual_code",
+      message: "Enter the mock code",
+      placeholder: "000000",
+      signal: abandon.signal,
+    })
+    .catch(() => undefined);
+  const delay = Number(process.env["MINNE_MOCK_AUTO_CODE_MS"]);
+  await sleep(Number.isFinite(delay) && delay >= 0 ? delay : 4000);
+  interaction.signal?.throwIfAborted();
+  abandon.abort();
+  return code;
+}
+
 export function mockProvider(): Provider<"openai-completions"> {
   const model: Model<"openai-completions"> = {
     id: "mock-model",
@@ -332,11 +364,15 @@ export function mockProvider(): Provider<"openai-completions"> {
       interaction.signal.throwIfAborted();
       interaction.notify({ type: "info", message: "mock login starting" });
       interaction.notify({ type: "auth_url", url: MOCK_AUTH_URL });
-      const code = await interaction.prompt({
-        type: "manual_code",
-        message: "Enter the mock code",
-        placeholder: "000000",
-      });
+      const automatic = process.env["MINNE_MOCK_AUTO_CODE"];
+      const code =
+        automatic === undefined || automatic === ""
+          ? await interaction.prompt({
+              type: "manual_code",
+              message: "Enter the mock code",
+              placeholder: "000000",
+            })
+          : await codeFromCallback(interaction, automatic);
       interaction.signal.throwIfAborted();
       if (code !== MOCK_LOGIN_CODE) throw new Error("invalid code");
       interaction.notify({ type: "progress", message: "exchanging code" });

@@ -123,10 +123,16 @@ export interface SearchSourcesRequest {
 
 /**
  * The brain's current state. Terminates with `done` whose result is
- * `{ state, provider, model, providers: [...], sync }`, where `sync` is the
- * `SyncStatus` of ingest.ts: the watermark, how many captures are still
- * waiting, the schedule, and the summary of the last sync and lint passes —
- * what Settings renders as "last sync" (US-015).
+ * `{ state, provider, model, providers: [...], sync }`.
+ *
+ * Each entry of `providers` is `{ id, label, methods, authenticated, source,
+ * authType, defaultModel, models: [{id, name}] }` plus `baseUrl` for the local
+ * server — everything the onboarding provider step and Settings need to render
+ * auth state and a model picker without a second request.
+ *
+ * `sync` is the `SyncStatus` of ingest.ts: the watermark, how many captures are
+ * still waiting, the schedule, and the summary of the last sync and lint
+ * passes — what Settings renders as "last sync" (US-015).
  */
 export interface StatusRequest {
   type: "status";
