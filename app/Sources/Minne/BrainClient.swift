@@ -83,24 +83,42 @@ actor BrainClient {
     nonisolated let events: AsyncStream<BrainEvent>
     private let eventSink: AsyncStream<BrainEvent>.Continuation
 
+    /// User-facing connection state transitions, for the menu-bar UI.
+    /// Single-consumer, like `events`.
+    nonisolated let connectionStates: AsyncStream<BrainConnectionState>
+    private let connectionSink: AsyncStream<BrainConnectionState>.Continuation
+    private(set) var connection: BrainConnectionState = .stopped
+
     init(launch: BrainLaunch, clientName: String = "Minne.app") {
         self.launch = launch
         self.clientName = clientName
         (self.events, self.eventSink) = AsyncStream.makeStream(
             bufferingPolicy: .bufferingNewest(256))
+        (self.connectionStates, self.connectionSink) = AsyncStream.makeStream(
+            bufferingPolicy: .bufferingNewest(64))
     }
+
+    private func setConnection(_ new: BrainConnectionState) {
+        connection = new
+        connectionSink.yield(new)
+    }
+
+    /// Test hook: pid of the currently running brain process, if any.
+    var brainProcessIdentifier: Int32? { process?.processIdentifier }
 
     // MARK: - Lifecycle
 
     /// Spawns the brain and performs the version handshake.
     @discardableResult
     func start() async throws -> BrainHello {
-        try spawn()
+        setConnection(.connecting)
         do {
+            try spawn()
             return try await handshake()
         } catch {
             abandonProcess()
             state = .idle
+            setConnection(.failed(reason: String(describing: error)))
             throw error
         }
     }
@@ -108,6 +126,8 @@ actor BrainClient {
     /// Closes stdin so the brain exits cleanly; force-terminates if it lingers.
     func stop() async {
         state = .stopped
+        setConnection(.stopped)
+        defer { connectionSink.finish() }
         guard let proc = process else { return }
         generation += 1
         failAllPending(with: .notRunning)
@@ -173,9 +193,11 @@ actor BrainClient {
                 "brain speaks protocol \(version), app speaks \(BrainProtocol.version)")
         }
         restartAttempt = 0
-        return BrainHello(
+        let hello = BrainHello(
             protocolVersion: version,
             brainVersion: object["brainVersion"]?.stringValue ?? "unknown")
+        setConnection(.connected(brainVersion: hello.brainVersion))
+        return hello
     }
 
     // MARK: - Process management
@@ -295,6 +317,8 @@ actor BrainClient {
         restartAttempt += 1
         let delay = min(0.5 * pow(2.0, Double(restartAttempt - 1)), 30.0)
         state = .restarting
+        setConnection(
+            .restarting(attempt: restartAttempt, retryAt: Date().addingTimeInterval(delay)))
         Self.log(String(format: "restart #%d in %.1fs", restartAttempt, delay))
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -315,6 +339,7 @@ actor BrainClient {
                 // A version mismatch never resolves by retrying.
                 Self.log("giving up after failed handshake: \(error)")
                 state = .stopped
+                setConnection(.failed(reason: error.description))
             } else {
                 Self.log("restart failed: \(error)")
                 scheduleRestart()

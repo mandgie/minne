@@ -37,6 +37,66 @@ final class BrainClientTests: XCTestCase {
         await client.stop()
     }
 
+    /// Collects connection states so assertions can poll with a deadline.
+    private actor StateCollector {
+        private(set) var states: [BrainConnectionState] = []
+        func append(_ state: BrainConnectionState) { states.append(state) }
+    }
+
+    /// Polls until `predicate` matches the collected states or the deadline passes.
+    private func waitFor(
+        _ collector: StateCollector, timeout: TimeInterval = 20,
+        _ description: String,
+        _ predicate: ([BrainConnectionState]) -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate(await collector.states) { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTFail("timed out waiting for: \(description) — got \(await collector.states)")
+    }
+
+    func testConnectionStatesAcrossCrashRestartAndStop() async throws {
+        let client = try makeClient()
+        let collector = StateCollector()
+        let consumer = Task {
+            for await state in client.connectionStates {
+                await collector.append(state)
+            }
+        }
+        defer { consumer.cancel() }
+
+        _ = try await client.start()
+        try await waitFor(collector, "initial connect") { states in
+            guard case .connecting = states.first else { return false }
+            return states.contains { if case .connected = $0 { return true } else { return false } }
+        }
+
+        // Crash the brain; the client must report restarting, then reconnect.
+        let pid = await client.brainProcessIdentifier
+        let unwrappedPid = try XCTUnwrap(pid)
+        kill(unwrappedPid, SIGKILL)
+
+        try await waitFor(collector, "restarting then reconnected") { states in
+            guard
+                let restartIndex = states.firstIndex(where: {
+                    if case .restarting(let attempt, _) = $0 { return attempt == 1 }
+                    return false
+                })
+            else { return false }
+            return states[restartIndex...].contains {
+                if case .connected = $0 { return true } else { return false }
+            }
+        }
+
+        await client.stop()
+        try await waitFor(collector, "stopped") { states in
+            if case .stopped = states.last { return true }
+            return false
+        }
+    }
+
     func testUnimplementedRequestSurfacesTypedError() async throws {
         let client = try makeClient()
         _ = try await client.start()

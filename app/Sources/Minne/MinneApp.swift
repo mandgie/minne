@@ -3,7 +3,7 @@ import AppKit
 @main
 @MainActor
 final class MinneApp: NSObject, NSApplicationDelegate {
-    private var statusItem: NSStatusItem?
+    private var statusController: StatusItemController?
     private var brainClient: BrainClient?
 
     static func main() {
@@ -16,47 +16,26 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
-            button.image = NSImage(
-                systemSymbolName: "brain",
-                accessibilityDescription: "Minne"
-            )
+        let controller = StatusItemController(debugActions: [
+            // Temporary debug entries until US-013/US-014 build real UI.
+            .init(title: "Sign in to Claude…") { [weak self] in self?.signInAnthropic() },
+            .init(title: "Test chat") { [weak self] in self?.testChat() },
+        ])
+        controller.onOpenChat = {
+            BrainClient.log("Open Chat: chat window arrives in US-013")
         }
-
-        let menu = NSMenu()
-        let placeholder = NSMenuItem(title: "Minne — early development", action: nil, keyEquivalent: "")
-        placeholder.isEnabled = false
-        menu.addItem(placeholder)
-        menu.addItem(.separator())
-        // Temporary debug entry until US-014 builds real settings UI.
-        let signIn = NSMenuItem(
-            title: "Sign in to Claude…", action: #selector(signInAnthropic), keyEquivalent: "")
-        signIn.target = self
-        menu.addItem(signIn)
-        // Temporary debug entry until US-013 builds the real chat UI.
-        let testChat = NSMenuItem(
-            title: "Test chat", action: #selector(testChat), keyEquivalent: "")
-        testChat.target = self
-        menu.addItem(testChat)
-        menu.addItem(.separator())
-        menu.addItem(
-            NSMenuItem(
-                title: "Quit Minne",
-                action: #selector(NSApplication.terminate(_:)),
-                keyEquivalent: "q"
-            )
-        )
-        item.menu = menu
-        statusItem = item
+        controller.onOpenSettings = {
+            BrainClient.log("Settings: settings window arrives in US-014")
+        }
+        statusController = controller
 
         connectBrain()
     }
 
-    /// Connects to the brain and logs the handshake. No UI yet (US-005).
     private func connectBrain() {
         guard let launch = BrainLaunch.locate() else {
             BrainClient.log("no brain found — set MINNE_BRAIN_PATH or run scripts/build.sh")
+            statusController?.update(connection: .failed(reason: "brain binary not found"))
             return
         }
         let client = BrainClient(launch: launch)
@@ -68,6 +47,12 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                     "handshake OK: protocol \(hello.protocolVersion), brain v\(hello.brainVersion)")
             } catch {
                 BrainClient.log("handshake failed: \(error)")
+            }
+        }
+        // Drive the menu-bar UI from the client's connection state.
+        Task { [weak self] in
+            for await connection in client.connectionStates {
+                self?.statusController?.update(connection: connection)
             }
         }
         // Single consumer of the brain's intermediate events. Drives the OAuth
@@ -82,7 +67,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Debug sign-in (temporary until US-014)
 
-    @objc private func signInAnthropic() {
+    private func signInAnthropic() {
         guard let client = brainClient else {
             BrainClient.log("sign-in: brain not connected")
             return
@@ -101,7 +86,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     }
 
     /// Sends a canned chat prompt and logs the streamed reply (US-013 builds real UI).
-    @objc private func testChat() {
+    private func testChat() {
         guard let client = brainClient else {
             BrainClient.log("test chat: brain not connected")
             return
