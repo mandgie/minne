@@ -14,8 +14,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-004 Streaming chat through the agent loop
 
 ## Phase 2 — Capture
-- [~] US-005 Menu-bar app and sidecar supervision
-- [ ] US-006 Accessibility permission onboarding
+- [x] US-005 Menu-bar app and sidecar supervision
+- [~] US-006 Accessibility permission onboarding
 - [ ] US-007 Foreground text capture engine
 - [ ] US-008 Masking, blacklist, and pause
 - [ ] US-009 Raw source store and full-text index
@@ -41,3 +41,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-16 · US-002 · minne-us002 · verified green (13 bun tests, 2 swift tests, live restart-backoff check by agent) · bbe3f8b
 - 2026-08-16 · US-003 · minne-us003 · verified green (30 bun tests incl. mocked OAuth, 7 swift tests, compiled-bundle OAuth URL emission) · eaf64b6 · human browser sign-in still pending
 - 2026-08-16 · US-004 · minne-us004 · verified green (36 bun tests, 8 swift tests, compiled-binary mock chat smoke) · c75191c · Phase 1 complete
+- 2026-08-17 · US-005 · minne-us005 (work recovered by orchestrator after loop loss) · verified green (36 bun tests, 19 swift tests, peekaboo screenshot of live menu: Brain connected v0.1.0, all items present) · 12fa220
