@@ -22,8 +22,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 
 ## Phase 3 — Wiki memory
 - [x] US-010 Wiki schema and conventions
-- [~] US-011 Agent memory tools
-- [ ] US-012 Ingestion job (/sync)
+- [x] US-011 Agent memory tools
+- [~] US-012 Ingestion job (/sync)
 
 ## Phase 4 — Chat UI and settings
 - [ ] US-013 Chat window
@@ -47,3 +47,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-17 · US-008 · minne-us008 · verified green (36 bun tests, 128 swift tests re-run by orchestrator; agent live smoke: TextEdit redactions, blacklisted-domain + incognito Chrome skipped, menu pause/resume honored) · ae76a0a
 - 2026-08-17 · US-009 · minne-us009 · verified green (49 bun tests, 159 swift tests re-run by orchestrator; agent headless e2e: locked-screen capture → source file + FTS row + search_sources round-trip via compiled brain) · aeca188 · Phase 2 complete
 - 2026-08-17 · US-010 · minne-us010 · verified green (131 bun tests, 164 swift tests re-run by orchestrator; brain/templates single source of truth, drift-guard test in MemorySeedTests, wiki-lint with error/warning report) · 3ea2837
+- 2026-08-17 · US-011 · minne-us011 · verified green (221 bun tests, 164 swift tests re-run by orchestrator; five memory tools wired into chat agent, traversal-proof paths, diff-based write validation, mock-provider tool round-trip) · 8b49cbf
