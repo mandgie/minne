@@ -18,6 +18,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var chat: ChatWindowController?
     private var chatHotKey: GlobalHotKey?
     private var minneKey: MinneKeyController?
+    /// Held only by `-minneKeyPreview`, which needs the panel to outlive the
+    /// call that put it on screen.
+    private var minneKeyPreview: MinneKeyOverlayController?
     private var capture: CaptureEngine?
     private var store: SourceStore?
     private var retentionTimer: Timer?
@@ -64,6 +67,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         connectBrain()
 
         if let section = Self.launchSettingsSection() { showSettings(section: section) }
+        startMinneKeyPreview()
     }
 
     // MARK: - Settings
@@ -178,6 +182,57 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
         minneKey = controller
         settingsModel?.adopt(minneKeyActive: controller.isActive)
+    }
+
+    /// Debug hook: `-minneKeyPreview result` puts the overlay on screen in one
+    /// state, with no key press and no model behind it. Every other way of
+    /// reaching a state needs a caret in another app and a draft coming back,
+    /// which makes each of the six a race — and none of them can be reached at
+    /// all with the screen locked, where a window-id capture still works.
+    private func startMinneKeyPreview() {
+        guard let raw = UserDefaults.standard.string(forKey: "minneKeyPreview"),
+            let state = Self.previewState(raw)
+        else { return }
+        let target = CaretTarget(
+            bundleIdentifier: "com.google.Chrome", appName: "Google Chrome",
+            anchor: CaretAnchor(
+                rect: CGRect(x: 220, y: 260, width: 1, height: 18), source: .caret))
+        // `-minneKeyPreviewAppearance dark` forces the other palette. AppKit
+        // takes the appearance from the system and ignores the usual
+        // `-AppleInterfaceStyle` argument, so this is the only way to see the
+        // dark side of the panel without changing the user's own setting.
+        switch UserDefaults.standard.string(forKey: "minneKeyPreviewAppearance") {
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
+        let overlay = MinneKeyOverlayController()
+        minneKeyPreview = overlay
+        overlay.present(target, state: state)
+    }
+
+    private static func previewState(_ raw: String) -> MinneKeyOverlayState? {
+        switch raw {
+        case "working": return .working(.infer)
+        case "consulting": return .consulting(.infer, tool: "search_memory")
+        case "result":
+            return .result(
+                """
+                Hei Ingrid — torsdag passer fint for meg. Skal vi si 14:00 på \
+                kontoret? Da rekker vi å gå gjennom både budsjettet og \
+                Oslo-flyttingen før du reiser.
+                """)
+        case "long":
+            // The elision boundary, to see how tall the panel gets at its worst.
+            return .result(
+                String(
+                    repeating: "Takk for tålmodigheten — jeg rekker det før fredag. ",
+                    count: 12))
+        case "inserted": return .inserted(.pasteboard)
+        case "undone": return .undone
+        case "failed": return .failed("Google Chrome did not take the draft — use Copy")
+        default: return nil
+        }
     }
 
     // MARK: - Capture
