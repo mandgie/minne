@@ -17,8 +17,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-005 Menu-bar app and sidecar supervision
 - [x] US-006 Accessibility permission onboarding
 - [x] US-007 Foreground text capture engine
-- [~] US-008 Masking, blacklist, and pause
-- [ ] US-009 Raw source store and full-text index
+- [x] US-008 Masking, blacklist, and pause
+- [~] US-009 Raw source store and full-text index
 
 ## Phase 3 — Wiki memory
 - [ ] US-010 Wiki schema and conventions
@@ -44,3 +44,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-17 · US-005 · minne-us005 (work recovered by orchestrator after loop loss) · verified green (36 bun tests, 19 swift tests, peekaboo screenshot of live menu: Brain connected v0.1.0, all items present) · 12fa220
 - 2026-08-17 · US-006 · minne-us006 · verified green (36 bun tests, 34 swift tests, orchestrator re-ran suites + screenshot of onboarding window in simulated no-permission mode; agent verified deep link, live AXIsProcessTrusted auto-advance, degraded menu hint) · 2876cf3
 - 2026-08-17 · US-007 · minne-us007 · verified green (36 bun tests, 75 swift tests re-run by orchestrator; agent live smoke: TextEdit/Chrome/Finder capture with URLs, dedup on revisit, 0.1% avg CPU) · a28ad73
+- 2026-08-17 · US-008 · minne-us008 · verified green (36 bun tests, 128 swift tests re-run by orchestrator; agent live smoke: TextEdit redactions, blacklisted-domain + incognito Chrome skipped, menu pause/resume honored) · ae76a0a
