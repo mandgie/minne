@@ -36,6 +36,11 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         panel.title = "Minne"
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
+        // A ⌥Space window has to come to where the user is. Without these, an
+        // already-open panel stays on the Space it was opened on: pressing the
+        // hotkey from another Space (or from a fullscreen app, which is its own
+        // Space) silently does nothing at all.
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: ChatView(model: model))
@@ -48,22 +53,46 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         panel.setFrameAutosaveName(Self.frameAutosaveName)
     }
 
-    var isKey: Bool { panel.isVisible && panel.isKeyWindow }
+    /// Is the panel actually in front of the user right now? `isKeyWindow`
+    /// alone is not enough: it stays true while Minne is inactive and while the
+    /// user is on another Space, which made ⌥Space close a panel they could not
+    /// see instead of summoning it.
+    var isFrontmost: Bool {
+        panel.isVisible && panel.isKeyWindow && panel.isOnActiveSpace && NSApp.isActive
+    }
 
     func show() {
         NSApp.activate(ignoringOtherApps: true)
+        if panel.isVisible && !panel.isOnActiveSpace {
+            // `.moveToActiveSpace` only takes effect when a window is ordered
+            // in; one that is already visible on another Space stays there and
+            // the hotkey looks dead. Order it out first to force the move.
+            panel.orderOut(nil)
+        }
         panel.makeKeyAndOrderFront(nil)
         model.focusInput()
         installEscapeMonitor()
+        // Activation is asynchronous. Coming from another app — and especially
+        // when the panel had to cross Spaces — key status lands only after the
+        // Space transition, and a summoned window nobody can type into is
+        // useless. Re-assert it once the transition has had time to finish.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            guard !self.panel.isKeyWindow || !NSApp.isActive else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.panel.makeKeyAndOrderFront(nil)
+            self.model.focusInput()
+        }
     }
 
     func close() {
         panel.close()
     }
 
-    /// ⌥Space: open and focus when it isn't in front, dismiss when it is.
+    /// ⌥Space: summon it to wherever the user is when it isn't in front,
+    /// dismiss it when it is.
     func toggle() {
-        if isKey {
+        if isFrontmost {
             close()
         } else {
             show()
