@@ -17,18 +17,38 @@ final class FocusedFieldHandle {
     }
 }
 
+/// Everything the writer needs about where a draft is going: the element, the
+/// text that was in it, which paths this target allows, and how the span to be
+/// replaced gets selected when the path is a paste.
+@MainActor
+struct InsertionTarget {
+    var handle: FocusedFieldHandle?
+    /// The field's whole value as it was read.
+    var fieldText: String
+    var strategy: InsertionStrategy
+    var selection: SelectionPlan
+}
+
 /// Putting a finished draft into someone else's text field.
 ///
 /// A protocol because this is the one part of the feature with no honest test:
 /// it is Accessibility IPC into another process. The rules around it — which
-/// edit each mode makes, what undo puts back, whether an attempt worked — are
-/// pure and live in `FieldEdit` and `InsertionCheck`.
+/// edit each mode makes, which paths a target allows, how the span is selected,
+/// whether an attempt worked — are pure and live in `FieldEdit`,
+/// `InsertionPolicy`, `SelectionPlan` and `InsertionCheck`.
 @MainActor
 protocol FieldWriting: AnyObject {
-    /// Applies `edit` to `handle`'s element, whose text was `fieldText` when it
-    /// was read. Returns how it got there, or nil when no path worked.
-    func apply(_ edit: FieldEdit, fieldText: String, to handle: FocusedFieldHandle?)
-        -> InsertionMethod?
+    /// Applies `edit` to `target`'s element. Returns how it got there, or nil
+    /// when no path allowed by the strategy worked.
+    func apply(_ edit: FieldEdit, in target: InsertionTarget) -> InsertionMethod?
+    /// Takes an insertion back. `edit` is the inverse edit and `method` is how
+    /// the insertion got in, which decides whether the inverse is applied by us
+    /// or asked of the app (see `InsertionMethod.undoBelongsToTheApp`).
+    func revert(_ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget) -> Bool
+    /// The field's value now, or nil when the app will not say. Used to confirm
+    /// a paste after the fact — a keystroke is delivered asynchronously, so
+    /// there is nothing to read at the moment it is posted.
+    func currentText(of handle: FocusedFieldHandle?) -> String?
 }
 
 /// Did a write actually land? Pure, because "the app said .success" and "the
@@ -45,23 +65,40 @@ enum InsertionCheck {
         if after == before { return false }
         return replacement.isEmpty || after.contains(replacement)
     }
+
+    /// The lenient test, for confirming a paste some time after the event was
+    /// posted. Only "readable and completely unchanged" counts as a failure: a
+    /// rich editor may normalise what it took (whitespace, smart quotes, a
+    /// paragraph split into nodes) and calling that a failed insertion would
+    /// put an error over a draft the user can see sitting in their field.
+    static func changed(before: String, after: String?) -> Bool {
+        guard let after else { return true }
+        return after != before
+    }
 }
 
-/// Real `FieldWriting`, in three attempts, cheapest and most surgical first.
+/// Real `FieldWriting`.
 ///
+/// In a native app, three attempts, cheapest and most surgical first:
 /// 1. `AXSelectedTextRange` + `AXSelectedText` — replaces exactly the span, and
 ///    leaves the app's own undo stack intact where the app implements it.
 /// 2. `AXValue` — replaces the whole field. Works in plain single-line fields
 ///    and usually flattens native undo, which is why Minne keeps its own.
-/// 3. The pasteboard: save it, put the draft on it, synthesise Cmd+V into the
-///    app that still has focus, put the clipboard back.
+/// 3. The pasteboard: save it, put the draft on it, synthesise ⌘V into the app
+///    that still has focus, put the clipboard back.
+///
+/// In web content, only the third. See `InsertionStrategy` for why: the first
+/// two land in the DOM, verify perfectly, and are erased by the framework's
+/// next re-render.
 ///
 /// Glue, like `AccessibilityCaretLocator`: `swift test` has neither a trusted
 /// process nor another app to type into.
 @MainActor
 final class AccessibilityFieldWriter: FieldWriting {
-    /// `kVK_ANSI_V`.
+    /// `kVK_ANSI_V`, `kVK_ANSI_A`, `kVK_ANSI_Z`.
     private static let vKeyCode: CGKeyCode = 9
+    private static let aKeyCode: CGKeyCode = 0
+    private static let zKeyCode: CGKeyCode = 6
     /// How long a write is given to show up in the field before it is called a
     /// failure, and how often the field is re-read while waiting.
     ///
@@ -72,11 +109,15 @@ final class AccessibilityFieldWriter: FieldWriting {
     /// fallback ran, and the draft landed in the field *twice*.
     private static let verifyTimeout: TimeInterval = 0.12
     private static let verifyPoll: useconds_t = 15_000
+    /// Gap between the ⌘A and the ⌘V that follows it. The select has to be in
+    /// the app's queue before the paste, or the paste replaces nothing.
+    private static let keystrokeGap: useconds_t = 30_000
 
     private let swap: PasteboardSwap
-    /// Debug hook (`-minneKeyForcePaste YES`): skip the AX paths and take the
-    /// fallback. The apps that need it are the ones that cannot be scripted, so
-    /// this is the only way to put that path through a real insertion.
+    /// Debug hook (`-minneKeyForcePaste YES`): take the pasteboard path even in
+    /// a native app. The apps that need it are the ones that cannot be
+    /// scripted, so this is the only way to put that path through a real
+    /// insertion by hand.
     private let forcePasteboard: Bool
 
     init(swap: PasteboardSwap = PasteboardSwap(), forcePasteboard: Bool = false) {
@@ -84,29 +125,48 @@ final class AccessibilityFieldWriter: FieldWriting {
         self.forcePasteboard = forcePasteboard
     }
 
-    func apply(_ edit: FieldEdit, fieldText: String, to handle: FocusedFieldHandle?)
-        -> InsertionMethod?
-    {
+    func apply(_ edit: FieldEdit, in target: InsertionTarget) -> InsertionMethod? {
+        let viaPasteboard = forcePasteboard || target.strategy == .pasteboard
+
+        if !viaPasteboard, let element = target.handle?.element {
+            // Selecting the span first is worth doing even when the writes
+            // below fail: it is what makes the paste replace the right text.
+            let selected = setSelectedRange(edit.range, of: element)
+            if selected, setString(edit.replacement, kAXSelectedTextAttribute, of: element),
+                landed(edit, fieldText: target.fieldText, in: element)
+            {
+                return .selectedText
+            }
+            if let expected = edit.applied(to: target.fieldText),
+                setString(expected, kAXValueAttribute, of: element),
+                landed(edit, fieldText: target.fieldText, in: element)
+            {
+                return .value
+            }
+        }
+
+        return paste(edit.replacement, selecting: target.selection, in: target.handle?.element)
+            ? .pasteboard : nil
+    }
+
+    func revert(_ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget) -> Bool {
+        guard !method.undoBelongsToTheApp else { return Self.postUndo() }
+        guard let element = target.handle?.element else { return false }
+        guard setSelectedRange(edit.range, of: element) else { return false }
+        if setString(edit.replacement, kAXSelectedTextAttribute, of: element),
+            landed(edit, fieldText: target.fieldText, in: element)
+        {
+            return true
+        }
+        guard let expected = edit.applied(to: target.fieldText),
+            setString(expected, kAXValueAttribute, of: element)
+        else { return false }
+        return landed(edit, fieldText: target.fieldText, in: element)
+    }
+
+    func currentText(of handle: FocusedFieldHandle?) -> String? {
         guard let element = handle?.element else { return nil }
-        let expected = forcePasteboard ? nil : edit.applied(to: fieldText)
-
-        // Selecting the span first is worth doing even when the writes below
-        // fail: it is what makes the paste replace the right text.
-        let selected = setSelectedRange(edit.range, of: element)
-
-        if !forcePasteboard, selected,
-            setString(edit.replacement, kAXSelectedTextAttribute, of: element),
-            landed(edit, fieldText: fieldText, in: element)
-        {
-            return .selectedText
-        }
-        if let expected, setString(expected, kAXValueAttribute, of: element),
-            landed(edit, fieldText: fieldText, in: element)
-        {
-            return .value
-        }
-        let pasted = swap.paste(edit.replacement) { Self.postPaste() }
-        return pasted ? .pasteboard : nil
+        return string(element, kAXValueAttribute)
     }
 
     /// Reads the field back until the edit shows up, or the budget runs out.
@@ -149,15 +209,36 @@ final class AccessibilityFieldWriter: FieldWriting {
         return value as? String
     }
 
-    // MARK: - Pasteboard fallback
+    // MARK: - The pasteboard path
 
-    /// Synthesises ⌘V. Posted to the HID tap, which delivers it to whichever
+    /// Selects the span the plan asks for, then pastes.
+    ///
+    /// Only `.axRange` touches Accessibility, and only as a best effort — it is
+    /// the plan for a span that is neither the current selection nor the whole
+    /// field, which none of the three modes produces. The paste follows either
+    /// way: a draft in the wrong place is recoverable, no draft at all is not.
+    private func paste(_ text: String, selecting plan: SelectionPlan, in element: AXUIElement?)
+        -> Bool
+    {
+        switch plan {
+        case .asIs:
+            break
+        case .selectAll:
+            guard Self.postKey(Self.aKeyCode) else { return false }
+            usleep(Self.keystrokeGap)
+        case .axRange(let range):
+            if let element { _ = setSelectedRange(range, of: element) }
+        }
+        return swap.paste(text) { Self.postKey(Self.vKeyCode) }
+    }
+
+    /// Synthesises ⌘<key>. Posted to the HID tap, which delivers it to whichever
     /// app has focus — and that is still the user's app, because the overlay
     /// never took it.
-    private static func postPaste() -> Bool {
+    private static func postKey(_ key: CGKeyCode) -> Bool {
         guard let source = CGEventSource(stateID: .combinedSessionState),
-            let down = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
-            let up = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
+            let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+            let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
         else { return false }
         down.flags = .maskCommand
         up.flags = .maskCommand
@@ -165,4 +246,7 @@ final class AccessibilityFieldWriter: FieldWriting {
         up.post(tap: .cghidEventTap)
         return true
     }
+
+    /// ⌘Z, for taking back an insertion the app itself performed.
+    private static func postUndo() -> Bool { postKey(zKeyCode) }
 }

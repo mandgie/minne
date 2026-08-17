@@ -23,6 +23,9 @@ enum MinneKeyAction: Equatable, Sendable {
     case insert
     case copy
     case undo
+    /// Try the thing that just failed again — the insertion when there is a
+    /// draft to put in, the draft itself when there is not.
+    case retry
     case dismiss
 }
 
@@ -165,10 +168,11 @@ final class MinneKeyOverlayView: NSView {
                 hint: "Inserted (\(method.label)) · ⌘Z to undo", spinning: false, draft: nil,
                 actions: [.undo, .dismiss])
         case .undone:
-            show(hint: "Undone — the field is as it was", spinning: false, draft: nil,
+            show(
+                hint: "Undone — the field is as it was", spinning: false, draft: nil,
                 actions: [.dismiss])
         case .failed(let message):
-            show(hint: message, spinning: false, draft: nil, actions: [.dismiss])
+            show(hint: message, spinning: false, draft: nil, actions: [.retry, .dismiss])
         }
     }
 
@@ -220,6 +224,7 @@ final class MinneKeyOverlayView: NSView {
         case .insert: return "Insert"
         case .copy: return "Copy"
         case .undo: return "Undo"
+        case .retry: return "Retry"
         case .dismiss: return "Dismiss"
         }
     }
@@ -230,6 +235,7 @@ final class MinneKeyOverlayView: NSView {
         case .copy: return 2
         case .undo: return 3
         case .dismiss: return 4
+        case .retry: return 5
         }
     }
 
@@ -239,6 +245,7 @@ final class MinneKeyOverlayView: NSView {
         case 2: return .copy
         case 3: return .undo
         case 4: return .dismiss
+        case 5: return .retry
         default: return nil
         }
     }

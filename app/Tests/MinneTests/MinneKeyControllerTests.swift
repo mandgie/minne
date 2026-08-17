@@ -24,7 +24,16 @@ private final class FakeCaretLocator: CaretLocating {
         guard let existing = target else { return }
         target = CaretTarget(
             bundleIdentifier: existing.bundleIdentifier, appName: existing.appName,
-            anchor: existing.anchor, field: field)
+            anchor: existing.anchor, field: field, isWebContent: existing.isWebContent)
+    }
+
+    /// Points the scripted target at another app, and says whether its focused
+    /// element sits inside a web area.
+    func setApp(_ bundleIdentifier: String, name: String, isWebContent: Bool) {
+        guard let existing = target else { return }
+        target = CaretTarget(
+            bundleIdentifier: bundleIdentifier, appName: name, anchor: existing.anchor,
+            field: existing.field, isWebContent: isWebContent)
     }
 }
 
@@ -80,18 +89,34 @@ private final class FakeTap: MinneKeyTapping {
 @MainActor
 private final class FakeFieldWriter: FieldWriting {
     private(set) var edits: [FieldEdit] = []
+    /// The target each edit was applied to — which path it was allowed to take
+    /// and how the span was to be selected.
+    private(set) var targets: [InsertionTarget] = []
+    private(set) var reverts: [(edit: FieldEdit, method: InsertionMethod)] = []
     /// Text the fake field holds, updated by every applied edit.
     private(set) var contents = ""
     var method: InsertionMethod? = .selectedText
+    var revertSucceeds = true
+    /// A paste the app quietly ignored: the writer reports success (the
+    /// keystroke went out) but the field never changes.
+    var pasteIsIgnored = false
 
-    func apply(_ edit: FieldEdit, fieldText: String, to handle: FocusedFieldHandle?)
-        -> InsertionMethod?
-    {
+    func apply(_ edit: FieldEdit, in target: InsertionTarget) -> InsertionMethod? {
         guard let method else { return nil }
         edits.append(edit)
-        contents = edit.applied(to: fieldText) ?? fieldText
+        targets.append(target)
+        if !pasteIsIgnored { contents = edit.applied(to: target.fieldText) ?? target.fieldText }
         return method
     }
+
+    func revert(_ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget) -> Bool {
+        guard revertSucceeds else { return false }
+        reverts.append((edit, method))
+        contents = edit.applied(to: target.fieldText) ?? target.fieldText
+        return true
+    }
+
+    func currentText(of handle: FocusedFieldHandle?) -> String? { contents }
 }
 
 @MainActor
@@ -145,6 +170,8 @@ final class MinneKeyControllerTests: XCTestCase {
     private var pasteboard: FakePasteboard!
     private var backend: FakeDraftBackend!
     private var taps: [FakeTap]!
+    /// Work the controller has asked to happen later, and has not had run yet.
+    private var scheduled: [(delay: TimeInterval, work: @MainActor () -> Void)] = []
     /// Set to false to simulate a tap that cannot be created.
     private var tapCanBeCreated = true
     /// Held for the length of the test: the tap's callbacks capture the
@@ -158,6 +185,7 @@ final class MinneKeyControllerTests: XCTestCase {
         pasteboard = FakePasteboard()
         backend = FakeDraftBackend()
         taps = []
+        scheduled = []
         tapCanBeCreated = true
         controller = nil
     }
@@ -179,13 +207,21 @@ final class MinneKeyControllerTests: XCTestCase {
                 self.taps.append(tap)
                 return tap
             },
-            makeRequestId: { "draft-1" })
+            makeRequestId: { "draft-1" },
+            schedule: { [weak self] delay, work in self?.scheduled.append((delay, work)) })
         controller.backend = backend
         self.controller = controller
         return controller
     }
 
     private var tap: FakeTap { taps.last! }
+
+    /// Runs everything the controller has scheduled, the way the run loop would.
+    private func runScheduledWork() {
+        let due = scheduled
+        scheduled = []
+        for item in due { item.work() }
+    }
 
     // MARK: - When the tap exists
 
@@ -421,6 +457,152 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertTrue(writer.edits.isEmpty)
     }
 
+    // MARK: - Which path the draft takes in
+
+    /// The bug this policy exists for: in a browser an Accessibility write
+    /// lands in the DOM, reads back perfectly, and is erased by the editor's
+    /// next re-render. The paste goes through the app's own input pipeline, so
+    /// the framework owns the text and it survives.
+    func testWebContentGetsThePasteboardAndNoAXWriteIsAttempted() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(writer.targets.last?.strategy, .pasteboard)
+    }
+
+    func testANativeAppKeepsTheAccessibilityPath() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(writer.targets.last?.strategy, .accessibilityFirst)
+    }
+
+    /// An app that will not show its ancestors still gets the right path when
+    /// it is a browser we know by name.
+    func testABrowserThatNamesNoWebAreaStillGetsThePasteboard() {
+        locator.setApp("com.apple.Safari", name: "Safari", isWebContent: false)
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(writer.targets.last?.strategy, .pasteboard)
+    }
+
+    /// The paste replaces what is selected, so each mode has to arrive with the
+    /// right thing selected: the user's own selection, the whole editor, or
+    /// nothing at all when the draft goes in at the caret.
+    func testInstructionModeSelectsTheWholeEditorBeforePasting() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        locator.setField(
+            FieldSnapshot(text: "decline politely", selectedRange: NSRange(location: 16, length: 0))
+        )
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        controller.insert()
+        XCTAssertEqual(writer.targets.last?.selection, .selectAll)
+    }
+
+    func testRewriteModePastesOverTheUsersOwnSelection() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        locator.setField(
+            FieldSnapshot(
+                text: "hi — i cant make it", selection: "i cant make it",
+                selectedRange: NSRange(location: 5, length: 14)))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "I can't make it"))
+        controller.insert()
+        XCTAssertEqual(writer.targets.last?.selection, .asIs)
+    }
+
+    func testInferModePastesAtTheCaretWithNothingSelected() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(writer.targets.last?.selection, .asIs)
+    }
+
+    // MARK: - The overlay's own life
+
+    /// The user asked for text in their field and now has it; the panel has
+    /// nothing left to say and closes itself.
+    func testTheOverlayClosesItselfAfterASuccessfulInsertion() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertTrue(overlay.isPresenting, "the confirmation is shown before it closes")
+        XCTAssertEqual(overlay.states.last, .inserted(.selectedText))
+
+        runScheduledWork()
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    /// The opposite rule, and the reason the close is not unconditional: an
+    /// insertion that did not work has to stay on screen and say so.
+    func testAFailedInsertionKeepsTheOverlayUpWithAnError() {
+        writer.method = nil
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        runScheduledWork()
+        XCTAssertTrue(overlay.isPresenting)
+        XCTAssertEqual(
+            overlay.states.last, .failed("Minne could not write into TextEdit — use Copy"))
+    }
+
+    /// A paste is a keystroke: the app may simply never handle it, and nothing
+    /// can be read back at the moment it is posted. The check happens a moment
+    /// later, and turns silence into a message.
+    func testAPasteTheAppIgnoredBecomesAVisibleError() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        writer.method = .pasteboard
+        writer.pasteIsIgnored = true
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(overlay.states.last, .inserted(.pasteboard))
+
+        runScheduledWork()
+        XCTAssertTrue(overlay.isPresenting)
+        XCTAssertEqual(
+            overlay.states.last, .failed("Google Chrome did not take the draft — use Copy"))
+    }
+
+    func testAPasteThatLandedIsNotSecondGuessed() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        writer.method = .pasteboard
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        runScheduledWork()
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertEqual(writer.edits.count, 1, "a paste is never attempted twice")
+    }
+
+    func testRetryAsksForTheDraftAgainAfterTheBrainFailed() {
+        let controller = makeControllerAndTap()
+        backend.fail("draft-1", with: BrainClientError.brain(code: "busy", message: "busy"))
+        XCTAssertEqual(overlay.states.last, .failed("Minne is already writing a draft"))
+
+        controller.retry()
+        XCTAssertEqual(backend.requests.count, 2)
+        XCTAssertEqual(overlay.states.last, .working(.infer))
+    }
+
+    func testRetryInsertsAgainWhenTheDraftIsAlreadyWritten() {
+        writer.method = nil
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(writer.edits.count, 0)
+
+        writer.method = .selectedText
+        controller.retry()
+        XCTAssertEqual(writer.edits.count, 1)
+        XCTAssertEqual(overlay.states.last, .inserted(.selectedText))
+        XCTAssertEqual(backend.requests.count, 1, "the draft is not asked for twice")
+    }
+
     // MARK: - Undo
 
     func testUndoPutsTheFieldBackExactlyAsItWas() {
@@ -444,6 +626,34 @@ final class MinneKeyControllerTests: XCTestCase {
         controller.insert()
         controller.undo()
         XCTAssertEqual(writer.contents, "hi — i cant make it")
+    }
+
+    /// After a paste the app holds the edit on its own undo stack, and in a web
+    /// editor an inverse AX write would be repainted away exactly as the
+    /// insertion would have been. So Undo asks the app instead.
+    func testUndoAfterAPasteAsksTheAppRatherThanWritingBack() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        writer.method = .pasteboard
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        controller.undo()
+
+        XCTAssertEqual(writer.reverts.count, 1)
+        XCTAssertEqual(writer.reverts.last?.method, .pasteboard)
+        XCTAssertEqual(overlay.states.last, .undone)
+    }
+
+    /// And the ⌘Z key is left alone there: the app's own undo is already the
+    /// right answer, so swallowing the keystroke would only get in its way.
+    func testCommandZIsLeftToTheAppAfterAPaste() {
+        locator.setApp("com.google.Chrome", name: "Google Chrome", isWebContent: true)
+        writer.method = .pasteboard
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(tap.onCommand?(.undo), false)
+        XCTAssertTrue(writer.reverts.isEmpty)
     }
 
     func testUndoDoesNothingBeforeAnInsertion() {
@@ -529,7 +739,7 @@ final class MinneKeyControllerTests: XCTestCase {
         overlay.onAction?(.insert)
         XCTAssertEqual(writer.edits.count, 1)
         overlay.onAction?(.undo)
-        XCTAssertEqual(writer.edits.count, 2)
+        XCTAssertEqual(writer.reverts.count, 1)
         overlay.onAction?(.dismiss)
         XCTAssertFalse(overlay.isPresenting)
     }

@@ -62,6 +62,19 @@ struct DraftReply: Equatable, Sendable {
 final class MinneKeyController {
     /// Injected so tests never create a real event tap.
     typealias TapFactory = @MainActor () -> (any MinneKeyTapping)?
+    /// Injected so tests do not wait out the overlay's own timers.
+    typealias Scheduler = @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> Void
+
+    /// How long the "inserted" confirmation stays up before the overlay closes
+    /// itself. The draft is in the field by then and the user is looking at
+    /// their own text, not at us — but closing instantly would leave them
+    /// wondering whether the key did anything at all.
+    static let insertedDismissDelay: TimeInterval = 1.4
+    /// When a paste is checked. A synthesised ⌘V is delivered asynchronously,
+    /// so there is nothing to read at the moment it is posted; this is long
+    /// enough for the app to have handled it and short enough that an error
+    /// arrives while the user is still looking at the overlay.
+    static let pasteConfirmDelay: TimeInterval = 0.6
 
     /// One press, from the key going down to the overlay going away.
     private struct Session {
@@ -71,6 +84,8 @@ final class MinneKeyController {
         var draft: String?
         /// The edit that put the draft in, once it is in. Its `inverse` is undo.
         var applied: FieldEdit?
+        /// How it got in, which decides whose undo takes it back.
+        var method: InsertionMethod?
     }
 
     private let locator: any CaretLocating
@@ -79,8 +94,12 @@ final class MinneKeyController {
     private let pasteboard: any PasteboardHolding
     private let makeTap: TapFactory
     private let makeRequestId: () -> String
+    private let schedule: Scheduler
     private var tap: (any MinneKeyTapping)?
     private var session: Session?
+    /// Bumped by everything that changes what the overlay is showing, so a
+    /// timer armed for an earlier state does not close a later one.
+    private var overlayGeneration = 0
     /// Only touched on the main actor plus `deinit`, which by definition runs
     /// when nothing else holds this object.
     private nonisolated(unsafe) var workspaceObserver: (any NSObjectProtocol)?
@@ -112,7 +131,12 @@ final class MinneKeyController {
         permission: CapturePermissionState,
         blacklist: CaptureBlacklist = .standard,
         makeTap: @escaping TapFactory = { MinneKeyTap() },
-        makeRequestId: @escaping () -> String = { UUID().uuidString }
+        makeRequestId: @escaping () -> String = { UUID().uuidString },
+        schedule: @escaping Scheduler = { delay, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                MainActor.assumeIsolated(work)
+            }
+        }
     ) {
         self.locator = locator
         self.presenter = presenter
@@ -120,6 +144,7 @@ final class MinneKeyController {
         self.pasteboard = pasteboard
         self.makeTap = makeTap
         self.makeRequestId = makeRequestId
+        self.schedule = schedule
         self.isEnabled = enabled
         self.permission = permission
         self.blacklist = blacklist
@@ -205,6 +230,7 @@ final class MinneKeyController {
         let mode = target.mode
         let requestId = makeRequestId()
         session = Session(requestId: requestId, target: target, mode: mode)
+        overlayGeneration += 1
         presenter.present(target, state: .working(mode))
 
         guard let backend else {
@@ -243,7 +269,7 @@ final class MinneKeyController {
             BrainClient.log(
                 "minne key: draft ready (\(reply.text.count) chars"
                     + (reply.stylePage.map { ", style \($0)" } ?? "") + ")")
-            presenter.update(.result(reply.text))
+            show(.result(reply.text))
         case .failure(let error):
             fail(Self.message(for: error))
         }
@@ -264,51 +290,136 @@ final class MinneKeyController {
 
     private func fail(_ message: String) {
         BrainClient.log("minne key: \(message)")
-        presenter.update(.failed(message))
+        show(.failed(message))
+    }
+
+    /// Renders a state and cancels any timer armed for the previous one — an
+    /// error must not be swept away by the close that a successful insertion
+    /// scheduled a moment earlier.
+    private func show(_ state: MinneKeyOverlayState) {
+        overlayGeneration += 1
+        presenter.update(state)
+    }
+
+    /// Closes the overlay unless something else happens first.
+    private func closeOverlay(after delay: TimeInterval) {
+        let generation = overlayGeneration
+        schedule(delay) { [weak self] in
+            guard let self, self.overlayGeneration == generation, self.presenter.isPresenting
+            else { return }
+            self.dismiss()
+        }
     }
 
     /// A tool the draft reached for, so the overlay can say what it is reading.
     func toolStarted(requestId: String, name: String) {
         guard let session, session.requestId == requestId, session.draft == nil else { return }
-        presenter.update(.consulting(session.mode, tool: name))
+        show(.consulting(session.mode, tool: name))
     }
 
     // MARK: - Insertion and undo
 
     /// Puts the draft in the field — the first and only moment this feature
     /// touches the user's text.
+    ///
+    /// Which path it takes is not the writer's choice but the target's: web
+    /// content only ever gets the pasteboard, because an Accessibility write
+    /// there lands in a DOM the framework will repaint from its own state (see
+    /// `InsertionStrategy`). And a successful insertion closes the overlay: the
+    /// user asked for text in their field, they now have it, and a panel that
+    /// stayed put would be one more thing to dismiss.
     func insert() {
         guard var session, let draft = session.draft, session.applied == nil else { return }
         let edit = FieldEdit.forDraft(draft, mode: session.mode, field: session.target.field)
-        guard
-            let method = writer.apply(
-                edit, fieldText: session.target.field.text, to: session.target.handle)
-        else {
+        guard let method = writer.apply(edit, in: insertionTarget(for: edit, in: session)) else {
             fail("Minne could not write into \(session.target.appName) — use Copy")
             return
         }
         session.applied = edit
+        session.method = method
         self.session = session
-        BrainClient.log("minne key: inserted via \(method.rawValue)")
-        presenter.update(.inserted(method))
+        BrainClient.log(
+            "minne key: inserted via \(method.rawValue) (\(session.target.strategy.rawValue))")
+        show(.inserted(method))
+        if method == .pasteboard { confirmPaste(session.requestId, after: Self.pasteConfirmDelay) }
+        closeOverlay(after: Self.insertedDismissDelay)
+    }
+
+    private func insertionTarget(for edit: FieldEdit, in session: Session) -> InsertionTarget {
+        InsertionTarget(
+            handle: session.target.handle,
+            fieldText: session.target.field.text,
+            strategy: session.target.strategy,
+            selection: SelectionPlan.plan(for: edit, field: session.target.field))
+    }
+
+    /// A paste is a keystroke, not a write: it is delivered when the app gets
+    /// round to it, so there is nothing to verify at the moment it is posted.
+    /// This looks a moment later, and only to be able to *say* that nothing
+    /// happened — it never inserts again, because a second attempt on top of a
+    /// paste that did land would put the draft in twice.
+    private func confirmPaste(_ requestId: String, after delay: TimeInterval) {
+        schedule(delay) { [weak self] in
+            guard let self, var session = self.session, session.requestId == requestId,
+                session.method == .pasteboard, self.presenter.isPresenting
+            else { return }
+            let after = self.writer.currentText(of: session.target.handle)
+            guard !InsertionCheck.changed(before: session.target.field.text, after: after) else {
+                return
+            }
+            session.applied = nil
+            session.method = nil
+            self.session = session
+            self.fail("\(session.target.appName) did not take the draft — use Copy")
+        }
     }
 
     /// Puts back exactly what the field held before the draft went in.
     ///
-    /// The inverse edit, through the same writer: undo is not a second
-    /// insertion path with its own bugs, it is the one path pointed backwards.
+    /// For an Accessibility insertion that is the inverse edit through the same
+    /// writer — undo is not a second insertion path with its own bugs, it is
+    /// the one path pointed backwards. For a paste it is the app's own undo,
+    /// asked for with ⌘Z: the paste went through the app's event pipeline, so
+    /// the app has it on its undo stack, and in a web editor an inverse AX
+    /// write would be repainted away exactly like the insertion was.
     func undo() {
-        guard var session, let edit = session.applied else { return }
+        guard var session, let edit = session.applied, let method = session.method else { return }
         let inverse = edit.inverse
         let current = edit.applied(to: session.target.field.text) ?? session.target.field.text
-        guard writer.apply(inverse, fieldText: current, to: session.target.handle) != nil else {
+        var target = insertionTarget(for: inverse, in: session)
+        target.fieldText = current
+        target.selection = .axRange(inverse.range)
+        guard writer.revert(inverse, method: method, in: target) else {
             fail("Minne could not undo that — use \(session.target.appName)'s own undo")
             return
         }
         session.applied = nil
+        session.method = nil
         self.session = session
-        BrainClient.log("minne key: undone")
-        presenter.update(.undone)
+        BrainClient.log("minne key: undone via \(method.undoBelongsToTheApp ? "⌘Z" : "AX")")
+        show(.undone)
+        closeOverlay(after: Self.insertedDismissDelay)
+    }
+
+    /// Tries again after a failure: the insertion when there is a draft to put
+    /// in, the draft itself when there is not.
+    func retry() {
+        guard let session else { return }
+        if session.draft != nil {
+            insert()
+            return
+        }
+        let requestId = makeRequestId()
+        self.session = Session(requestId: requestId, target: session.target, mode: session.mode)
+        show(.working(session.mode))
+        guard let backend else {
+            fail("Minne's brain is not running")
+            return
+        }
+        backend.draft(id: requestId, context: Self.context(for: session.target, mode: session.mode))
+        { [weak self] result in
+            self?.drafted(requestId, result)
+        }
     }
 
     func copyDraft() {
@@ -321,6 +432,7 @@ final class MinneKeyController {
         switch action {
         case .insert: insert()
         case .copy: copyDraft()
+        case .retry: retry()
         case .undo: undo()
         case .dismiss: dismiss()
         }
@@ -333,9 +445,10 @@ final class MinneKeyController {
     /// Only ever while the overlay is up, and only for what the state on screen
     /// actually offers: Return is not ours while a draft is still being
     /// written, and ⌘Z is not ours unless there is an insertion of ours to take
-    /// back. Everything else belongs to the app the user is typing in, which is
-    /// the whole reason this is a question the tap asks rather than a rule it
-    /// applies.
+    /// back — nor when the draft went in as a paste, because then the app's own
+    /// undo stack holds it and is the better answer. Everything else belongs to
+    /// the app the user is typing in, which is the whole reason this is a
+    /// question the tap asks rather than a rule it applies.
     @discardableResult
     func command(_ command: MinneKeyCommand) -> Bool {
         guard presenter.isPresenting else { return false }
@@ -348,7 +461,9 @@ final class MinneKeyController {
             insert()
             return true
         case .undo:
-            guard case .inserted = presenter.state, session?.applied != nil else { return false }
+            guard case .inserted(let method) = presenter.state, session?.applied != nil,
+                !method.undoBelongsToTheApp
+            else { return false }
             undo()
             return true
         }
@@ -375,6 +490,7 @@ final class MinneKeyController {
             backend?.abortDraft(id: session.requestId)
         }
         session = nil
+        overlayGeneration += 1
         presenter.dismiss()
     }
 }
@@ -396,8 +512,10 @@ final class BrainDraftBackend: DraftBackend {
             do {
                 let result = try await client.request(.draft(id: id, context: context))
                 guard let reply = DraftReply(result) else {
-                    completion(.failure(BrainClientError.brain(
-                        code: "internal", message: "the brain returned no draft")))
+                    completion(
+                        .failure(
+                            BrainClientError.brain(
+                                code: "internal", message: "the brain returned no draft")))
                     return
                 }
                 completion(.success(reply))

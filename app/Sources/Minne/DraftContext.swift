@@ -111,6 +111,86 @@ struct FieldEdit: Equatable, Sendable {
     }
 }
 
+/// Which insertion paths a target allows.
+///
+/// The distinction is not cosmetic, it is the difference between a draft that
+/// stays and one that vanishes. A web editor's text belongs to a framework
+/// (React and friends): the DOM is a rendering of state the framework holds,
+/// and it only learns about a change from a real input event. An Accessibility
+/// write mutates the DOM directly — it reads back fine, so every verification
+/// passes — but the state never moved, so the next re-render (a blur, a click,
+/// the next keystroke) paints the old text back and the draft is gone. Verified
+/// live in a React-style contenteditable, and reported by a user in LinkedIn.
+///
+/// A synthesised ⌘V is a real input event. The framework processes it, owns the
+/// result, and the draft survives.
+enum InsertionStrategy: String, Equatable, Sendable {
+    /// Native app: the surgical AX write first, then AXValue, then the paste.
+    case accessibilityFirst
+    /// Web content: the pasteboard, and only the pasteboard.
+    case pasteboard
+}
+
+/// Which strategy a target gets.
+enum InsertionPolicy {
+    /// Browsers, for when the AX walk cannot answer.
+    ///
+    /// The walk (is the focused element inside an `AXWebArea`?) is the real
+    /// test — it is precise, it costs about a millisecond, and it catches
+    /// Electron apps and embedded web views that no bundle-id list ever will.
+    /// This list is the backstop for an app that will not show its ancestors.
+    static let webBundleIdentifiers: Set<String> = [
+        "com.apple.Safari",
+        "com.apple.SafariTechnologyPreview",
+        "com.google.Chrome",
+        "com.google.Chrome.beta",
+        "com.google.Chrome.canary",
+        "com.brave.Browser",
+        "com.brave.Browser.beta",
+        "org.mozilla.firefox",
+        "org.mozilla.firefoxdeveloperedition",
+        "com.microsoft.edgemac",
+        "company.thebrowser.Browser",
+        "company.thebrowser.dia",
+        "com.vivaldi.Vivaldi",
+        "com.operasoftware.Opera",
+        "ru.yandex.desktop.yandex-browser",
+        "org.chromium.Chromium",
+        "com.sigmaos.sigmaos.macos",
+    ]
+
+    static func strategy(bundleIdentifier: String, isWebContent: Bool) -> InsertionStrategy {
+        if isWebContent { return .pasteboard }
+        return webBundleIdentifiers.contains(bundleIdentifier) ? .pasteboard : .accessibilityFirst
+    }
+}
+
+/// How the span a draft replaces is selected before it is pasted.
+///
+/// The paste path cannot ask for a range the way an AX write can — it types
+/// into whatever is selected. Happily the three modes need only two answers:
+/// rewrite and infer already point at exactly the right span (the user's own
+/// selection, or the caret), and instruction wants the whole field, which is
+/// what ⌘A means inside a focused editor.
+enum SelectionPlan: Equatable, Sendable {
+    /// The caret or selection is already the span to replace.
+    case asIs
+    /// Select the whole editor first (⌘A).
+    case selectAll
+    /// Neither — ask Accessibility to move the selection, and paste anyway.
+    case axRange(NSRange)
+
+    static func plan(for edit: FieldEdit, field: FieldSnapshot) -> SelectionPlan {
+        if let selected = field.selectedRange, selected == edit.range { return .asIs }
+        let whole = NSRange(location: 0, length: field.text.utf16.count)
+        if edit.range == whole {
+            // Replacing nothing with something needs no selecting at all.
+            return whole.length == 0 ? .asIs : .selectAll
+        }
+        return .axRange(edit.range)
+    }
+}
+
 /// How a draft got into the field. Worth reporting, and worth logging: which
 /// path an app takes is the per-app quirk this feature lives or dies on.
 enum InsertionMethod: String, Equatable, Sendable {
@@ -131,6 +211,17 @@ enum InsertionMethod: String, Equatable, Sendable {
         case .pasteboard: return "paste"
         }
     }
+
+    /// Whose undo takes this insertion back.
+    ///
+    /// After a paste it is the app's own: the draft went in through the app's
+    /// event pipeline, so the app has it on its undo stack — and in a web
+    /// editor an inverse AX write would be erased by the same re-render that
+    /// erases an AX insertion. So ⌘Z is left to the app (the tap does not
+    /// consume it) and Minne's Undo button asks the app for it. After an AX
+    /// write it is ours, because setting `AXValue` usually flattens the app's
+    /// own undo stack, which is the reason Minne keeps an inverse at all.
+    var undoBelongsToTheApp: Bool { self == .pasteboard }
 }
 
 /// The person or channel being written to, when the app's window title says so.

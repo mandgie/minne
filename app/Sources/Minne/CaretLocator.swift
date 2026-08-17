@@ -16,6 +16,15 @@ struct CaretTarget {
     /// The element to insert into. Nil in tests, and in any app that would not
     /// name its focused element.
     var handle: FocusedFieldHandle?
+    /// Whether the focused element lives inside an `AXWebArea` — a browser tab,
+    /// but also an Electron app or an embedded web view. It decides how the
+    /// draft goes in; see `InsertionStrategy`.
+    var isWebContent = false
+
+    /// Which insertion paths this target allows.
+    var strategy: InsertionStrategy {
+        InsertionPolicy.strategy(bundleIdentifier: bundleIdentifier, isWebContent: isWebContent)
+    }
 
     /// What the key would do with this target, decided from the AX state alone.
     var mode: DraftMode {
@@ -28,7 +37,8 @@ struct CaretTarget {
     }
 
     var logSummary: String {
-        "\(appName) — \(mode.rawValue), caret from \(anchor.source.rawValue) at "
+        "\(appName) — \(mode.rawValue), \(isWebContent ? "web content" : "native"), "
+            + "caret from \(anchor.source.rawValue) at "
             + "(\(Int(anchor.rect.minX)), \(Int(anchor.rect.minY))), "
             + "\(field.text.count) chars in the field, \(field.windowText.count) around it"
     }
@@ -104,8 +114,31 @@ final class AccessibilityCaretLocator: CaretLocating {
             appName: running.localizedName ?? "Unknown",
             anchor: anchor,
             field: snapshot(of: focused),
-            handle: FocusedFieldHandle(element: focused))
+            handle: FocusedFieldHandle(element: focused),
+            isWebContent: role == Self.webAreaRole || isInsideWebArea(focused))
     }
+
+    /// The role that means "this is a rendered web page".
+    private static let webAreaRole = "AXWebArea"
+
+    /// Walks `AXParent` looking for a web area.
+    ///
+    /// Precise where a bundle-id list is a guess: it says yes to an Electron
+    /// app's editor and to an embedded web view, and no to a browser's own
+    /// address bar, which is a native field. Measured at 1.3 ms for the full
+    /// twelve levels of a Chrome tab — the depth cap is there for a tree with a
+    /// cycle in it, not for the cost.
+    private func isInsideWebArea(_ element: AXUIElement) -> Bool {
+        var current = element
+        for _ in 0..<Self.ancestorDepthLimit {
+            guard let parent = self.element(current, kAXParentAttribute) else { return false }
+            if string(parent, kAXRoleAttribute) == Self.webAreaRole { return true }
+            current = parent
+        }
+        return false
+    }
+
+    private static let ancestorDepthLimit = 16
 
     // MARK: - The field, as it stands
 
