@@ -52,7 +52,7 @@ The version comes from the `VERSION` file at the repo root — the single source
 both `CFBundleShortVersionString` and the brain's reported version.
 
 ```sh
-# Contributors: unsigned dmg, no Apple developer account needed
+# Contributors: ad-hoc signed dmg, no Apple developer account needed
 scripts/release.sh
 
 # Maintainers: signed, notarized and stapled
@@ -61,10 +61,14 @@ MINNE_NOTARY_PROFILE=minne-notary \
   scripts/release.sh
 ```
 
-Without those two variables the script prints what it is skipping and produces an
-**unsigned** dmg. That build runs fine when you build it yourself, but macOS
-quarantines it if it travels through a browser or a chat app — open it once with
-right-click → Open, or clear the flag with `xattr -dr com.apple.quarantine Minne.app`.
+Without those two variables the script signs the app **ad-hoc** — same hardened
+runtime, same entitlements, no Apple identity — and skips notarization, saying so
+as it goes. The bundle it produces passes `codesign --verify --strict --deep`, which
+an unsigned one does not: the linker ad-hoc signs every arm64 executable, and that
+signature alone claims a bundle seal that was never created. The build runs fine
+when you build it yourself, but macOS quarantines it if it travels through a browser
+or a chat app — open it once with right-click → Open, or clear the flag with
+`xattr -dr com.apple.quarantine Minne.app`.
 
 `MINNE_NOTARY_PROFILE` names a keychain profile you create once with
 `xcrun notarytool store-credentials`. The bundled brain is a Bun binary and is
