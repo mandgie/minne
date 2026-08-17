@@ -31,6 +31,20 @@ struct AuthState: Equatable, Sendable {
     let provider: String
     let model: String?
     let providers: [ProviderAuthInfo]
+    /// The brain's sync picture, which rides along on the same `status` answer
+    /// (US-012). Settings' Memory section renders it; nil when the brain is old
+    /// enough not to report it.
+    let sync: SyncStatusInfo?
+
+    init(
+        provider: String, model: String?, providers: [ProviderAuthInfo],
+        sync: SyncStatusInfo? = nil
+    ) {
+        self.provider = provider
+        self.model = model
+        self.providers = providers
+        self.sync = sync
+    }
 
     func info(_ providerId: String) -> ProviderAuthInfo? {
         providers.first { $0.id == providerId }
@@ -84,7 +98,8 @@ struct AuthState: Equatable, Sendable {
                 models: models)
         }
         return AuthState(
-            provider: provider, model: object["model"]?.stringValue, providers: providers)
+            provider: provider, model: object["model"]?.stringValue, providers: providers,
+            sync: SyncStatusInfo.parse(object["sync"]))
     }
 }
 

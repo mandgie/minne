@@ -7,9 +7,9 @@ import Foundation
 /// identifier (a password manager's whole window is a secret) and by domain for
 /// browser windows, where the app is Chrome but the *content* is the bank.
 ///
-/// The values here are a sane starting set; US-015 hangs a settings UI off the
-/// same type, which is why it is a value with public collections rather than a
-/// hardcoded switch.
+/// `standard` is the starting set every install gets. Settings edits the same
+/// value type (US-015) and `SettingsStore` persists the result, so a user who
+/// removes one of the defaults keeps it removed.
 struct CaptureBlacklist: Equatable, Sendable {
     /// Lowercased bundle identifiers.
     private(set) var bundleIdentifiers: Set<String>
@@ -46,6 +46,55 @@ struct CaptureBlacklist: Equatable, Sendable {
             "login.microsoftonline.com",
             "appleid.apple.com",
         ])
+
+    /// Display order for the settings editor, and the form the lists are
+    /// persisted in.
+    var sortedBundleIdentifiers: [String] { bundleIdentifiers.sorted() }
+    var sortedDomains: [String] { domains.sorted() }
+
+    /// Accepts what the user typed into the apps field. Bundle identifiers are
+    /// lowercased (matching is case-insensitive) and must be a single token —
+    /// anything with whitespace is a name like "1Password", not an id.
+    static func normalizeBundleIdentifier(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !value.isEmpty, !value.contains(where: \.isWhitespace), value != "." else {
+            return nil
+        }
+        return value
+    }
+
+    /// Accepts a bare domain, a leading dot, or a pasted URL.
+    static func normalize(domain raw: String) -> String? { normalizeDomain(raw) }
+
+    /// Returns the list with `raw` added, or nil when it is not a usable entry
+    /// (unparseable, or already blocked). Nil is what the editor turns into "no
+    /// row appeared", which is why adding a duplicate is not an error.
+    func adding(bundleIdentifier raw: String) -> CaptureBlacklist? {
+        guard let value = Self.normalizeBundleIdentifier(raw), !bundleIdentifiers.contains(value)
+        else { return nil }
+        var copy = self
+        copy.bundleIdentifiers.insert(value)
+        return copy
+    }
+
+    func adding(domain raw: String) -> CaptureBlacklist? {
+        guard let value = Self.normalizeDomain(raw), !domains.contains(value) else { return nil }
+        var copy = self
+        copy.domains.insert(value)
+        return copy
+    }
+
+    func removing(bundleIdentifiers values: [String]) -> CaptureBlacklist {
+        var copy = self
+        for value in values { copy.bundleIdentifiers.remove(value.lowercased()) }
+        return copy
+    }
+
+    func removing(domains values: [String]) -> CaptureBlacklist {
+        var copy = self
+        for value in values { copy.domains.remove(value.lowercased()) }
+        return copy
+    }
 
     func blocks(bundleIdentifier: String) -> Bool {
         bundleIdentifiers.contains(bundleIdentifier.lowercased())

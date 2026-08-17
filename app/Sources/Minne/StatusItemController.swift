@@ -72,7 +72,11 @@ final class StatusItemController: NSObject {
         applyAppearance()
     }
 
-    private func setPause(_ newState: PauseState) {
+    /// The one way pause changes, whoever asked: the menu's own items, or the
+    /// Privacy section of Settings. Everything downstream (the icon, the
+    /// capture engine, the settings window) hangs off `onPauseChange`, so there
+    /// is a single pause state rather than one per window.
+    func setPause(_ newState: PauseState) {
         pause = newState
         resumeTimer?.invalidate()
         resumeTimer = nil

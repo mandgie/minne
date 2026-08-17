@@ -164,6 +164,22 @@ final class CaptureEngineTests: XCTestCase {
         XCTAssertTrue(box.snapshots.isEmpty)
     }
 
+    /// Editing the list in Settings has to reach the engine that is already
+    /// running (US-015), not the next launch.
+    func testABlacklistEditedInSettingsAppliesToTheRunningEngine() {
+        let vault = WindowIdentity(
+            bundleIdentifier: "com.example.vault", appName: "Vault", windowTitle: "Personal")
+        let (engine, source, box) = makeEngine(window: vault, blacklist: CaptureBlacklist())
+        engine.tick(trigger: .focusChange, now: start)
+        XCTAssertEqual(box.snapshots.count, 1, "not blacklisted yet")
+
+        engine.update(blacklist: CaptureBlacklist(bundleIdentifiers: ["com.example.vault"]))
+        source.text = "an entirely different secret, worth capturing were it allowed"
+        engine.tick(trigger: .timer, now: start.addingTimeInterval(30))
+        XCTAssertEqual(source.walks, 1, "the next tick refuses before walking the tree")
+        XCTAssertEqual(box.snapshots.count, 1)
+    }
+
     func testPrivateBrowserWindowIsNeverWalked() {
         let (engine, source, box) = makeEngine(
             window: WindowIdentity(

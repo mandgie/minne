@@ -92,26 +92,20 @@ final class AuthModel {
     private var baseURLIsUserEdited = false
     private var modelIsUserChosen = false
 
-    /// AppKit observers. `@Observable` serves SwiftUI (US-015); AppKit has to
-    /// be told, so the onboarding window and the menu bar register here.
-    private struct Observer {
-        weak var owner: AnyObject?
-        let render: @MainActor (AuthModel) -> Void
-    }
-    private var observers: [Observer] = []
+    /// AppKit observers: the onboarding window, the settings window and the
+    /// menu bar all render this model.
+    private var observers = ObserverRegistry<AuthModel>()
 
     /// Registers a renderer and renders it once immediately. The registration
     /// lasts as long as `owner` does — onboarding windows come and go, and a
     /// dead one must not keep being rendered into.
     func observe(_ owner: AnyObject, _ handler: @escaping @MainActor (AuthModel) -> Void) {
-        observers.removeAll { $0.owner == nil }
-        observers.append(Observer(owner: owner, render: handler))
+        observers.add(owner, handler)
         handler(self)
     }
 
     private func notify() {
-        observers.removeAll { $0.owner == nil }
-        for observer in observers { observer.render(self) }
+        observers.notify(self)
     }
 
     // MARK: - Derived state

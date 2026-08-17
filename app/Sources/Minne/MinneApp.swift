@@ -12,6 +12,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var onboarding: OnboardingWindowController?
     private let authModel = AuthModel()
     private let chatModel = ChatModel()
+    private let settingsStore = SettingsStore()
+    private var settingsModel: SettingsModel?
+    private var settings: SettingsWindowController?
     private var chat: ChatWindowController?
     private var chatHotKey: GlobalHotKey?
     private var capture: CaptureEngine?
@@ -30,24 +33,22 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let settingsModel = makeSettingsModel()
+        self.settingsModel = settingsModel
+
         let controller = StatusItemController(
             permission: permission.state,
             debugActions: [
-                // Until Settings exists (US-015), these are how the account is
-                // reached; the live state itself is the menu's Account row.
-                .init(title: "Sign In…") { [weak self] in
-                    self?.showOnboarding(startingAt: .chooseProvider)
-                },
-                .init(title: "Sign Out") { [weak self] in self?.authModel.signOut() },
                 .init(title: "Search memory…") { [weak self] in self?.testSearchSources() },
                 .init(title: "Show Onboarding…") { [weak self] in self?.showOnboarding() },
             ])
         controller.onOpenChat = { [weak self] in self?.showChat() }
-        controller.onOpenSettings = {
-            BrainClient.log("Settings: settings window arrives in US-015")
-        }
+        controller.onOpenSettings = { [weak self] in self?.showSettings() }
         controller.onOpenOnboarding = { [weak self] in self?.showOnboarding() }
-        controller.onPauseChange = { [weak self] pause in self?.capture?.update(pause: pause) }
+        controller.onPauseChange = { [weak self] pause in
+            self?.capture?.update(pause: pause)
+            self?.settingsModel?.adopt(pause: pause)
+        }
         statusController = controller
         // Auth state is live in the menu bar the moment the brain reports it,
         // and after every login, logout and provider switch.
@@ -59,18 +60,90 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         startCapture()
         startPermissionTracking()
         connectBrain()
+
+        if let section = Self.launchSettingsSection() { showSettings(section: section) }
+    }
+
+    // MARK: - Settings
+
+    /// Builds the settings model and connects each setting to the part of the
+    /// running app it controls — which is what "takes effect without restart"
+    /// means in practice: an edit here reaches the live capture engine, the
+    /// retention sweep, the status item and the hotkey, with no relaunch.
+    private func makeSettingsModel() -> SettingsModel {
+        let model = SettingsModel(
+            auth: authModel, store: settingsStore, permission: permission.state)
+        model.onBlacklistChange = { [weak self] blacklist in
+            self?.capture?.update(blacklist: blacklist)
+        }
+        model.onRetentionChange = { [weak self] policy in
+            // A shorter retention makes captures overdue right now, not at the
+            // next daily tick.
+            self?.sweepRetention(policy: policy)
+        }
+        model.onRequestPause = { [weak self] pause in self?.statusController?.setPause(pause) }
+        // Opens the folder itself rather than selecting it in its parent: the
+        // point is to look inside the wiki (or drag it onto Obsidian).
+        model.onOpenFolder = { url in NSWorkspace.shared.open(url) }
+        model.onHotKeyChange = { [weak self] enabled in self?.updateChatHotKey(enabled: enabled) }
+        model.onWipe = { [weak self] paths in
+            guard let self else { return MemoryWipe.wipe(paths: paths) }
+            return self.wipeMemory(paths: paths)
+        }
+        return model
+    }
+
+    private func showSettings(section: SettingsModel.Section = .account) {
+        guard let settingsModel else { return }
+        if settings == nil {
+            let controller = SettingsWindowController(model: settingsModel)
+            controller.onShowSetup = { [weak self] in self?.showOnboarding() }
+            settings = controller
+        }
+        settings?.show(section: section)
+    }
+
+    /// Debug hook: `-settingsSection privacy` opens Settings straight at a
+    /// section, which is how each one is screenshotted without clicking.
+    private static func launchSettingsSection() -> SettingsModel.Section? {
+        guard let raw = UserDefaults.standard.string(forKey: "settingsSection") else { return nil }
+        return SettingsModel.Section(rawValue: raw)
+    }
+
+    /// Closes the index before its file is deleted and reopens it afterwards,
+    /// which re-seeds an empty memory root. The deletion itself is
+    /// `MemoryWipe`; this is the part only the app can do.
+    private func wipeMemory(paths: MemoryPaths) -> MemoryWipe.Report {
+        store = nil
+        let report = MemoryWipe.wipe(paths: paths)
+        startStore()
+        return report
     }
 
     // MARK: - Chat
 
     private func startChat() {
         chat = ChatWindowController(model: chatModel)
+        updateChatHotKey(enabled: settingsModel?.hotKeyEnabled ?? true)
+    }
+
+    /// Registers or drops ⌥Space. Carbon refuses a combination another app
+    /// already owns, so what Settings shows is the *registration*, not the
+    /// preference.
+    private func updateChatHotKey(enabled: Bool) {
+        guard enabled else {
+            chatHotKey = nil
+            settingsModel?.adopt(hotKeyRegistered: false)
+            BrainClient.log("⌥Space turned off in Settings — chat opens from the menu bar")
+            return
+        }
         chatHotKey = GlobalHotKey(
             keyCode: GlobalHotKey.optionSpace.keyCode,
             modifiers: GlobalHotKey.optionSpace.modifiers
         ) { [weak self] in
             self?.chat?.toggle()
         }
+        settingsModel?.adopt(hotKeyRegistered: chatHotKey != nil)
         if chatHotKey == nil {
             BrainClient.log("⌥Space is taken by another app — chat opens from the menu bar only")
         }
@@ -84,8 +157,12 @@ final class MinneApp: NSObject, NSApplicationDelegate {
 
     private func startCapture() {
         startStore()
+        var configuration = CaptureScheduler.Configuration()
+        // The blacklist the user last left in Settings, not the shipped default.
+        configuration.blacklist = settingsStore.blacklist
         let engine = CaptureEngine(
-            source: AccessibilityWindowSource(), permission: permission.state)
+            source: AccessibilityWindowSource(), permission: permission.state,
+            configuration: configuration)
         engine.onSnapshot = { [weak self] snapshot in
             BrainClient.log("capture: \(snapshot.logSummary)")
             self?.persist(snapshot)
@@ -101,6 +178,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     /// corrupt database) costs persistence, not the app: capture keeps running
     /// and the menu bar stays alive.
     private func startStore() {
+        retentionTimer?.invalidate()
         do {
             let store = try SourceStore()
             self.store = store
@@ -134,10 +212,10 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func sweepRetention() {
+    private func sweepRetention(policy: RetentionPolicy = .fromUserDefaults()) {
         guard let store else { return }
         do {
-            let report = try store.prune(policy: .fromUserDefaults())
+            let report = try store.prune(policy: policy)
             guard !report.isEmpty else { return }
             BrainClient.log(
                 "retention: pruned \(report.removedSnapshots) snapshots from \(report.removedDays.count) day(s)"
@@ -159,6 +237,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             self.statusController?.update(permission: state)
             self.onboarding?.permissionChanged(state)
             self.capture?.update(permission: state)
+            self.settingsModel?.adopt(permission: state)
         }
         permission.startPolling(interval: AccessibilityPermission.backgroundInterval)
 
@@ -240,6 +319,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         brainClient = client
         chatModel.backend = BrainChatBackend(client: client)
         authModel.backend = BrainAuthBackend(client: client)
+        settingsModel?.backend = BrainSettingsBackend(client: client)
         Task { [weak self] in
             do {
                 let hello = try await client.start()

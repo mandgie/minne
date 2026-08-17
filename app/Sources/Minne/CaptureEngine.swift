@@ -86,6 +86,16 @@ final class CaptureEngine {
         if running && permission.isGranted { tick(trigger: .focusChange) }
     }
 
+    /// An edited blacklist (US-015) reaches the running engine here — the next
+    /// tick, at most five seconds away, already honours it.
+    func update(blacklist: CaptureBlacklist) {
+        guard blacklist != scheduler.configuration.blacklist else { return }
+        scheduler.update(blacklist: blacklist)
+        BrainClient.log(
+            "capture blacklist updated: \(blacklist.bundleIdentifiers.count) app(s), \(blacklist.domains.count) domain(s)"
+        )
+    }
+
     func update(pause: PauseState) {
         guard pause != self.pause else { return }
         self.pause = pause

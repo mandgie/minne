@@ -71,7 +71,10 @@ struct CaptureScheduler {
         case rejected(Rejection)
     }
 
-    let configuration: Configuration
+    /// Mutable in one respect only: the blacklist is edited in Settings and
+    /// has to reach a scheduler that is already running (US-015). Everything
+    /// else is fixed for the life of the scheduler.
+    private(set) var configuration: Configuration
 
     /// Per-window debounce and dedup state, most recently touched last.
     private var tracked: [(window: WindowIdentity, state: WindowState)] = []
@@ -88,6 +91,13 @@ struct CaptureScheduler {
 
     init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
+    }
+
+    /// Applies an edited blacklist. Takes effect on the very next decision:
+    /// per-window debounce state is untouched, but a window whose app has just
+    /// been blacklisted is refused before the debounce is even consulted.
+    mutating func update(blacklist: CaptureBlacklist) {
+        configuration.blacklist = blacklist
     }
 
     /// Whether to walk the focused window's tree now.
