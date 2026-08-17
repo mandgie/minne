@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { loadConfig, saveConfig, type MinneConfig } from "./config";
 import { FileCredentialStore } from "./credentials";
+import { SyncBusyError, SyncEngine, settingsFromEnv, type PassResult } from "./ingest";
 import {
   PROTOCOL_VERSION,
   doneEvent,
@@ -19,6 +20,7 @@ import {
   type BrainRequest,
   type ChatRequest,
   type ConfigureRequest,
+  type IngestRequest,
   type LoginRequest,
   type LogoutRequest,
   type SearchSourcesRequest,
@@ -27,6 +29,11 @@ import { EmptyQueryError, searchSources } from "./sources";
 import { Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
 import { buildRegistry, ollamaProviderFrom, type Registry } from "./providers";
+
+/** The model for a turn, or why there is none and which error code says so. */
+type ResolvedModel =
+  | { model: Model<Api> }
+  | { unavailable: string; code: "not_authenticated" | "invalid_request" };
 
 interface PromptWaiter {
   loginId: string;
@@ -81,6 +88,7 @@ export class MinneBrain {
   private readonly configPath: string;
   private readonly store: FileCredentialStore;
   private readonly memory: Memory;
+  private readonly sync: SyncEngine;
   private config: MinneConfig;
   private registry: Registry;
 
@@ -104,10 +112,35 @@ export class MinneBrain {
     this.memory = new Memory({ root: deps.memoryRoot, dataDir: deps.dataDir });
     this.config = loadConfig(this.configPath);
     this.registry = buildRegistry(this.config, this.store);
+    this.sync = new SyncEngine({
+      memory: this.memory,
+      dataDir: deps.dataDir,
+      log: deps.log,
+      // Late-bound on purpose: the ingestion pass runs on whatever provider and
+      // model chat is using at the time it fires, including one signed in after
+      // the brain started.
+      resolveModel: () => this.resolveModel(),
+      streamFn: this.registry.models.streamSimple.bind(this.registry.models),
+      settings: settingsFromEnv(process.env),
+    });
   }
 
-  /** Aborts in-flight logins (used at stdin EOF so pending flows settle). */
+  /** Starts the scheduled sync and lint passes. Called by main.ts, not by tests. */
+  startScheduler(): void {
+    this.sync.startTimers();
+    this.log(
+      `sync scheduled every ${this.sync.settings.intervalMs / 60_000} min, ` +
+        `lint every ${this.sync.settings.lintIntervalMs / 3_600_000} h`,
+    );
+  }
+
+  /**
+   * Aborts in-flight logins and any running pass (used at stdin EOF so pending
+   * flows settle), and stops the scheduler.
+   */
   shutdown(): void {
+    this.sync.stopTimers();
+    this.sync.abort();
     for (const aborter of this.aborters.values()) aborter.abort();
   }
 
@@ -150,14 +183,21 @@ export class MinneBrain {
         return this.handleConfigure(request);
       case "search_sources":
         return this.handleSearchSources(request);
+      case "ingest":
+        return this.handleIngest(request);
       case "abort": {
         const aborter = this.aborters.get(request.targetId);
         aborter?.abort();
         this.send(doneEvent(request.id, { aborted: aborter !== undefined }));
         return;
       }
-      default:
-        this.send(errorEvent(request.id, "unimplemented", `"${request.type}" is not implemented yet`));
+      default: {
+        // Exhaustive today; the annotation is what fails the build the day a
+        // request type is added to the protocol and not handled here.
+        const unhandled: never = request;
+        const raw = unhandled as BrainRequest;
+        this.send(errorEvent(raw.id, "unimplemented", `"${raw.type}" is not implemented yet`));
+      }
     }
   }
 
@@ -178,40 +218,16 @@ export class MinneBrain {
       return;
     }
 
-    const providerId = this.config.provider;
-    let check;
-    try {
-      check = await this.registry.models.checkAuth(providerId);
-    } catch (err) {
-      this.log(`checkAuth(${providerId}) failed:`, err);
-    }
-    if (check === undefined) {
-      this.send(
-        errorEvent(
-          id,
-          "not_authenticated",
-          `provider "${providerId}" is not authenticated — sign in first`,
-        ),
-      );
-      return;
-    }
-    const modelId = this.selectedModel();
-    const model = modelId ? this.registry.models.getModel(providerId, modelId) : undefined;
-    if (!model) {
-      this.send(
-        errorEvent(
-          id,
-          "invalid_request",
-          `model "${modelId ?? "(none)"}" not found for provider "${providerId}"`,
-        ),
-      );
+    const resolution = await this.resolveModel();
+    if ("unavailable" in resolution) {
+      this.send(errorEvent(id, resolution.code, resolution.unavailable));
       return;
     }
 
-    const agent = this.ensureChatAgent(model);
+    const agent = this.ensureChatAgent(resolution.model);
     if (request.newChat) agent.reset();
     // Provider/model selection may have changed since the session started.
-    agent.state.model = model;
+    agent.state.model = resolution.model;
 
     const aborter = new AbortController();
     aborter.signal.addEventListener("abort", () => agent.abort(), { once: true });
@@ -295,6 +311,75 @@ export class MinneBrain {
     });
     this.chatAgent = agent;
     return agent;
+  }
+
+  /**
+   * The model a turn should run on, or why there is none. Shared by chat and
+   * the ingestion pass so the two can never drift onto different providers —
+   * "sync uses the same OAuth'd model as chat" is one function, not a
+   * convention.
+   */
+  private async resolveModel(): Promise<ResolvedModel> {
+    const providerId = this.config.provider;
+    let check;
+    try {
+      check = await this.registry.models.checkAuth(providerId);
+    } catch (err) {
+      this.log(`checkAuth(${providerId}) failed:`, err);
+    }
+    if (check === undefined) {
+      return {
+        unavailable: `provider "${providerId}" is not authenticated — sign in first`,
+        code: "not_authenticated",
+      };
+    }
+    const modelId = this.selectedModel();
+    const model = modelId ? this.registry.models.getModel(providerId, modelId) : undefined;
+    if (!model) {
+      return {
+        unavailable: `model "${modelId ?? "(none)"}" not found for provider "${providerId}"`,
+        code: "invalid_request",
+      };
+    }
+    return { model };
+  }
+
+  // ---- ingestion ----
+
+  /**
+   * Runs a sync or lint pass now. The pass itself decides whether there is
+   * anything to do — an idle or skipped pass is a `done` carrying that verdict,
+   * not an error, because "nothing new" and "not signed in" are normal states
+   * for a background job and Settings shows them as such. Only a genuine
+   * failure (or a second pass on top of a running one) is an error.
+   */
+  private async handleIngest(request: IngestRequest): Promise<void> {
+    const mode = request.mode ?? "sync";
+    const aborter = new AbortController();
+    aborter.signal.addEventListener("abort", () => this.sync.abort(), { once: true });
+    this.aborters.set(request.id, aborter);
+    try {
+      const result: PassResult =
+        mode === "lint"
+          ? { pass: "lint", ...(await this.sync.runLint()) }
+          : { pass: "sync", ...(await this.sync.runSync()) };
+      if (result.status === "error") {
+        this.send(errorEvent(request.id, "provider_error", result.reason ?? `${mode} pass failed`));
+        return;
+      }
+      this.log(`${mode} pass: ${result.status}`);
+      this.send(doneEvent(request.id, result));
+    } catch (err) {
+      if (err instanceof SyncBusyError) {
+        this.send(errorEvent(request.id, "busy", err.message));
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`${mode} pass failed:`, err);
+      this.send(errorEvent(request.id, "internal", message));
+    } finally {
+      this.aborters.delete(request.id);
+    }
   }
 
   // ---- login ----
@@ -508,6 +593,9 @@ export class MinneBrain {
         provider: this.config.provider,
         model: this.selectedModel(),
         providers,
+        // What Settings shows as "last sync": the watermark, the backlog, the
+        // schedule, and what the last sync and lint passes did (US-015).
+        sync: this.sync.status(),
       }),
     );
   }

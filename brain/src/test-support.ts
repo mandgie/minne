@@ -23,6 +23,10 @@ function spawnBrain(dataDir: string, env?: Record<string, string | undefined>) {
       // caller already owns, overridable for tests that seed a memory.
       MINNE_MEMORY_ROOT: join(dataDir, "memory"),
       MINNE_MOCK_PROVIDER: "1",
+      // No scheduled passes in a subprocess test: a tick would spend a turn on
+      // whatever the test seeded, at a moment no assertion is expecting.
+      MINNE_SYNC_INTERVAL_MS: "0",
+      MINNE_LINT_INTERVAL_MS: "0",
       ...env,
     },
   });
@@ -148,6 +152,12 @@ export function seedSnapshotIndex(dataDir: string, snapshots: TestSnapshot[]): v
       snapshot.text,
     );
   }
+  // Fold the WAL back into the database file before another process opens it
+  // read-only. Without this the seeded rows live in `-wal` until sqlite decides
+  // to checkpoint, and a brain subprocess that opens the file in that window
+  // sees an empty index — which is the intermittent "no results" failure this
+  // harness used to produce about once in ten runs.
+  db.run("PRAGMA wal_checkpoint(TRUNCATE)");
   db.close();
 }
 

@@ -21,6 +21,8 @@ describe("decodeRequest", () => {
       { type: "logout", id: "7", provider: "anthropic" },
       { type: "logout", id: "8" },
       { type: "ingest", id: "9" },
+      { type: "ingest", id: "9b", mode: "sync" },
+      { type: "ingest", id: "9c", mode: "lint" },
       { type: "status", id: "10" },
       { type: "auth_reply", id: "11", targetId: "6", promptId: "6:1", value: "code" },
       { type: "auth_reply", id: "12", targetId: "6", promptId: "6:1", cancel: true },
@@ -97,6 +99,8 @@ describe("decodeRequest", () => {
       '{"type":"search_sources","id":"a","query":"   "}',
       '{"type":"search_sources","id":"a","query":"x","limit":0}',
       '{"type":"search_sources","id":"a","query":"x","limit":2.5}',
+      '{"type":"ingest","id":"a","mode":"compost"}',
+      '{"type":"ingest","id":"a","mode":1}',
     ];
     for (const line of bad) {
       const decoded = decodeRequest(line);

@@ -15,6 +15,26 @@ final class BrainClientTests: XCTestCase {
             .appendingPathComponent("brain/src/main.ts")
     }
 
+    /// Every test here spawns a real brain, and the brain resolves its data dir
+    /// and memory root from the environment it inherits. Without an override
+    /// those are the user's own — and `ingest` would digest their captures with
+    /// their own credentials into their own `~/Minne`. Set once for the class,
+    /// because the child inherits this process's environment at spawn time.
+    override class func setUp() {
+        super.setUp()
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("minne-brain-tests-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: scratch, withIntermediateDirectories: true)
+        setenv("MINNE_APP_SUPPORT_DIR", scratch.appendingPathComponent("support").path, 1)
+        setenv("MINNE_MEMORY_ROOT", scratch.appendingPathComponent("memory").path, 1)
+        // No scheduled sync or lint pass while a test is driving the brain.
+        setenv("MINNE_SYNC_INTERVAL_MS", "0", 1)
+        setenv("MINNE_LINT_INTERVAL_MS", "0", 1)
+        unsetenv("ANTHROPIC_API_KEY")
+        unsetenv("OPENAI_API_KEY")
+    }
+
     private func makeClient() throws -> BrainClient {
         try XCTSkipUnless(
             FileManager.default.fileExists(atPath: Self.brainMain.path),
@@ -97,15 +117,30 @@ final class BrainClientTests: XCTestCase {
         }
     }
 
-    func testUnimplementedRequestSurfacesTypedError() async throws {
+    /// The scratch app-support dir has no capture index, so the pass has
+    /// nothing to digest: it reports `idle` without reaching a model, which is
+    /// also what the "sync now" button gets on a quiet machine.
+    func testIngestReportsAnIdlePass() async throws {
+        let client = try makeClient()
+        _ = try await client.start()
+        let result = try await client.request(.ingest(id: UUID().uuidString, mode: nil))
+        guard let object = result?.objectValue else {
+            return XCTFail("ingest result is not an object: \(String(describing: result))")
+        }
+        XCTAssertEqual(object["pass"]?.stringValue, "sync")
+        XCTAssertEqual(object["status"]?.stringValue, "idle")
+        await client.stop()
+    }
+
+    func testRejectedRequestSurfacesTypedError() async throws {
         let client = try makeClient()
         _ = try await client.start()
         do {
-            // ingest is still a stub; chat is live as of US-004 and would need auth.
-            _ = try await client.request(.ingest(id: UUID().uuidString))
-            XCTFail("ingest should not be implemented yet")
+            _ = try await client.request(
+                .login(id: UUID().uuidString, provider: "frobnicator", method: nil))
+            XCTFail("an unknown provider should not be accepted")
         } catch let BrainClientError.brain(code, _) {
-            XCTAssertEqual(code, "unimplemented")
+            XCTAssertEqual(code, "invalid_request")
         }
         await client.stop()
     }

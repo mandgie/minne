@@ -25,6 +25,10 @@ const brain = new MinneBrain({
   brainVersion: BRAIN_VERSION,
 });
 
+// The ingestion job runs on its own timers from here on; a tick with nothing
+// new past the watermark costs one count(*) and calls no model.
+brain.startScheduler();
+
 // Handlers run concurrently: a login parks on an auth_prompt that is answered
 // by a later auth_reply request, so the read loop must never await a handler.
 const inFlight = new Set<Promise<void>>();

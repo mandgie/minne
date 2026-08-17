@@ -20,12 +20,18 @@ import {
  *
  * Its models stream deterministically (no HTTP), scripted by the last user
  * message:
- *   - "FAIL: <reason>"  -> stream error with errorMessage "mock failure: <reason>"
+ *   - a line "FAIL: <reason>" -> stream error, errorMessage "mock failure: <reason>"
  *   - starts with "SLOW" -> many small deltas with sleeps, for abort tests
- *   - "TOOL: <name> <json args>" -> one tool call, then (once the result comes
- *                           back) "tool <name> said: <result text>" — the
+ *   - a line "TOOL: <name> <json args>" -> one tool call per such line, in
+ *                           order, one per turn, then (once the last result
+ *                           comes back) "tool <name> said: <result text>" — the
  *                           scripted way to drive a real tool round trip
- *                           through the agent loop and the protocol
+ *                           through the agent loop and the protocol. The lines
+ *                           may sit anywhere in the message, which is how the
+ *                           ingestion pass is scripted: the directives ride
+ *                           along in a seeded snapshot's captured text. The
+ *                           same lines in MINNE_MOCK_SCRIPT apply to every
+ *                           message, for prompts a test does not compose.
  *   - anything else      -> "echo: <text> [history=<n>]" split into deltas,
  *                           where <n> is the message count sent to the model
  *                           (verifies session persistence / new_chat resets)
@@ -59,16 +65,49 @@ function lastUserText(context: Context): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The `TOOL: <name> <json>` script, parsed. */
-function scriptedToolCall(text: string): ToolCall | null {
-  const match = /^TOOL:\s*(\S+)\s*(\{[\s\S]*\})?\s*$/.exec(text);
-  if (!match) return null;
-  return {
-    type: "toolCall",
-    id: `mock-call-${Date.now()}`,
-    name: match[1] as string,
-    arguments: match[2] === undefined ? {} : (JSON.parse(match[2]) as Record<string, unknown>),
-  };
+/** Every `TOOL: <name> <json>` line in the message, in order. */
+function scriptedToolCalls(text: string): ToolCall[] {
+  const calls: ToolCall[] = [];
+  for (const line of text.split("\n")) {
+    const match = /^\s*TOOL:\s*(\S+)\s*(\{.*\})?\s*$/.exec(line);
+    if (!match) continue;
+    calls.push({
+      type: "toolCall",
+      id: `mock-call-${calls.length}-${Date.now()}`,
+      name: match[1] as string,
+      arguments: match[2] === undefined ? {} : (JSON.parse(match[2]) as Record<string, unknown>),
+    });
+  }
+  return calls;
+}
+
+/**
+ * Tool results since the last user message — i.e. how far through the script
+ * this run has got, since the mock emits exactly one call per turn.
+ */
+function scriptProgress(context: Context): number {
+  let count = 0;
+  for (let i = context.messages.length - 1; i >= 0; i--) {
+    const message = context.messages[i];
+    if (message?.role === "user") break;
+    if (message?.role === "toolResult") count++;
+  }
+  return count;
+}
+
+/**
+ * Model requests the mock has served, process-wide. A test that wants to prove
+ * a pass called no model asserts this did not move — the only evidence that is
+ * about the model rather than about what happened to reach disk.
+ */
+let streamCalls = 0;
+
+export function mockStreamCalls(): number {
+  return streamCalls;
+}
+
+export function resetMockStreamCalls(): void {
+  streamCalls = 0;
 }
 
 /** What the last tool result said, so the mock can echo it back as prose. */
@@ -91,6 +130,7 @@ function mockStreams(): ProviderStreams {
     context: Context,
     options?: StreamOptions,
   ): AssistantMessageEventStream => {
+    streamCalls++;
     const stream = createAssistantMessageEventStream();
     const signal = options?.signal;
     const base: AssistantMessage = {
@@ -111,8 +151,28 @@ function mockStreams(): ProviderStreams {
     void (async () => {
       const text = lastUserText(context);
 
-      // A tool result just came back: report it and end the turn, so a scripted
-      // tool call is exactly two turns and never loops.
+      // The script, one call per turn. Emitted before the tool-result branch
+      // below so a multi-step script keeps going instead of stopping at its
+      // first result. MINNE_MOCK_SCRIPT scripts a turn whose prompt the test
+      // does not write — the ingestion and lint passes compose their own.
+      const script = scriptedToolCalls(`${text}\n${process.env["MINNE_MOCK_SCRIPT"] ?? ""}`);
+      const served = scriptProgress(context);
+      const next = script[served];
+      if (next !== undefined) {
+        const calling: AssistantMessage = { ...base, content: [next] };
+        stream.push({ type: "start", partial: partial("") });
+        stream.push({ type: "toolcall_start", contentIndex: 0, partial: calling });
+        stream.push({ type: "toolcall_end", contentIndex: 0, toolCall: next, partial: calling });
+        stream.push({
+          type: "done",
+          reason: "toolUse",
+          message: { ...calling, stopReason: "toolUse" },
+        });
+        return;
+      }
+
+      // The script is spent and a tool result just came back: report it and end
+      // the turn, so a scripted run always terminates.
       const toolResult = lastToolResult(context);
       if (toolResult !== null) {
         const reply = `tool ${toolResult.name} said: ${toolResult.text}`;
@@ -128,28 +188,17 @@ function mockStreams(): ProviderStreams {
         return;
       }
 
-      const toolCall = scriptedToolCall(text);
-      if (toolCall !== null) {
-        const calling: AssistantMessage = { ...base, content: [toolCall] };
-        stream.push({ type: "start", partial: partial("") });
-        stream.push({ type: "toolcall_start", contentIndex: 0, partial: calling });
-        stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: calling });
-        stream.push({
-          type: "done",
-          reason: "toolUse",
-          message: { ...calling, stopReason: "toolUse" },
-        });
-        return;
-      }
-
-      if (text.startsWith("FAIL:")) {
+      // A `FAIL:` line anywhere, so a seeded capture can script a provider
+      // failure inside a prompt the test did not compose.
+      const failure = /^FAIL:(.*)$/m.exec(text);
+      if (failure !== null) {
         stream.push({
           type: "error",
           reason: "error",
           error: {
             ...partial(""),
             stopReason: "error",
-            errorMessage: `mock failure:${text.slice("FAIL:".length)}`,
+            errorMessage: `mock failure:${failure[1]}`,
           },
         });
         return;
@@ -200,7 +249,19 @@ function mockStreams(): ProviderStreams {
         reason: "stop",
         message: { ...partial(accumulated), stopReason: "stop", usage },
       });
-    })();
+    })().catch((err: unknown) => {
+      // A malformed `TOOL:` line is the likely cause; surface it as a provider
+      // error rather than an unhandled rejection in whatever test wrote it.
+      stream.push({
+        type: "error",
+        reason: "error",
+        error: {
+          ...partial(""),
+          stopReason: "error",
+          errorMessage: `mock script error: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      });
+    });
     return stream;
   };
   return { stream: run, streamSimple: run };

@@ -1,9 +1,34 @@
 // Round-trip integration test: run the brain as a real subprocess, speak the
 // protocol over its stdio, and assert stdout stays protocol-clean.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PROTOCOL_VERSION, type BrainEvent } from "./protocol";
 
 const BRAIN_DIR = new URL("..", import.meta.url).pathname;
+
+const dirs: string[] = [];
+afterAll(() => {
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * A scratch app-support dir and memory root per run. Without them these tests
+ * would read the user's own Minne — and `ingest` would digest it with the
+ * user's own credentials.
+ */
+function isolatedEnv(): Record<string, string | undefined> {
+  const dir = mkdtempSync(join(tmpdir(), "minne-main-"));
+  dirs.push(dir);
+  return {
+    ...process.env,
+    MINNE_APP_SUPPORT_DIR: dir,
+    MINNE_MEMORY_ROOT: join(dir, "memory"),
+    ANTHROPIC_API_KEY: undefined,
+    OPENAI_API_KEY: undefined,
+  };
+}
 
 async function runBrain(
   lines: unknown[],
@@ -13,6 +38,7 @@ async function runBrain(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    env: isolatedEnv(),
   });
   proc.stdin.write(
     lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l)) + "\n").join(""),
@@ -68,16 +94,23 @@ describe("brain subprocess", () => {
     const { events, exitCode } = await runBrain([
       "this is not json",
       { type: "frobnicate", id: "u1" },
-      // ingest is still a stub; chat is live as of US-004 and would need auth.
-      { type: "ingest", id: "c1" },
+      { type: "chat", id: "c1", message: 0 },
+      // Nothing captured in this scratch dir, so the pass is idle: no model is
+      // reached and no credentials are needed.
+      { type: "ingest", id: "i1" },
       { type: "status", id: "s1" },
     ]);
     expect(exitCode).toBe(0);
-    expect(events).toHaveLength(4);
+    expect(events).toHaveLength(5);
     expect(events[0]).toMatchObject({ type: "error", id: "", code: "invalid_json" });
     expect(events[1]).toMatchObject({ type: "error", id: "u1", code: "invalid_request" });
-    expect(events[2]).toMatchObject({ type: "error", id: "c1", code: "unimplemented" });
-    expect(events[3]).toMatchObject({ type: "done", id: "s1" });
+    expect(events[2]).toMatchObject({ type: "error", id: "c1", code: "invalid_request" });
+    expect(events[3]).toMatchObject({
+      type: "done",
+      id: "i1",
+      result: { pass: "sync", status: "idle", snapshots: 0 },
+    });
+    expect(events[4]).toMatchObject({ type: "done", id: "s1" });
   });
 
   test("responds while stdin is still open (no EOF buffering)", async () => {
@@ -88,6 +121,7 @@ describe("brain subprocess", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
+      env: isolatedEnv(),
     });
     try {
       proc.stdin.write(

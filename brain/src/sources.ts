@@ -31,6 +31,30 @@ export interface SearchResult {
   results: SourceHit[];
 }
 
+/** One indexed capture, as the ingestion pass reads it. */
+export interface SnapshotRow {
+  /** the app's rowid — what the sync watermark counts in */
+  id: number;
+  /** `sources/2026-08-17/1400-safari.md#3` — the citation form used in the wiki */
+  citation: string;
+  capturedAt: string;
+  app: string;
+  bundleId: string;
+  title: string;
+  url?: string;
+  text: string;
+}
+
+/** How much is waiting past a watermark, and how far the index reaches. */
+export interface SnapshotBacklog {
+  /** false when nothing has been captured yet — no database on disk */
+  available: boolean;
+  /** highest snapshot id in the index; 0 when it is empty */
+  maxId: number;
+  /** snapshots with an id greater than the watermark */
+  pending: number;
+}
+
 /** Raised for a query FTS5 cannot be asked; surfaces as an `invalid_request`. */
 export class EmptyQueryError extends Error {}
 
@@ -69,6 +93,83 @@ export function toMatchExpression(query: string): string {
       term.endsWith("*") ? `"${term.slice(0, -1)}"*` : `"${term}"`,
     )
     .join(" ");
+}
+
+/**
+ * What is waiting to be ingested. Cheap enough to call on every `status` and
+ * on every scheduler tick — which is the point: a tick that finds `pending: 0`
+ * skips the pass without ever reaching a model.
+ */
+export function snapshotBacklog(dataDir: string, watermark: number): SnapshotBacklog {
+  const path = databasePath(dataDir);
+  if (!existsSync(path)) return { available: false, maxId: 0, pending: 0 };
+  const db = new Database(path, { readonly: true });
+  try {
+    const row = db
+      .query("SELECT count(*) AS n, coalesce(max(id), 0) AS maxId FROM snapshots WHERE id > ?")
+      .get(watermark) as { n: number; maxId: number } | null;
+    const highest = (
+      db.query("SELECT coalesce(max(id), 0) AS maxId FROM snapshots").get() as { maxId: number } | null
+    )?.maxId ?? 0;
+    return { available: true, maxId: highest, pending: row?.n ?? 0 };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * The next `limit` unprocessed snapshots in capture order, oldest first, so a
+ * batch reads as a stretch of the user's day. `maxChars` truncates each
+ * snapshot's text: a 50 KB capture of a spreadsheet is mostly chrome, and the
+ * pass pays for every character it sends.
+ */
+export function readSnapshotsAfter(
+  dataDir: string,
+  watermark: number,
+  limit: number,
+  maxChars = 4_000,
+): SnapshotRow[] {
+  const path = databasePath(dataDir);
+  if (!existsSync(path)) return [];
+  const db = new Database(path, { readonly: true });
+  try {
+    const rows = db
+      .query(
+        `SELECT id, captured_at, app, bundle_id, title, url, source_path, section, text
+         FROM snapshots
+         WHERE id > ?
+         ORDER BY id
+         LIMIT ?`,
+      )
+      .all(watermark, Math.max(1, limit)) as SnapshotSelection[];
+    return rows.map((row) => ({
+      id: row.id,
+      citation: `${row.source_path}#${row.section}`,
+      capturedAt: new Date(row.captured_at * 1000).toISOString(),
+      app: row.app,
+      bundleId: row.bundle_id,
+      title: row.title,
+      ...(row.url === null ? {} : { url: row.url }),
+      text:
+        row.text.length > maxChars
+          ? `${row.text.slice(0, maxChars)}\n…(capture truncated at ${maxChars} characters)`
+          : row.text,
+    }));
+  } finally {
+    db.close();
+  }
+}
+
+interface SnapshotSelection {
+  id: number;
+  captured_at: number;
+  app: string;
+  bundle_id: string;
+  title: string;
+  url: string | null;
+  source_path: string;
+  section: number;
+  text: string;
 }
 
 interface Row {

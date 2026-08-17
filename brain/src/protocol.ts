@@ -81,9 +81,24 @@ export interface LogoutRequest {
   provider?: string;
 }
 
+export type IngestMode = "sync" | "lint";
+
+/**
+ * Runs a memory-maintenance pass now, instead of waiting for its timer.
+ *
+ * `mode: "sync"` (the default) digests the captures taken since the watermark
+ * into wiki pages; `mode: "lint"` runs wiki-lint and has the agent fix what it
+ * reports. Both terminate with `done` carrying the pass summary — see
+ * `SyncPassSummary` / `LintPassSummary` in sync-state.ts — including the
+ * `skipped` a pass reports when no provider is signed in and the `idle` it
+ * reports when there is nothing new (neither calls a model). A second pass
+ * while one is running is refused with `busy`; a provider failure mid-pass is a
+ * `provider_error`.
+ */
 export interface IngestRequest {
   type: "ingest";
   id: string;
+  mode?: IngestMode;
 }
 
 /**
@@ -100,6 +115,13 @@ export interface SearchSourcesRequest {
   limit?: number;
 }
 
+/**
+ * The brain's current state. Terminates with `done` whose result is
+ * `{ state, provider, model, providers: [...], sync }`, where `sync` is the
+ * `SyncStatus` of ingest.ts: the watermark, how many captures are still
+ * waiting, the schedule, and the summary of the last sync and lint passes —
+ * what Settings renders as "last sync" (US-015).
+ */
 export interface StatusRequest {
   type: "status";
   id: string;
@@ -356,8 +378,13 @@ export function decodeRequest(line: string): DecodeResult {
         provider === undefined ? { type: "logout", id } : { type: "logout", id, provider },
       );
     }
-    case "ingest":
-      return ok({ type: "ingest", id });
+    case "ingest": {
+      const mode = parsed["mode"];
+      if (mode !== undefined && mode !== "sync" && mode !== "lint") {
+        return fail(id, "invalid_request", 'ingest `mode` must be "sync" or "lint"');
+      }
+      return ok(mode === undefined ? { type: "ingest", id } : { type: "ingest", id, mode });
+    }
     case "search_sources": {
       const query = parsed["query"];
       if (typeof query !== "string" || query.trim() === "") {

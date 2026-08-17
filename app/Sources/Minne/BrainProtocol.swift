@@ -81,7 +81,13 @@ enum BrainRequest: Encodable, Sendable {
     case authReply(id: String, targetId: String, promptId: String, value: String?, cancel: Bool?)
     case configure(id: String, provider: String?, model: String?, baseUrl: String?)
     case logout(id: String, provider: String?)
-    case ingest(id: String)
+    /// Runs a memory-maintenance pass now rather than on its timer: `mode`
+    /// "sync" (the default) digests the captures taken since the brain's
+    /// watermark, "lint" checks the wiki against SCHEMA.md and has the agent
+    /// fix what it can. `done`'s result is the pass summary — `{pass, status,
+    /// snapshots, batches, pagesTouched, remaining}` for a sync, where `status`
+    /// is "ingested", "idle" (nothing new) or "skipped" (nobody signed in).
+    case ingest(id: String, mode: String?)
     /// Full-text search over the captures the app has indexed. `done`'s result
     /// is `{query, indexed, results: [{app, title, url, capturedAt, source,
     /// snippet, score}]}`; `source` is `path#section` into `~/Minne/sources`.
@@ -97,7 +103,7 @@ enum BrainRequest: Encodable, Sendable {
         case .authReply(let id, _, _, _, _): return id
         case .configure(let id, _, _, _): return id
         case .logout(let id, _): return id
-        case .ingest(let id): return id
+        case .ingest(let id, _): return id
         case .searchSources(let id, _, _): return id
         case .status(let id): return id
         }
@@ -105,7 +111,7 @@ enum BrainRequest: Encodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case type, id, protocolVersion, client, message, newChat, targetId, provider
-        case method, promptId, value, cancel, model, baseUrl, query, limit
+        case method, promptId, value, cancel, model, baseUrl, query, limit, mode
     }
 
     func encode(to encoder: Encoder) throws {
@@ -141,8 +147,9 @@ enum BrainRequest: Encodable, Sendable {
         case let .logout(_, provider):
             try container.encode("logout", forKey: .type)
             try container.encodeIfPresent(provider, forKey: .provider)
-        case .ingest:
+        case let .ingest(_, mode):
             try container.encode("ingest", forKey: .type)
+            try container.encodeIfPresent(mode, forKey: .mode)
         case let .searchSources(_, query, limit):
             try container.encode("search_sources", forKey: .type)
             try container.encode(query, forKey: .query)
