@@ -13,23 +13,29 @@ final class StatusItemController: NSObject {
 
     var onOpenChat: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor () -> Void)?
+    /// Clicking the "capture off" hint reopens the first-run flow.
+    var onOpenOnboarding: (@MainActor () -> Void)?
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let statusRow: NSMenuItem
+    private let hintItem: NSMenuItem
     private let pauseItem: NSMenuItem
     private let resumeItem: NSMenuItem
     private let launchAtLoginItem: NSMenuItem
     private let debugActions: [DebugAction]
 
     private var connection: BrainConnectionState = .connecting
+    private var permission: CapturePermissionState
     private var pause: PauseState = .active
     private var resumeTimer: Timer?
 
-    init(debugActions: [DebugAction]) {
+    init(permission: CapturePermissionState, debugActions: [DebugAction]) {
+        self.permission = permission
         self.debugActions = debugActions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.statusRow = NSMenuItem(title: "Brain: starting…", action: nil, keyEquivalent: "")
+        self.hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         self.pauseItem = NSMenuItem(title: "Pause Capture", action: nil, keyEquivalent: "")
         self.resumeItem = NSMenuItem(title: "Resume Now", action: nil, keyEquivalent: "")
         self.launchAtLoginItem = NSMenuItem(
@@ -43,6 +49,11 @@ final class StatusItemController: NSObject {
 
     func update(connection: BrainConnectionState) {
         self.connection = connection
+        applyAppearance()
+    }
+
+    func update(permission: CapturePermissionState) {
+        self.permission = permission
         applyAppearance()
     }
 
@@ -71,6 +82,12 @@ final class StatusItemController: NSObject {
 
         statusRow.isEnabled = false
         menu.addItem(statusRow)
+
+        hintItem.action = #selector(openOnboardingAction)
+        hintItem.target = self
+        hintItem.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)
+        menu.addItem(hintItem)
         menu.addItem(.separator())
 
         let openChat = NSMenuItem(
@@ -140,13 +157,17 @@ final class StatusItemController: NSObject {
     // MARK: - Rendering
 
     private func applyAppearance() {
-        let appearance = MenuModel.appearance(connection: connection, pause: pause, now: Date())
+        let appearance = MenuModel.appearance(
+            connection: connection, permission: permission, pause: pause, now: Date())
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: appearance.symbolName, accessibilityDescription: "Minne")
             button.appearsDisabled = appearance.appearsDisabled
+            button.toolTip = appearance.hintText
         }
         statusRow.title = appearance.statusText
+        hintItem.title = appearance.hintText ?? ""
+        hintItem.isHidden = appearance.hintText == nil
         pauseItem.title = appearance.pauseItemTitle
         resumeItem.isHidden = !pause.resolved(now: Date()).isPaused
         launchAtLoginItem.state = LaunchAtLogin.isEnabled ? .on : .off
@@ -160,6 +181,10 @@ final class StatusItemController: NSObject {
 
     @objc private func openSettingsAction() {
         onOpenSettings?()
+    }
+
+    @objc private func openOnboardingAction() {
+        onOpenOnboarding?()
     }
 
     @objc private func pauseFor15Minutes() {

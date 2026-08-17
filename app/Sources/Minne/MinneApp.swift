@@ -3,8 +3,13 @@ import AppKit
 @main
 @MainActor
 final class MinneApp: NSObject, NSApplicationDelegate {
+    /// Set once the user has seen the first-run flow, however it ended.
+    private static let onboardingSeenKey = "onboardingSeen"
+
     private var statusController: StatusItemController?
     private var brainClient: BrainClient?
+    private let permission = AccessibilityPermission()
+    private var onboarding: OnboardingWindowController?
 
     static func main() {
         let app = NSApplication.shared
@@ -16,20 +21,65 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let controller = StatusItemController(debugActions: [
-            // Temporary debug entries until US-013/US-014 build real UI.
-            .init(title: "Sign in to Claude…") { [weak self] in self?.signInAnthropic() },
-            .init(title: "Test chat") { [weak self] in self?.testChat() },
-        ])
+        let controller = StatusItemController(
+            permission: permission.state,
+            debugActions: [
+                // Temporary debug entries until US-013/US-014 build real UI.
+                .init(title: "Sign in to Claude…") { [weak self] in self?.signInAnthropic() },
+                .init(title: "Test chat") { [weak self] in self?.testChat() },
+                .init(title: "Show Onboarding…") { [weak self] in self?.showOnboarding() },
+            ])
         controller.onOpenChat = {
             BrainClient.log("Open Chat: chat window arrives in US-013")
         }
         controller.onOpenSettings = {
             BrainClient.log("Settings: settings window arrives in US-014")
         }
+        controller.onOpenOnboarding = { [weak self] in self?.showOnboarding() }
         statusController = controller
 
+        startPermissionTracking()
         connectBrain()
+    }
+
+    // MARK: - Accessibility permission / onboarding
+
+    private func startPermissionTracking() {
+        BrainClient.log(
+            permission.state.isGranted
+                ? "accessibility granted — capture will run once US-007 lands"
+                : "accessibility missing — running in degraded no-capture mode")
+        permission.onChange = { [weak self] state in
+            guard let self else { return }
+            self.statusController?.update(permission: state)
+            self.onboarding?.permissionChanged(state)
+        }
+        permission.startPolling(interval: AccessibilityPermission.backgroundInterval)
+
+        if !UserDefaults.standard.bool(forKey: Self.onboardingSeenKey) {
+            showOnboarding()
+        }
+    }
+
+    private func showOnboarding() {
+        let controller = onboarding ?? OnboardingWindowController(permission: permission.state)
+        onboarding = controller
+        controller.onFinished = { [weak self] in
+            guard let self else { return }
+            UserDefaults.standard.set(true, forKey: Self.onboardingSeenKey)
+            self.onboarding = nil
+            // Back to the cheap background cadence.
+            self.permission.startPolling(interval: AccessibilityPermission.backgroundInterval)
+        }
+        // Tight polling only while the window is up, so the grant lands live.
+        permission.startPolling(interval: AccessibilityPermission.foregroundInterval)
+        permission.poll()
+        controller.show()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Coming back from System Settings should feel instant.
+        permission.poll()
     }
 
     private func connectBrain() {
@@ -138,7 +188,8 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         alert.messageText = "Minne sign-in"
         alert.informativeText = message
         let frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        let field: NSTextField = secure ? NSSecureTextField(frame: frame) : NSTextField(frame: frame)
+        let field: NSTextField =
+            secure ? NSSecureTextField(frame: frame) : NSTextField(frame: frame)
         field.placeholderString = placeholder
         alert.accessoryView = field
         alert.addButton(withTitle: "OK")

@@ -41,11 +41,15 @@ struct MenuAppearance: Equatable {
     let statusText: String
     /// Title of the "Pause Capture" submenu parent item.
     let pauseItemTitle: String
+    /// Persistent hint row shown while capture cannot run; `nil` hides it.
+    /// Doubles as the status button's tooltip.
+    let hintText: String?
 }
 
 enum MenuModel {
     static func appearance(
-        connection: BrainConnectionState, pause: PauseState, now: Date
+        connection: BrainConnectionState, permission: CapturePermissionState, pause: PauseState,
+        now: Date
     ) -> MenuAppearance {
         let pause = pause.resolved(now: now)
 
@@ -84,12 +88,25 @@ enum MenuModel {
                 : "Capture Paused (<1 min left)"
         }
 
-        // Disconnected outranks paused: a down brain is the more urgent signal.
-        let symbolName = !disconnected && pause.isPaused ? "pause.circle" : "brain"
+        // Precedence, most urgent first: a down brain (dimmed icon) outranks a
+        // missing permission, which outranks a user-chosen pause.
+        let symbolName: String
+        if disconnected {
+            symbolName = "brain"
+        } else if !permission.isGranted {
+            symbolName = "exclamationmark.triangle"
+        } else if pause.isPaused {
+            symbolName = "pause.circle"
+        } else {
+            symbolName = "brain"
+        }
+
         return MenuAppearance(
             symbolName: symbolName,
             appearsDisabled: disconnected,
             statusText: statusText,
-            pauseItemTitle: pauseItemTitle)
+            pauseItemTitle: pauseItemTitle,
+            hintText: permission.isGranted
+                ? nil : "Capture off — grant Accessibility access…")
     }
 }
