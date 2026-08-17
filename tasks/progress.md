@@ -32,8 +32,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-016 Release build pipeline
 
 ## Phase 5 — The Minne key (post-v1)
-- [~] US-017 Global hotkey and caret overlay
-- [ ] US-018 Draft generation and insertion
+- [x] US-017 Global hotkey and caret overlay
+- [~] US-018 Draft generation and insertion
 
 ## Log
 <!-- orchestrator appends one line per story: date · story · agent · verification result -->
@@ -53,3 +53,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-17 · US-014 · minne-us014 · verified green (242 bun tests, 233 swift tests re-run by orchestrator; AX-driven mock OAuth incl. stale-prompt race verified by agent; orchestrator screenshot of provider step: 4 cards + model picker + live auth row) · 29fe02e
 - 2026-08-17 · US-015 · minne-us015 · verified green (242 bun tests, 261 swift tests re-run by orchestrator; agent live checks: blacklist edit hits running engine, retention prunes at once, typed wipe re-seeds + auth flips; orchestrator screenshots: Account + Privacy sections) · cb0ee18
 - 2026-08-17 · US-016 · minne-us016 · verified green (242 bun tests, 261 swift tests; unsigned dmg e2e + orchestrator-found seal gap fixed by always ad-hoc signing, strict --deep verify passes on app and dmg contents; workflows actionlint-clean) · 41aaa2d+1abd56f · Phase 4 complete — v1 done
+- 2026-08-17 · US-017 · minne-us017 · verified green (242 bun tests, 312 swift tests re-run by orchestrator; live matrix: TextEdit/Notes/Mail/Safari/Chrome/Slack at caret, VS Code documented AX-dark, secure fields refused, ⌥ passthrough proven in peekaboo recording) · 7cfdfa3
