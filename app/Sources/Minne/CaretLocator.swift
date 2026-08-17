@@ -1,15 +1,36 @@
 import AppKit
 import ApplicationServices
 
-/// Where the user is typing, at the moment the Minne key was tapped.
-struct CaretTarget: Equatable, Sendable {
+/// Where the user is typing, at the moment the Minne key was tapped, and what
+/// was in front of them.
+///
+/// Everything a draft is built from is read once, here, before the overlay is
+/// even on screen: the field, the selection, the window around it. The user
+/// keeps typing while the model works, so anything read later would describe a
+/// different moment than the one they pressed the key in.
+struct CaretTarget {
     let bundleIdentifier: String
     let appName: String
     let anchor: CaretAnchor
+    var field = FieldSnapshot()
+    /// The element to insert into. Nil in tests, and in any app that would not
+    /// name its focused element.
+    var handle: FocusedFieldHandle?
+
+    /// What the key would do with this target, decided from the AX state alone.
+    var mode: DraftMode {
+        DraftMode.detect(selection: field.selection, fieldText: field.text)
+    }
+
+    /// The correspondent, when the window title names one (Slack, Messages).
+    var recipient: String? {
+        RecipientHint.from(bundleIdentifier: bundleIdentifier, windowTitle: field.windowTitle)
+    }
 
     var logSummary: String {
-        "\(appName) — caret from \(anchor.source.rawValue) at "
-            + "(\(Int(anchor.rect.minX)), \(Int(anchor.rect.minY)))"
+        "\(appName) — \(mode.rawValue), caret from \(anchor.source.rawValue) at "
+            + "(\(Int(anchor.rect.minX)), \(Int(anchor.rect.minY))), "
+            + "\(field.text.count) chars in the field, \(field.windowText.count) around it"
     }
 }
 
@@ -36,7 +57,16 @@ final class AccessibilityCaretLocator: CaretLocating {
     /// rather than a visible stall.
     private static let messagingTimeout: Float = 1
 
+    /// Bytes of surrounding window text one press may read. Enough for a mail
+    /// thread or a chat channel; far below what capture takes, because this one
+    /// runs while the user waits and every byte of it is sent to the model.
+    private static let windowByteBudget = 12_000
+
     private var cachedApp: (pid: pid_t, element: AXUIElement)?
+    /// The same AX tree walk capture uses, for the text around the caret.
+    /// Constructed lazily and never told to observe — the Minne key reads the
+    /// window on demand, it does not watch it.
+    private lazy var windowSource = AccessibilityWindowSource()
 
     func locateCaret() -> CaretTarget? {
         guard let running = NSWorkspace.shared.frontmostApplication else { return nil }
@@ -72,7 +102,32 @@ final class AccessibilityCaretLocator: CaretLocating {
         return CaretTarget(
             bundleIdentifier: running.bundleIdentifier ?? "unknown",
             appName: running.localizedName ?? "Unknown",
-            anchor: anchor)
+            anchor: anchor,
+            field: snapshot(of: focused),
+            handle: FocusedFieldHandle(element: focused))
+    }
+
+    // MARK: - The field, as it stands
+
+    /// Reads the focused element and the window around it.
+    ///
+    /// The selection is read as text *and* as a range: the text is what the
+    /// model rewrites, the range is what the writer replaces. An app that gives
+    /// one without the other still works — the range falls back to the whole
+    /// field, which is what "replace the selection" degrades to when nobody
+    /// will say where it is.
+    private func snapshot(of focused: AXUIElement) -> FieldSnapshot {
+        var snapshot = FieldSnapshot()
+        snapshot.text = string(focused, kAXValueAttribute) ?? ""
+        snapshot.selection = string(focused, kAXSelectedTextAttribute) ?? ""
+        if let range = selectedRange(of: focused) {
+            snapshot.selectedRange = NSRange(location: range.location, length: range.length)
+        }
+        if let candidate = windowSource.readFocusedWindow(byteBudget: Self.windowByteBudget) {
+            snapshot.windowTitle = candidate.window.windowTitle
+            snapshot.windowText = candidate.text
+        }
+        return snapshot
     }
 
     // MARK: - Caret bounds

@@ -20,11 +20,13 @@ import {
   type BrainRequest,
   type ChatRequest,
   type ConfigureRequest,
+  type DraftRequest,
   type IngestRequest,
   type LoginRequest,
   type LogoutRequest,
   type SearchSourcesRequest,
 } from "./protocol";
+import { DraftFailedError, runDraft, type DraftContext } from "./draft";
 import { EmptyQueryError, searchSources } from "./sources";
 import { Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
@@ -121,6 +123,8 @@ export class MinneBrain {
   private chatAgent: Agent | null = null;
   /** id of the chat request currently streaming, if any */
   private activeChatId: string | null = null;
+  /** id of the draft currently being written, if any */
+  private activeDraftId: string | null = null;
 
   constructor(deps: MinneBrainDeps) {
     this.send = deps.send;
@@ -203,6 +207,8 @@ export class MinneBrain {
         return this.handleConfigure(request);
       case "search_sources":
         return this.handleSearchSources(request);
+      case "draft":
+        return this.handleDraft(request);
       case "ingest":
         return this.handleIngest(request);
       case "abort": {
@@ -363,6 +369,76 @@ export class MinneBrain {
       };
     }
     return { model };
+  }
+
+  // ---- the Minne key ----
+
+  /**
+   * One press of the drafting key. Unlike chat this streams nothing: the app
+   * may not touch the user's text field until the draft is whole, so a partial
+   * draft has nowhere to go and the terminal event carries all of it. What does
+   * go out is `tool_call`, so the overlay can say which memory is being read
+   * while the user waits.
+   *
+   * One at a time, like chat — but with its own flag, because a draft in Mail
+   * and a chat turn in the panel are different conversations and neither should
+   * refuse the other.
+   */
+  private async handleDraft(request: DraftRequest): Promise<void> {
+    const { id } = request;
+    if (this.activeDraftId !== null) {
+      this.send(errorEvent(id, "busy", "a draft is already being written"));
+      return;
+    }
+    const resolution = await this.resolveModel();
+    if ("unavailable" in resolution) {
+      this.send(errorEvent(id, resolution.code, resolution.unavailable));
+      return;
+    }
+
+    const context: DraftContext = {
+      mode: request.mode,
+      fieldText: request.fieldText ?? "",
+      selection: request.selection ?? "",
+      windowText: request.windowText ?? "",
+      app: request.app ?? "this app",
+      ...(request.bundleId === undefined ? {} : { bundleId: request.bundleId }),
+      ...(request.windowTitle === undefined ? {} : { windowTitle: request.windowTitle }),
+      ...(request.recipient === undefined ? {} : { recipient: request.recipient }),
+    };
+
+    const aborter = new AbortController();
+    this.aborters.set(id, aborter);
+    this.activeDraftId = id;
+    try {
+      const result = await runDraft(context, {
+        memory: this.memory,
+        model: resolution.model,
+        streamFn: this.registry.models.streamSimple.bind(this.registry.models),
+        signal: aborter.signal,
+        onTool: (name) => this.send({ type: "tool_call", id, name, args: {} }),
+        log: this.log,
+      });
+      this.log(
+        `draft ${id}: ${result.mode} in ${context.app}, ${result.text.length} chars, ` +
+          `style ${result.stylePage ?? "(none)"}`,
+      );
+      this.send(doneEvent(id, result));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`draft ${id} failed:`, err);
+      const aborted = aborter.signal.aborted;
+      this.send(
+        errorEvent(
+          id,
+          aborted ? "aborted" : err instanceof DraftFailedError ? "provider_error" : "internal",
+          message,
+        ),
+      );
+    } finally {
+      this.activeDraftId = null;
+      this.aborters.delete(id);
+    }
   }
 
   // ---- ingestion ----

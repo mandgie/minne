@@ -47,6 +47,15 @@ export function memoryTools(memory: Memory): AgentTool<TSchema, unknown>[] {
   ];
 }
 
+/**
+ * The tools that only read. What the drafting key (US-018) gets: a draft is
+ * something the user is waiting on in another app's text field, so it may
+ * consult the memory but must never spend that moment rewriting it.
+ */
+export function readOnlyMemoryTools(memory: Memory): AgentTool<TSchema, unknown>[] {
+  return [searchMemoryTool(memory), readPageTool(memory), listIndexTool(memory)];
+}
+
 function searchMemoryTool(memory: Memory) {
   return tool({
     name: "search_memory",

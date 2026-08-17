@@ -20,6 +20,7 @@ import personTemplate from "../templates/person.md" with { type: "text" };
 import projectTemplate from "../templates/project.md" with { type: "text" };
 import topicTemplate from "../templates/topic.md" with { type: "text" };
 import dailyTemplate from "../templates/daily.md" with { type: "text" };
+import styleTemplate from "../templates/style.md" with { type: "text" };
 
 export const SCHEMA_FILE = "SCHEMA.md";
 export const INDEX_FILE = "index.md";
@@ -27,9 +28,10 @@ export const LOG_FILE = "log.md";
 export const WIKI_DIR = "wiki";
 export const SOURCES_DIR = "sources";
 export const DAILY_DIR = posix.join(WIKI_DIR, "daily");
+export const STYLE_DIR = posix.join(WIKI_DIR, "style");
 
 /** Page types the agent may create. */
-export const PAGE_TYPES = ["person", "project", "topic", "daily"] as const;
+export const PAGE_TYPES = ["person", "project", "topic", "daily", "style"] as const;
 export type PageType = (typeof PAGE_TYPES)[number];
 
 /** Page types plus the two structural pages at the memory root. */
@@ -44,6 +46,7 @@ export const REQUIRED_FIELDS: Record<WikiPageType, readonly string[]> = {
   project: ["title", "type", "summary", "sources", "last_updated"],
   topic: ["title", "type", "summary", "sources", "last_updated"],
   daily: ["title", "type", "summary", "sources", "last_updated", "date"],
+  style: ["title", "type", "summary", "sources", "last_updated"],
   index: ["title", "type", "summary", "last_updated"],
   log: ["title", "type", "summary"],
 };
@@ -78,6 +81,7 @@ export const PAGE_TEMPLATES: Readonly<Record<PageType, string>> = {
   project: projectTemplate,
   topic: topicTemplate,
   daily: dailyTemplate,
+  style: styleTemplate,
 };
 
 export interface PageValues {
@@ -142,7 +146,40 @@ export function slugify(title: string): string {
 /** Where a page of this type and title belongs, relative to the memory root. */
 export function pagePath(type: PageType, title: string): string {
   const file = `${slugify(title)}.md`;
-  return posix.join(type === "daily" ? DAILY_DIR : WIKI_DIR, file);
+  return posix.join(directoryFor(type), file);
+}
+
+function directoryFor(type: PageType): string {
+  if (type === "daily") return DAILY_DIR;
+  if (type === "style") return STYLE_DIR;
+  return WIKI_DIR;
+}
+
+/**
+ * The title of the style page for a context — an app, optionally narrowed to
+ * one recipient. The `Style — ` prefix keeps these titles from colliding with
+ * a topic page about the app itself, and `pagePath` turns the title into
+ * `wiki/style/style-mail-ingrid-berg.md` with no second naming rule.
+ *
+ * One function so the two sides agree: the sync pass is told to write these
+ * pages, and `draft` looks them up by exactly this name.
+ */
+export function styleTitle(app: string, recipient?: string): string {
+  const trimmedApp = app.trim();
+  const trimmedRecipient = recipient?.trim() ?? "";
+  return trimmedRecipient === ""
+    ? `Style — ${trimmedApp}`
+    : `Style — ${trimmedApp} — ${trimmedRecipient}`;
+}
+
+/** Path of that page, most specific first when a recipient is known. */
+export function stylePagePaths(app: string, recipient?: string): string[] {
+  const paths: string[] = [];
+  if (recipient !== undefined && recipient.trim() !== "") {
+    paths.push(pagePath("style", styleTitle(app, recipient)));
+  }
+  if (app.trim() !== "") paths.push(pagePath("style", styleTitle(app)));
+  return paths;
 }
 
 export interface WikiLink {

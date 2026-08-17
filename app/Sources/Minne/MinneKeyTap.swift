@@ -1,6 +1,18 @@
 import AppKit
 import CoreGraphics
 
+/// A key the overlay may want while it is on screen. Nothing else is ever
+/// consumed — see `MinneKeyTap.command(keyCode:flags:)` for the modifier rules
+/// that keep these keys the user's the rest of the time.
+enum MinneKeyCommand: Equatable, Sendable {
+    /// Escape: put the overlay away.
+    case escape
+    /// Return: accept the draft on screen.
+    case submit
+    /// ⌘Z: take back the insertion Minne just made.
+    case undo
+}
+
 /// The `CGEventTap` behind the Minne key.
 ///
 /// Watches `flagsChanged` for the right Option key and hands the sequence to
@@ -27,15 +39,19 @@ final class MinneKeyTap {
     /// `NX_DEVICERALTKEYMASK` — the bit that says *which* Option key. The event
     /// is a press when it is set and a release when it is not.
     nonisolated static let rightOptionDeviceMask: UInt64 = 0x0000_0040
-    /// `kVK_Escape`.
+    /// `kVK_Escape`, `kVK_Return`, `kVK_ANSI_KeypadEnter`, `kVK_ANSI_Z`.
     nonisolated static let escapeKeyCode: Int64 = 53
+    nonisolated static let returnKeyCode: Int64 = 36
+    nonisolated static let keypadEnterKeyCode: Int64 = 76
+    nonisolated static let zKeyCode: Int64 = 6
 
     /// A deliberate tap of right-Option.
     var onTap: (@MainActor () -> Void)?
-    /// Escape was pressed. Return true to swallow it, which the controller does
-    /// only when the overlay is up — otherwise Escape belongs to whoever the
-    /// user is typing in.
-    var onEscape: (@MainActor () -> Bool)?
+    /// A key the overlay might want. Return true to swallow it, which the
+    /// controller does only while the overlay is up and only for the keys that
+    /// state actually offers — at every other moment these keys belong to
+    /// whoever the user is typing in.
+    var onCommand: (@MainActor (MinneKeyCommand) -> Bool)?
     /// A mouse press, in Quartz screen coordinates.
     var onClick: (@MainActor (CGPoint) -> Void)?
 
@@ -169,7 +185,11 @@ final class MinneKeyTap {
             return .pass
 
         case .keyDown:
-            if signal.keyCode == Self.escapeKeyCode, onEscape?() == true { return .consume }
+            if let command = Self.command(keyCode: signal.keyCode, flags: signal.flags),
+                onCommand?(command) == true
+            {
+                return .consume
+            }
             feed(.otherInput)
             return .pass
 
@@ -197,6 +217,29 @@ final class MinneKeyTap {
     nonisolated static func rightOptionInput(keyCode: Int64, flags: UInt64) -> MinneKeyInput? {
         guard keyCode == rightOptionKeyCode else { return nil }
         return (flags & rightOptionDeviceMask) != 0 ? .rightOptionDown : .rightOptionUp
+    }
+
+    /// Reads a key press as one of the overlay's three commands.
+    ///
+    /// The modifier tests are what keeps these keys the user's the rest of the
+    /// time: ⌘Return sends a message in half the apps on the machine, and ⇧⌘Z
+    /// is redo, so neither is ours. Pure, and unit-tested, because a wrong
+    /// answer here is a key that stops working system-wide.
+    nonisolated static func command(keyCode: Int64, flags: UInt64) -> MinneKeyCommand? {
+        let command = flags & CGEventFlags.maskCommand.rawValue != 0
+        let shift = flags & CGEventFlags.maskShift.rawValue != 0
+        let option = flags & CGEventFlags.maskAlternate.rawValue != 0
+        let control = flags & CGEventFlags.maskControl.rawValue != 0
+        switch keyCode {
+        case escapeKeyCode:
+            return .escape
+        case returnKeyCode, keypadEnterKeyCode:
+            return command || option || control || shift ? nil : .submit
+        case zKeyCode:
+            return command && !shift && !option && !control ? .undo : nil
+        default:
+            return nil
+        }
     }
 
     @discardableResult

@@ -77,6 +77,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             auth: authModel, store: settingsStore, permission: permission.state)
         model.onBlacklistChange = { [weak self] blacklist in
             self?.capture?.update(blacklist: blacklist)
+            // The Minne key obeys the same list: an app whose contents may not
+            // become memory may not become a prompt either.
+            self?.minneKey?.update(blacklist: blacklist)
         }
         model.onRetentionChange = { [weak self] policy in
             // A shorter retention makes captures overdue right now, not at the
@@ -163,7 +166,13 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     /// grant as well as with the setting.
     private func startMinneKey() {
         let controller = MinneKeyController(
-            enabled: settingsModel?.minneKeyEnabled ?? true, permission: permission.state)
+            // Debug hook: `-minneKeyForcePaste YES` takes the pasteboard
+            // fallback in every app, which is the only way to exercise it in
+            // one that would have accepted an AX write.
+            writer: AccessibilityFieldWriter(
+                forcePasteboard: UserDefaults.standard.bool(forKey: "minneKeyForcePaste")),
+            enabled: settingsModel?.minneKeyEnabled ?? true, permission: permission.state,
+            blacklist: settingsStore.blacklist)
         controller.onActiveChange = { [weak self] active in
             self?.settingsModel?.adopt(minneKeyActive: active)
         }
@@ -338,6 +347,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         brainClient = client
         chatModel.backend = BrainChatBackend(client: client)
         authModel.backend = BrainAuthBackend(client: client)
+        minneKey?.backend = BrainDraftBackend(client: client)
         settingsModel?.backend = BrainSettingsBackend(client: client)
         Task { [weak self] in
             do {
@@ -391,9 +401,12 @@ final class MinneApp: NSObject, NSApplicationDelegate {
 
     private func handleBrainEvent(_ event: BrainEvent) {
         switch event {
-        case .textDelta, .toolCall:
-            // The chat window is the only consumer of a turn's intermediate
-            // events; it ignores anything that isn't its in-flight request.
+        case .toolCall(let id, let name, _):
+            // Both the chat window and the Minne key run agents with tools;
+            // each ignores anything that isn't its own in-flight request.
+            chatModel.apply(event)
+            minneKey?.toolStarted(requestId: id, name: name)
+        case .textDelta:
             chatModel.apply(event)
         case .authURL, .authPrompt:
             // The provider step opens the browser and renders prompts natively;

@@ -73,6 +73,19 @@ enum JSONValue: Codable, Sendable, Equatable {
     }
 }
 
+/// Everything one press of the Minne key tells the brain: what the user is
+/// doing, and what was on their screen when they asked.
+struct DraftRequestContext: Encodable, Sendable, Equatable {
+    var mode: String
+    var fieldText: String
+    var selection: String
+    var windowText: String
+    var app: String
+    var bundleId: String
+    var windowTitle: String
+    var recipient: String?
+}
+
 /// Requests the app sends to the brain. `id` correlates the brain's events.
 enum BrainRequest: Encodable, Sendable {
     case hello(id: String, protocolVersion: Int, client: String)
@@ -106,6 +119,15 @@ enum BrainRequest: Encodable, Sendable {
     /// is `{query, indexed, results: [{app, title, url, capturedAt, source,
     /// snippet, score}]}`; `source` is `path#section` into `~/Minne/sources`.
     case searchSources(id: String, query: String, limit: Int?)
+    /// One press of the Minne key. The app has already read the field via
+    /// Accessibility and decided the mode ("rewrite", "instruction", "infer");
+    /// the brain builds the prompt, consults the `style/` page for this app and
+    /// recipient, and answers with the finished text. `done`'s result is
+    /// `{mode, text, model, stopReason, stylePage, usage}`. There are no
+    /// `textDelta`s on purpose — the field is not touched until the draft is
+    /// whole, so half a draft has nowhere to go — but `toolCall` events do
+    /// arrive, for the overlay's progress line.
+    case draft(id: String, context: DraftRequestContext)
     case status(id: String)
 
     var id: String {
@@ -119,6 +141,7 @@ enum BrainRequest: Encodable, Sendable {
         case .logout(let id, _): return id
         case .ingest(let id, _): return id
         case .searchSources(let id, _, _): return id
+        case .draft(let id, _): return id
         case .status(let id): return id
         }
     }
@@ -126,6 +149,7 @@ enum BrainRequest: Encodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case type, id, protocolVersion, client, message, newChat, targetId, provider
         case method, promptId, value, cancel, model, baseUrl, query, limit, mode
+        case fieldText, selection, windowText, app, bundleId, windowTitle, recipient
     }
 
     func encode(to encoder: Encoder) throws {
@@ -168,6 +192,16 @@ enum BrainRequest: Encodable, Sendable {
             try container.encode("search_sources", forKey: .type)
             try container.encode(query, forKey: .query)
             try container.encodeIfPresent(limit, forKey: .limit)
+        case let .draft(_, context):
+            try container.encode("draft", forKey: .type)
+            try container.encode(context.mode, forKey: .mode)
+            try container.encode(context.fieldText, forKey: .fieldText)
+            try container.encode(context.selection, forKey: .selection)
+            try container.encode(context.windowText, forKey: .windowText)
+            try container.encode(context.app, forKey: .app)
+            try container.encode(context.bundleId, forKey: .bundleId)
+            try container.encode(context.windowTitle, forKey: .windowTitle)
+            try container.encodeIfPresent(context.recipient, forKey: .recipient)
         case .status:
             try container.encode("status", forKey: .type)
         }

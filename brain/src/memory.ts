@@ -183,6 +183,7 @@ const INDEX_SECTIONS: Readonly<Record<PageType, string>> = {
   project: "Projects",
   topic: "Topics",
   daily: "Daily logs",
+  style: "Writing style",
 };
 
 /** The placeholder a bootstrapped index carries under every section. */

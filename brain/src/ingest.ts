@@ -146,8 +146,9 @@ is to decide what in them is worth remembering and to fold it into the wiki at
 ~/Minne. The rules of that wiki are in SCHEMA.md; read it with read_page if you
 are unsure. In short:
 
-- Pages live in wiki/ and come in four types: person, project, topic, and daily
-  (wiki/daily/YYYY-MM-DD.md, one per day, linking to what that day touched).
+- Pages live in wiki/ and come in five types: person, project, topic, daily
+  (wiki/daily/YYYY-MM-DD.md, one per day, linking to what that day touched), and
+  style (wiki/style/, one per app the user writes in).
 - Every page needs a one- or two-sentence summary and cites the snapshots it was
   derived from. Every claim you write must come from a capture you actually
   read; cite it inline in backticks when the claim is specific.
@@ -167,7 +168,16 @@ How to work:
    nothing durable in it.
 4. Update or create today's daily page when the batch says something about what
    the user actually worked on.
-5. Finish with exactly one append_log entry, pass "sync": a sentence or two
+5. When a capture contains something the user themselves wrote — a message they
+   sent, a mail they composed, a comment they left — add one observation to the
+   style page for that app: title "Style — <App>", or "Style — <App> —
+   <Recipient>" when they clearly write differently to one person or channel.
+   Observe only what is on the page in front of you: greeting and sign-off,
+   typical length, formality, language, phrases they reach for. Never guess, and
+   never write a style page from text they only read. These pages are what
+   Minne's drafting key writes in the user's voice, so a wrong observation is
+   worse than a missing one — most batches add nothing here.
+6. Finish with exactly one append_log entry, pass "sync": a sentence or two
    naming the pages you touched as [[links]], or saying that you found nothing
    worth keeping.
 

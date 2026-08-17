@@ -101,10 +101,11 @@ wiki/ingrid-berg.md          person
 wiki/oslo-trip.md            project
 wiki/typescript-tooling.md   topic
 wiki/daily/2026-08-17.md     daily log
+wiki/style/style-mail.md     writing style
 ```
 
-Daily logs are the one nested type; everything else sits directly in
-`wiki/` so links stay short.
+Daily logs and style pages are the two nested types; everything else
+sits directly in `wiki/` so links stay short.
 
 ### Frontmatter
 
@@ -128,7 +129,7 @@ Required on every page: `title`, `type`, `summary`, `sources`,
 | Field | Value |
 | --- | --- |
 | `title` | Human name of the subject. Unique across the wiki — it is what `[[wikilinks]]` resolve to. |
-| `type` | One of `person`, `project`, `topic`, `daily`. (`index` and `log` are used by the two root pages.) |
+| `type` | One of `person`, `project`, `topic`, `daily`, `style`. (`index` and `log` are used by the two root pages.) |
 | `summary` | One or two sentences. This is what retrieval shows before opening the page. |
 | `sources` | List of citations the page was derived from. A list, even with one entry; `[]` while a page has no citations yet. |
 | `last_updated` | `YYYY-MM-DD` (or a full ISO 8601 timestamp) of the last time the agent revised the page. `null` on a freshly bootstrapped `index.md`, which nothing has been written to yet. |
@@ -151,6 +152,14 @@ list of other names to match), `status` (project: `active`, `paused`,
   a technology, a place, a recurring question.
 - **daily** — one page per day in `wiki/daily/YYYY-MM-DD.md`: what the
   user worked on that day, linking to the pages it touched.
+- **style** — how the user writes in one context, in
+  `wiki/style/style-<app>.md` (or `style-<app>-<recipient>.md` when
+  they write differently to one person or channel). Observations only:
+  greeting and sign-off, length, formality, language, recurring
+  phrases. The sync pass adds to these as it sees the user's own
+  outgoing messages; Minne's draft key reads the matching one so a
+  generated reply sounds like them. Title them `Style — <App>` or
+  `Style — <App> — <Recipient>`.
 
 Templates for each type ship with Minne; a new page starts from one.
 

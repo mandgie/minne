@@ -29,3 +29,7 @@ _(none yet)_
 ## Daily logs
 
 _(none yet)_
+
+## Writing style
+
+_(none yet)_

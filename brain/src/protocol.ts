@@ -121,6 +121,40 @@ export interface SearchSourcesRequest {
   limit?: number;
 }
 
+export type DraftMode = "instruction" | "rewrite" | "infer";
+
+/**
+ * One press of the Minne key: write the text that goes into the field the user
+ * is in. The app has already read that field via Accessibility and decided the
+ * mode (selection → `rewrite`, non-empty field → `instruction`, empty →
+ * `infer`); the brain builds the prompt, consults the `style/` page for this
+ * app and recipient, and answers with the finished text.
+ *
+ * Terminates with `done` whose result is `{ mode, text, model, stopReason,
+ * stylePage, usage }` — no `text_delta`s, deliberately: the app must not touch
+ * the user's field until the draft is complete, so a partial one has nowhere to
+ * go. `tool_call` events do go out, so the overlay can say what memory is being
+ * consulted. Errors: `busy` (a draft is already running), `not_authenticated`,
+ * `provider_error`, `aborted`.
+ */
+export interface DraftRequest {
+  type: "draft";
+  id: string;
+  mode: DraftMode;
+  /** the field's whole text — the instruction itself in `instruction` mode */
+  fieldText?: string;
+  /** the selected text, in `rewrite` mode */
+  selection?: string;
+  /** the rest of the window, read via AX at press time */
+  windowText?: string;
+  /** the app's name, which is also the style page's context */
+  app?: string;
+  bundleId?: string;
+  windowTitle?: string;
+  /** person or channel written to, when the window title gives one away */
+  recipient?: string;
+}
+
 /**
  * The brain's current state. Terminates with `done` whose result is
  * `{ state, provider, model, providers: [...], sync }`.
@@ -149,6 +183,7 @@ export type BrainRequest =
   | LogoutRequest
   | IngestRequest
   | SearchSourcesRequest
+  | DraftRequest
   | StatusRequest;
 
 // ---- Events (brain -> app) ----
@@ -411,6 +446,34 @@ export function decodeRequest(line: string): DecodeResult {
           ? { type: "search_sources", id, query }
           : { type: "search_sources", id, query, limit },
       );
+    }
+    case "draft": {
+      const mode = parsed["mode"];
+      if (mode !== "instruction" && mode !== "rewrite" && mode !== "infer") {
+        return fail(
+          id,
+          "invalid_request",
+          'draft `mode` must be "instruction", "rewrite" or "infer"',
+        );
+      }
+      const request: DraftRequest = { type: "draft", id, mode };
+      for (const field of [
+        "fieldText",
+        "selection",
+        "windowText",
+        "app",
+        "bundleId",
+        "windowTitle",
+        "recipient",
+      ] as const) {
+        const value = parsed[field];
+        if (value === undefined) continue;
+        if (typeof value !== "string") {
+          return fail(id, "invalid_request", `draft \`${field}\` must be a string when present`);
+        }
+        request[field] = value;
+      }
+      return ok(request);
     }
     case "status":
       return ok({ type: "status", id });

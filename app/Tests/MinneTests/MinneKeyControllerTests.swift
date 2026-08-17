@@ -8,31 +8,54 @@ import XCTest
 private final class FakeCaretLocator: CaretLocating {
     var target: CaretTarget? = CaretTarget(
         bundleIdentifier: "com.apple.TextEdit", appName: "TextEdit",
-        anchor: CaretAnchor(rect: CGRect(x: 100, y: 200, width: 1, height: 18), source: .caret))
+        anchor: CaretAnchor(rect: CGRect(x: 100, y: 200, width: 1, height: 18), source: .caret),
+        field: FieldSnapshot(
+            text: "", selection: "", selectedRange: NSRange(location: 0, length: 0),
+            windowText: "From: Ingrid\nCan you review the doc?", windowTitle: "Untitled"))
     private(set) var calls = 0
 
     func locateCaret() -> CaretTarget? {
         calls += 1
         return target
     }
+
+    /// Replaces the field half of the scripted target, keeping the rest.
+    func setField(_ field: FieldSnapshot) {
+        guard let existing = target else { return }
+        target = CaretTarget(
+            bundleIdentifier: existing.bundleIdentifier, appName: existing.appName,
+            anchor: existing.anchor, field: field)
+    }
 }
 
 @MainActor
 private final class FakeOverlay: MinneKeyPresenting {
     private(set) var presented: [CaretTarget] = []
+    private(set) var states: [MinneKeyOverlayState] = []
     private(set) var dismissals = 0
     var isPresenting = false
+    var state: MinneKeyOverlayState?
+    var onAction: (@MainActor (MinneKeyAction) -> Void)?
     /// Screen rectangle the overlay claims, in Quartz coordinates.
     var bounds = CGRect(x: 100, y: 200, width: 240, height: 44)
 
-    func present(_ target: CaretTarget) {
+    func present(_ target: CaretTarget, state: MinneKeyOverlayState) {
         presented.append(target)
+        states.append(state)
+        self.state = state
         isPresenting = true
+    }
+
+    func update(_ state: MinneKeyOverlayState) {
+        guard isPresenting else { return }
+        states.append(state)
+        self.state = state
     }
 
     func dismiss() {
         dismissals += 1
         isPresenting = false
+        state = nil
     }
 
     func contains(quartzPoint: CGPoint) -> Bool {
@@ -45,18 +68,82 @@ private final class FakeOverlay: MinneKeyPresenting {
 @MainActor
 private final class FakeTap: MinneKeyTapping {
     var onTap: (@MainActor () -> Void)?
-    var onEscape: (@MainActor () -> Bool)?
+    var onCommand: (@MainActor (MinneKeyCommand) -> Bool)?
     var onClick: (@MainActor (CGPoint) -> Void)?
     private(set) var invalidations = 0
 
     func invalidate() { invalidations += 1 }
 }
 
-/// When the Minne key wakes up, and what puts it away again.
+/// Stands in for Accessibility, and keeps a field of its own so an edit and its
+/// undo can be checked against the text they claim to produce.
+@MainActor
+private final class FakeFieldWriter: FieldWriting {
+    private(set) var edits: [FieldEdit] = []
+    /// Text the fake field holds, updated by every applied edit.
+    private(set) var contents = ""
+    var method: InsertionMethod? = .selectedText
+
+    func apply(_ edit: FieldEdit, fieldText: String, to handle: FocusedFieldHandle?)
+        -> InsertionMethod?
+    {
+        guard let method else { return nil }
+        edits.append(edit)
+        contents = edit.applied(to: fieldText) ?? fieldText
+        return method
+    }
+}
+
+@MainActor
+private final class FakePasteboard: PasteboardHolding {
+    private(set) var contents = PasteboardContents(items: [])
+    private(set) var strings: [String] = []
+
+    func read() -> PasteboardContents { contents }
+
+    func write(string: String) {
+        strings.append(string)
+        contents = PasteboardContents(items: [["public.utf8-plain-text": Data(string.utf8)]])
+    }
+
+    func write(_ contents: PasteboardContents) { self.contents = contents }
+}
+
+@MainActor
+private final class FakeDraftBackend: DraftBackend {
+    private(set) var requests: [(id: String, context: DraftRequestContext)] = []
+    private(set) var aborted: [String] = []
+    private var completions: [String: @MainActor (Result<DraftReply, any Error>) -> Void] = [:]
+
+    func draft(
+        id: String, context: DraftRequestContext,
+        completion: @escaping @MainActor (Result<DraftReply, any Error>) -> Void
+    ) {
+        requests.append((id, context))
+        completions[id] = completion
+    }
+
+    func abortDraft(id: String) { aborted.append(id) }
+
+    /// Answers the request the controller is waiting on.
+    func finish(_ id: String, with reply: DraftReply) {
+        completions.removeValue(forKey: id)?(.success(reply))
+    }
+
+    func fail(_ id: String, with error: any Error) {
+        completions.removeValue(forKey: id)?(.failure(error))
+    }
+}
+
+/// When the Minne key wakes up, what it asks for, what it does with the answer,
+/// and what puts it away again.
 @MainActor
 final class MinneKeyControllerTests: XCTestCase {
     private var locator: FakeCaretLocator!
     private var overlay: FakeOverlay!
+    private var writer: FakeFieldWriter!
+    private var pasteboard: FakePasteboard!
+    private var backend: FakeDraftBackend!
     private var taps: [FakeTap]!
     /// Set to false to simulate a tap that cannot be created.
     private var tapCanBeCreated = true
@@ -67,6 +154,9 @@ final class MinneKeyControllerTests: XCTestCase {
     override func setUp() async throws {
         locator = FakeCaretLocator()
         overlay = FakeOverlay()
+        writer = FakeFieldWriter()
+        pasteboard = FakePasteboard()
+        backend = FakeDraftBackend()
         taps = []
         tapCanBeCreated = true
         controller = nil
@@ -77,16 +167,20 @@ final class MinneKeyControllerTests: XCTestCase {
     }
 
     private func makeController(
-        enabled: Bool = true, permission: CapturePermissionState = .granted
+        enabled: Bool = true, permission: CapturePermissionState = .granted,
+        blacklist: CaptureBlacklist = CaptureBlacklist()
     ) -> MinneKeyController {
         let controller = MinneKeyController(
-            locator: locator, presenter: overlay, enabled: enabled, permission: permission,
+            locator: locator, presenter: overlay, writer: writer, pasteboard: pasteboard,
+            enabled: enabled, permission: permission, blacklist: blacklist,
             makeTap: { [weak self] in
                 guard let self, self.tapCanBeCreated else { return nil }
                 let tap = FakeTap()
                 self.taps.append(tap)
                 return tap
-            })
+            },
+            makeRequestId: { "draft-1" })
+        controller.backend = backend
         self.controller = controller
         return controller
     }
@@ -154,11 +248,13 @@ final class MinneKeyControllerTests: XCTestCase {
 
     // MARK: - Waking up
 
-    func testATapShowsTheOverlayAtTheCaret() {
+    func testATapShowsTheOverlayAtTheCaretAndAsksForADraft() {
         let controller = makeController()
         tap.onTap?()
         XCTAssertEqual(overlay.presented.count, 1)
         XCTAssertEqual(overlay.presented.first?.anchor.rect.origin, CGPoint(x: 100, y: 200))
+        XCTAssertEqual(overlay.states.first, .working(.infer))
+        XCTAssertEqual(backend.requests.count, 1)
         XCTAssertTrue(controller.isActive)
     }
 
@@ -168,6 +264,18 @@ final class MinneKeyControllerTests: XCTestCase {
         makeControllerAndTap()
         XCTAssertTrue(overlay.presented.isEmpty)
         XCTAssertFalse(overlay.isPresenting)
+        XCTAssertTrue(backend.requests.isEmpty)
+    }
+
+    /// An app whose contents may not become memory may not become a prompt
+    /// either — the key obeys the capture blacklist.
+    func testABlacklistedAppGetsNoDraft() {
+        let controller = makeController(
+            blacklist: CaptureBlacklist(bundleIdentifiers: ["com.apple.TextEdit"]))
+        tap.onTap?()
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertTrue(backend.requests.isEmpty)
+        XCTAssertTrue(controller.isActive)
     }
 
     func testASecondTapDismisses() {
@@ -179,21 +287,220 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertEqual(locator.calls, 1)
     }
 
-    // MARK: - Going away
+    // MARK: - What the brain is asked for
 
-    func testEscapeDismissesAndIsSwallowed() {
+    func testTheDraftRequestCarriesWhatWasReadAtPressTime() {
+        locator.setField(
+            FieldSnapshot(
+                text: "decline politely", selection: "",
+                selectedRange: NSRange(location: 16, length: 0),
+                windowText: "From: Ingrid Berg", windowTitle: "Re: Thursday"))
         makeControllerAndTap()
-        XCTAssertEqual(tap.onEscape?(), true)
+
+        let context = backend.requests.first?.context
+        XCTAssertEqual(context?.mode, "instruction")
+        XCTAssertEqual(context?.fieldText, "decline politely")
+        XCTAssertEqual(context?.windowText, "From: Ingrid Berg")
+        XCTAssertEqual(context?.windowTitle, "Re: Thursday")
+        XCTAssertEqual(context?.app, "TextEdit")
+        XCTAssertEqual(context?.bundleId, "com.apple.TextEdit")
+    }
+
+    /// The selection is the subject in rewrite mode and noise everywhere else,
+    /// so only that mode sends it.
+    func testOnlyRewriteModeSendsTheSelection() {
+        locator.setField(
+            FieldSnapshot(
+                text: "hi — i cant make it", selection: "i cant make it",
+                selectedRange: NSRange(location: 5, length: 14)))
+        makeControllerAndTap()
+        XCTAssertEqual(backend.requests.first?.context.mode, "rewrite")
+        XCTAssertEqual(backend.requests.first?.context.selection, "i cant make it")
+    }
+
+    func testToolActivityIsShownWhileTheDraftIsBeingWritten() {
+        let controller = makeControllerAndTap()
+        controller.toolStarted(requestId: "draft-1", name: "search_memory")
+        XCTAssertEqual(overlay.states.last, .consulting(.infer, tool: "search_memory"))
+        // A tool call belonging to a chat turn is not this overlay's business.
+        controller.toolStarted(requestId: "chat-9", name: "write_page")
+        XCTAssertEqual(overlay.states.last, .consulting(.infer, tool: "search_memory"))
+    }
+
+    func testTheDraftIsPreviewedRatherThanInserted() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        XCTAssertEqual(overlay.states.last, .result("Thursday works."))
+        XCTAssertTrue(writer.edits.isEmpty, "the field must not be touched before the user accepts")
+    }
+
+    /// An answer to a press the user has already walked away from must never
+    /// reach a text field.
+    func testADraftThatArrivesAfterDismissalIsDropped() {
+        let controller = makeControllerAndTap()
+        controller.dismiss()
+        backend.finish("draft-1", with: DraftReply(text: "too late"))
+        XCTAssertTrue(writer.edits.isEmpty)
         XCTAssertFalse(overlay.isPresenting)
     }
 
-    /// The tap consumes Escape only while the overlay is up; at every other
-    /// moment the key belongs to whatever the user is typing in.
-    func testEscapePassesThroughWhenNothingIsShowing() {
+    func testAFailedDraftIsExplainedAtTheCaret() {
+        makeControllerAndTap()
+        backend.fail(
+            "draft-1",
+            with: BrainClientError.brain(code: "not_authenticated", message: "sign in first"))
+        XCTAssertEqual(overlay.states.last, .failed("Sign in to a provider in Settings first"))
+        XCTAssertTrue(writer.edits.isEmpty)
+    }
+
+    func testDismissingWhileDraftingCancelsTheRequest() {
+        let controller = makeControllerAndTap()
+        controller.dismiss()
+        XCTAssertEqual(backend.aborted, ["draft-1"])
+    }
+
+    // MARK: - Insertion
+
+    func testInsertingReplacesTheInstructionWithTheDraft() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, I can't make Thursday."))
+        controller.insert()
+
+        XCTAssertEqual(writer.edits.count, 1)
+        XCTAssertEqual(writer.edits.first?.range, NSRange(location: 0, length: 16))
+        XCTAssertEqual(writer.contents, "Sorry, I can't make Thursday.")
+        XCTAssertEqual(overlay.states.last, .inserted(.selectedText))
+    }
+
+    func testInsertingRewritesOnlyTheSelection() {
+        locator.setField(
+            FieldSnapshot(
+                text: "hi — i cant make it", selection: "i cant make it",
+                selectedRange: NSRange(location: 5, length: 14)))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "I can't make it"))
+        controller.insert()
+        XCTAssertEqual(writer.contents, "hi — I can't make it")
+    }
+
+    /// A field holding only whitespace is still inferred — and the user's blank
+    /// lines are left where they put them, the draft going in at the caret.
+    func testInferInsertsAtTheCaretWithoutDisturbingTheField() {
+        locator.setField(
+            FieldSnapshot(text: "\n\n", selectedRange: NSRange(location: 2, length: 0)))
+        let controller = makeControllerAndTap()
+        XCTAssertEqual(backend.requests.first?.context.mode, "infer")
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(writer.contents, "\n\nThursday works.")
+    }
+
+    func testAnAppThatWillNotTakeTheDraftSaysSo() {
+        writer.method = nil
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        XCTAssertEqual(
+            overlay.states.last, .failed("Minne could not write into TextEdit — use Copy"))
+    }
+
+    func testInsertingTwiceIsNotPossible() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        controller.insert()
+        XCTAssertEqual(writer.edits.count, 1)
+    }
+
+    func testCopyPutsTheDraftOnThePasteboardWithoutTouchingTheField() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.copyDraft()
+        XCTAssertEqual(pasteboard.strings, ["Thursday works."])
+        XCTAssertTrue(writer.edits.isEmpty)
+    }
+
+    // MARK: - Undo
+
+    func testUndoPutsTheFieldBackExactlyAsItWas() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, I can't make Thursday."))
+        controller.insert()
+        controller.undo()
+
+        XCTAssertEqual(writer.contents, "decline politely")
+        XCTAssertEqual(overlay.states.last, .undone)
+    }
+
+    func testUndoOfARewriteRestoresOnlyTheSelection() {
+        locator.setField(
+            FieldSnapshot(
+                text: "hi — i cant make it", selection: "i cant make it",
+                selectedRange: NSRange(location: 5, length: 14)))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "I can't make it"))
+        controller.insert()
+        controller.undo()
+        XCTAssertEqual(writer.contents, "hi — i cant make it")
+    }
+
+    func testUndoDoesNothingBeforeAnInsertion() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.undo()
+        XCTAssertTrue(writer.edits.isEmpty)
+    }
+
+    // MARK: - Keys
+
+    func testEscapeDismissesAndIsSwallowed() {
+        makeControllerAndTap()
+        XCTAssertEqual(tap.onCommand?(.escape), true)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    /// The tap consumes these keys only while the overlay is up; at every other
+    /// moment they belong to whatever the user is typing in.
+    func testKeysPassThroughWhenNothingIsShowing() {
         _ = makeController()
-        XCTAssertEqual(tap.onEscape?(), false)
+        XCTAssertEqual(tap.onCommand?(.escape), false)
+        XCTAssertEqual(tap.onCommand?(.submit), false)
+        XCTAssertEqual(tap.onCommand?(.undo), false)
         XCTAssertEqual(overlay.dismissals, 0)
     }
+
+    func testReturnInsertsTheDraftOnScreen() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        XCTAssertEqual(tap.onCommand?(.submit), true)
+        XCTAssertEqual(writer.edits.count, 1)
+    }
+
+    /// Return belongs to the app while Minne is still writing — consuming it
+    /// would eat the keystroke that sends the user's own message.
+    func testReturnPassesThroughWhileStillDrafting() {
+        makeControllerAndTap()
+        XCTAssertEqual(tap.onCommand?(.submit), false)
+        XCTAssertTrue(writer.edits.isEmpty)
+    }
+
+    func testCommandZUndoesOnlyMinnesOwnInsertion() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "No thanks."))
+        // Nothing inserted yet: the app's own undo stack is not ours to touch.
+        XCTAssertEqual(tap.onCommand?(.undo), false)
+
+        controller.insert()
+        XCTAssertEqual(tap.onCommand?(.undo), true)
+        XCTAssertEqual(writer.contents, "decline politely")
+        // And once it is undone, ⌘Z goes back to the app.
+        XCTAssertEqual(tap.onCommand?(.undo), false)
+    }
+
+    // MARK: - Going away
 
     func testAClickElsewhereDismisses() {
         makeControllerAndTap()
@@ -210,6 +517,20 @@ final class MinneKeyControllerTests: XCTestCase {
     func testSwitchingAppDismisses() {
         let controller = makeControllerAndTap()
         controller.appSwitched()
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    /// The buttons and the keys go through the same verbs.
+    func testTheOverlaysButtonsDriveTheSameActions() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        overlay.onAction?(.copy)
+        XCTAssertEqual(pasteboard.strings, ["Thursday works."])
+        overlay.onAction?(.insert)
+        XCTAssertEqual(writer.edits.count, 1)
+        overlay.onAction?(.undo)
+        XCTAssertEqual(writer.edits.count, 2)
+        overlay.onAction?(.dismiss)
         XCTAssertFalse(overlay.isPresenting)
     }
 
