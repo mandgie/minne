@@ -86,6 +86,20 @@ export interface IngestRequest {
   id: string;
 }
 
+/**
+ * Full-text search over the raw captures the app has indexed (the app writes
+ * `minne.db`, the brain only ever reads it). Terminates with `done` whose
+ * result is `{ query, indexed, results: SourceHit[] }` — see `sources.ts`.
+ * Bare words are ANDed; a trailing `*` on a word makes it a prefix match.
+ */
+export interface SearchSourcesRequest {
+  type: "search_sources";
+  id: string;
+  query: string;
+  /** default 10, capped at 50 */
+  limit?: number;
+}
+
 export interface StatusRequest {
   type: "status";
   id: string;
@@ -100,6 +114,7 @@ export type BrainRequest =
   | ConfigureRequest
   | LogoutRequest
   | IngestRequest
+  | SearchSourcesRequest
   | StatusRequest;
 
 // ---- Events (brain -> app) ----
@@ -343,6 +358,21 @@ export function decodeRequest(line: string): DecodeResult {
     }
     case "ingest":
       return ok({ type: "ingest", id });
+    case "search_sources": {
+      const query = parsed["query"];
+      if (typeof query !== "string" || query.trim() === "") {
+        return fail(id, "invalid_request", "search_sources requires a non-empty string `query`");
+      }
+      const limit = parsed["limit"];
+      if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1)) {
+        return fail(id, "invalid_request", "search_sources `limit` must be a positive integer");
+      }
+      return ok(
+        limit === undefined
+          ? { type: "search_sources", id, query }
+          : { type: "search_sources", id, query, limit },
+      );
+    }
     case "status":
       return ok({ type: "status", id });
     default:

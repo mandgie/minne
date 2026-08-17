@@ -21,7 +21,9 @@ import {
   type ConfigureRequest,
   type LoginRequest,
   type LogoutRequest,
+  type SearchSourcesRequest,
 } from "./protocol";
+import { EmptyQueryError, searchSources } from "./sources";
 import { buildRegistry, ollamaProviderFrom, type Registry } from "./providers";
 
 interface PromptWaiter {
@@ -57,6 +59,7 @@ export class MinneBrain {
   private readonly send: (event: BrainEvent) => void;
   private readonly log: (...args: unknown[]) => void;
   private readonly brainVersion: string;
+  private readonly dataDir: string;
   private readonly configPath: string;
   private readonly store: FileCredentialStore;
   private config: MinneConfig;
@@ -76,6 +79,7 @@ export class MinneBrain {
     this.send = deps.send;
     this.log = deps.log;
     this.brainVersion = deps.brainVersion;
+    this.dataDir = deps.dataDir;
     this.configPath = join(deps.dataDir, "config.json");
     this.store = new FileCredentialStore(join(deps.dataDir, "auth.json"));
     this.config = loadConfig(this.configPath);
@@ -124,6 +128,8 @@ export class MinneBrain {
         return this.handleLogout(request);
       case "configure":
         return this.handleConfigure(request);
+      case "search_sources":
+        return this.handleSearchSources(request);
       case "abort": {
         const aborter = this.aborters.get(request.targetId);
         aborter?.abort();
@@ -389,6 +395,32 @@ export class MinneBrain {
       waiter.resolve(request.value ?? "");
     }
     this.send(doneEvent(request.id));
+  }
+
+  // ---- sources ----
+
+  /**
+   * Ranked snippets from the captures the app has indexed. Synchronous and
+   * cheap; the answer carries `available: false` rather than an error when
+   * nothing has been captured yet, so a caller can tell "no memory" from
+   * "no match".
+   */
+  private handleSearchSources(request: SearchSourcesRequest): void {
+    try {
+      const result = searchSources(this.dataDir, request.query, request.limit);
+      this.log(
+        `search_sources "${request.query}": ${result.results.length}/${result.indexed} indexed`,
+      );
+      this.send(doneEvent(request.id, result));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof EmptyQueryError) {
+        this.send(errorEvent(request.id, "invalid_request", message));
+        return;
+      }
+      this.log("search_sources failed:", err);
+      this.send(errorEvent(request.id, "internal", message));
+    }
   }
 
   // ---- logout / status / configure ----

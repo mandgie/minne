@@ -26,7 +26,7 @@ protocol FocusedWindowSource: AnyObject {
 ///
 /// Thin by design: it wires the focus observer and the poll timer to
 /// `CaptureScheduler`, which owns every decision. Snapshots are handed to
-/// `onSnapshot`; persistence arrives with US-009.
+/// `onSnapshot`, which `MinneApp` routes into the `SourceStore`.
 @MainActor
 final class CaptureEngine {
     var onSnapshot: (@MainActor (CaptureSnapshot) -> Void)?

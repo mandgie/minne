@@ -11,6 +11,10 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private let permission = AccessibilityPermission()
     private var onboarding: OnboardingWindowController?
     private var capture: CaptureEngine?
+    private var store: SourceStore?
+    private var retentionTimer: Timer?
+    /// Last persistence failure logged, so a broken disk cannot flood stderr.
+    private var lastStoreError: String?
 
     static func main() {
         let app = NSApplication.shared
@@ -28,6 +32,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 // Temporary debug entries until US-013/US-014 build real UI.
                 .init(title: "Sign in to Claude…") { [weak self] in self?.signInAnthropic() },
                 .init(title: "Test chat") { [weak self] in self?.testChat() },
+                .init(title: "Search memory…") { [weak self] in self?.testSearchSources() },
                 .init(title: "Show Onboarding…") { [weak self] in self?.showOnboarding() },
             ])
         controller.onOpenChat = {
@@ -48,16 +53,68 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     // MARK: - Capture
 
     private func startCapture() {
+        startStore()
         let engine = CaptureEngine(
             source: AccessibilityWindowSource(), permission: permission.state)
-        engine.onSnapshot = { snapshot in
-            // US-009 persists these; for now the summary goes to stderr so a
-            // dev run shows capture working.
+        engine.onSnapshot = { [weak self] snapshot in
             BrainClient.log("capture: \(snapshot.logSummary)")
+            self?.persist(snapshot)
         }
         engine.update(pause: statusController?.pauseState ?? .active)
         capture = engine
         engine.start()
+    }
+
+    // MARK: - Raw source store
+
+    /// Opens `~/Minne` and the search index. A failure here (unwritable home,
+    /// corrupt database) costs persistence, not the app: capture keeps running
+    /// and the menu bar stays alive.
+    private func startStore() {
+        do {
+            let store = try SourceStore()
+            self.store = store
+            BrainClient.log(
+                "memory root \(store.paths.memoryRoot.path) ready — \(try store.indexedCount()) snapshots indexed"
+            )
+            sweepRetention()
+            // Sources age out while the app just sits there, so the sweep also
+            // runs on a daily timer rather than only at launch.
+            let timer = Timer(timeInterval: 86_400, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.sweepRetention() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            retentionTimer = timer
+        } catch {
+            BrainClient.log("memory root unavailable — captures will not be persisted: \(error)")
+        }
+    }
+
+    private func persist(_ snapshot: CaptureSnapshot) {
+        guard let store else { return }
+        do {
+            let reference = try store.record(snapshot)
+            lastStoreError = nil
+            BrainClient.log("stored \(reference.citation)")
+        } catch {
+            let message = "\(error)"
+            guard message != lastStoreError else { return }
+            lastStoreError = message
+            BrainClient.log("failed to store capture: \(message)")
+        }
+    }
+
+    private func sweepRetention() {
+        guard let store else { return }
+        do {
+            let report = try store.prune(policy: .fromUserDefaults())
+            guard !report.isEmpty else { return }
+            BrainClient.log(
+                "retention: pruned \(report.removedSnapshots) snapshots from \(report.removedDays.count) day(s)"
+            )
+        } catch {
+            BrainClient.log("retention sweep failed: \(error)")
+        }
     }
 
     // MARK: - Accessibility permission / onboarding
@@ -174,6 +231,30 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Round-trips a query through the brain's `search_sources` — the app
+    /// writes the index, the brain reads it. Real UI arrives with the chat
+    /// window in US-013.
+    private func testSearchSources() {
+        guard let client = brainClient else {
+            BrainClient.log("search: brain not connected")
+            return
+        }
+        guard
+            let query = promptUser(
+                message: "Search your captures", placeholder: nil, secure: false),
+            !query.isEmpty
+        else { return }
+        Task {
+            do {
+                let result = try await client.request(
+                    .searchSources(id: UUID().uuidString, query: query, limit: 5))
+                BrainClient.log("search results: \(String(describing: result))")
+            } catch {
+                BrainClient.log("search failed: \(error)")
+            }
+        }
+    }
+
     private func handleBrainEvent(_ event: BrainEvent) async {
         guard let client = brainClient else { return }
         switch event {
@@ -221,6 +302,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         capture?.stop()
+        retentionTimer?.invalidate()
         guard let client = brainClient else { return }
         // Best effort: let the brain exit cleanly on stdin close before we die.
         let semaphore = DispatchSemaphore(value: 0)

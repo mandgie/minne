@@ -26,6 +26,8 @@ describe("decodeRequest", () => {
       { type: "auth_reply", id: "12", targetId: "6", promptId: "6:1", cancel: true },
       { type: "configure", id: "13", provider: "ollama", model: "qwen3", baseUrl: "http://x/v1" },
       { type: "configure", id: "14" },
+      { type: "search_sources", id: "15", query: "oslo trip" },
+      { type: "search_sources", id: "16", query: "oslo", limit: 5 },
     ];
     for (const message of valid) {
       const decoded = decodeRequest(JSON.stringify(message));
@@ -91,6 +93,10 @@ describe("decodeRequest", () => {
       '{"type":"auth_reply","id":"a","targetId":"t","promptId":"p","value":7}',
       '{"type":"configure","id":"a","provider":""}',
       '{"type":"configure","id":"a","model":3}',
+      '{"type":"search_sources","id":"a"}',
+      '{"type":"search_sources","id":"a","query":"   "}',
+      '{"type":"search_sources","id":"a","query":"x","limit":0}',
+      '{"type":"search_sources","id":"a","query":"x","limit":2.5}',
     ];
     for (const line of bad) {
       const decoded = decodeRequest(line);

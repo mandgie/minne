@@ -2,7 +2,9 @@
 // mock provider (MINNE_MOCK_PROVIDER=1) and an isolated data dir, then speak
 // JSON-lines over its stdio. Not a test file itself — imported by *.test.ts.
 import { expect } from "bun:test";
+import { Database } from "bun:sqlite";
 import { PROTOCOL_VERSION, type BrainEvent } from "./protocol";
+import { databasePath } from "./sources";
 
 const BRAIN_DIR = new URL("..", import.meta.url).pathname;
 
@@ -71,6 +73,72 @@ export class BrainSession {
     this.reader.releaseLock();
     return code;
   }
+}
+
+/**
+ * Snapshot the app would have indexed. Only what search reads from — the raw
+ * markdown lives under the memory root and is the app's business.
+ */
+export interface TestSnapshot {
+  capturedAt: Date;
+  app?: string;
+  title?: string;
+  url?: string | null;
+  sourcePath: string;
+  section: number;
+  text: string;
+}
+
+/**
+ * Stands up a minne.db the way the Swift app would.
+ *
+ * The DDL mirrors `SnapshotIndex.schemaSQL` in
+ * app/Sources/Minne/SnapshotIndex.swift — the app owns the schema and this is a
+ * copy for tests, so the two must be changed together. Production code in the
+ * brain never creates a table; it opens the file read-only.
+ */
+export function seedSnapshotIndex(dataDir: string, snapshots: TestSnapshot[]): void {
+  const db = new Database(databasePath(dataDir), { create: true });
+  db.run("PRAGMA journal_mode = WAL");
+  db.run(`CREATE TABLE IF NOT EXISTS snapshots (
+      id INTEGER PRIMARY KEY,
+      captured_at INTEGER NOT NULL,
+      app TEXT NOT NULL,
+      bundle_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT,
+      source_path TEXT NOT NULL,
+      section INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      UNIQUE (source_path, section)
+    )`);
+  db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS snapshots_fts USING fts5 (
+      text, title, app, url,
+      content = 'snapshots', content_rowid = 'id',
+      tokenize = 'unicode61 remove_diacritics 2'
+    )`);
+  db.run(`CREATE TRIGGER IF NOT EXISTS snapshots_after_insert AFTER INSERT ON snapshots BEGIN
+      INSERT INTO snapshots_fts (rowid, text, title, app, url)
+      VALUES (new.id, new.text, new.title, new.app, new.url);
+    END`);
+  const insert = db.prepare(
+    `INSERT INTO snapshots (captured_at, app, bundle_id, title, url, source_path, section, text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const snapshot of snapshots) {
+    const app = snapshot.app ?? "Safari";
+    insert.run(
+      Math.floor(snapshot.capturedAt.getTime() / 1000),
+      app,
+      `com.example.${app.toLowerCase()}`,
+      snapshot.title ?? "Untitled",
+      snapshot.url ?? null,
+      snapshot.sourcePath,
+      snapshot.section,
+      snapshot.text,
+    );
+  }
+  db.close();
 }
 
 export async function hello(session: BrainSession): Promise<void> {

@@ -38,8 +38,8 @@ struct CaptureCandidate: Equatable, Sendable {
 
 /// One accepted observation of the foreground window, already masked — a
 /// snapshot only exists once `CaptureScheduler.accept` has run every exclusion
-/// and redaction rule over it. Nothing persists these yet; US-009 builds the
-/// raw source store, and for now `MinneApp` logs a summary.
+/// and redaction rule over it. `SourceStore` then writes it to `~/Minne` and
+/// indexes it, immutably.
 struct CaptureSnapshot: Equatable, Sendable {
     let capturedAt: Date
     let bundleIdentifier: String

@@ -82,6 +82,10 @@ enum BrainRequest: Encodable, Sendable {
     case configure(id: String, provider: String?, model: String?, baseUrl: String?)
     case logout(id: String, provider: String?)
     case ingest(id: String)
+    /// Full-text search over the captures the app has indexed. `done`'s result
+    /// is `{query, indexed, results: [{app, title, url, capturedAt, source,
+    /// snippet, score}]}`; `source` is `path#section` into `~/Minne/sources`.
+    case searchSources(id: String, query: String, limit: Int?)
     case status(id: String)
 
     var id: String {
@@ -94,13 +98,14 @@ enum BrainRequest: Encodable, Sendable {
         case .configure(let id, _, _, _): return id
         case .logout(let id, _): return id
         case .ingest(let id): return id
+        case .searchSources(let id, _, _): return id
         case .status(let id): return id
         }
     }
 
     private enum CodingKeys: String, CodingKey {
         case type, id, protocolVersion, client, message, newChat, targetId, provider
-        case method, promptId, value, cancel, model, baseUrl
+        case method, promptId, value, cancel, model, baseUrl, query, limit
     }
 
     func encode(to encoder: Encoder) throws {
@@ -138,6 +143,10 @@ enum BrainRequest: Encodable, Sendable {
             try container.encodeIfPresent(provider, forKey: .provider)
         case .ingest:
             try container.encode("ingest", forKey: .type)
+        case let .searchSources(_, query, limit):
+            try container.encode("search_sources", forKey: .type)
+            try container.encode(query, forKey: .query)
+            try container.encodeIfPresent(limit, forKey: .limit)
         case .status:
             try container.encode("status", forKey: .type)
         }
@@ -218,7 +227,8 @@ enum BrainEvent: Decodable, Sendable {
                 message: try container.decode(String.self, forKey: .message),
                 fraction: try container.decodeIfPresent(Double.self, forKey: .fraction))
         case "done":
-            self = .done(id: id, result: try container.decodeIfPresent(JSONValue.self, forKey: .result))
+            self = .done(
+                id: id, result: try container.decodeIfPresent(JSONValue.self, forKey: .result))
         case "error":
             self = .error(
                 id: id,
