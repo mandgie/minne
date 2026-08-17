@@ -15,6 +15,12 @@ final class StatusItemController: NSObject {
     var onOpenSettings: (@MainActor () -> Void)?
     /// Clicking the "capture off" hint reopens the first-run flow.
     var onOpenOnboarding: (@MainActor () -> Void)?
+    /// Fires whenever the pause state changes, including the automatic
+    /// resume when a timed pause expires. The capture engine listens.
+    var onPauseChange: (@MainActor (PauseState) -> Void)?
+
+    /// Current pause state, with an expired timed pause already collapsed.
+    var pauseState: PauseState { pause.resolved(now: Date()) }
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
@@ -71,6 +77,7 @@ final class StatusItemController: NSObject {
             resumeTimer = timer
         }
         BrainClient.log("capture pause state: \(newState)")
+        onPauseChange?(newState)
         applyAppearance()
     }
 

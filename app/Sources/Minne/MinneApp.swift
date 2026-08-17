@@ -10,6 +10,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var brainClient: BrainClient?
     private let permission = AccessibilityPermission()
     private var onboarding: OnboardingWindowController?
+    private var capture: CaptureEngine?
 
     static func main() {
         let app = NSApplication.shared
@@ -36,10 +37,27 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             BrainClient.log("Settings: settings window arrives in US-014")
         }
         controller.onOpenOnboarding = { [weak self] in self?.showOnboarding() }
+        controller.onPauseChange = { [weak self] pause in self?.capture?.update(pause: pause) }
         statusController = controller
 
+        startCapture()
         startPermissionTracking()
         connectBrain()
+    }
+
+    // MARK: - Capture
+
+    private func startCapture() {
+        let engine = CaptureEngine(
+            source: AccessibilityWindowSource(), permission: permission.state)
+        engine.onSnapshot = { snapshot in
+            // US-009 persists these; for now the summary goes to stderr so a
+            // dev run shows capture working.
+            BrainClient.log("capture: \(snapshot.logSummary)")
+        }
+        engine.update(pause: statusController?.pauseState ?? .active)
+        capture = engine
+        engine.start()
     }
 
     // MARK: - Accessibility permission / onboarding
@@ -47,12 +65,13 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private func startPermissionTracking() {
         BrainClient.log(
             permission.state.isGranted
-                ? "accessibility granted — capture will run once US-007 lands"
+                ? "accessibility granted — capture engine running"
                 : "accessibility missing — running in degraded no-capture mode")
         permission.onChange = { [weak self] state in
             guard let self else { return }
             self.statusController?.update(permission: state)
             self.onboarding?.permissionChanged(state)
+            self.capture?.update(permission: state)
         }
         permission.startPolling(interval: AccessibilityPermission.backgroundInterval)
 
@@ -201,6 +220,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        capture?.stop()
         guard let client = brainClient else { return }
         // Best effort: let the brain exit cleanly on stdin close before we die.
         let semaphore = DispatchSemaphore(value: 0)
