@@ -97,8 +97,11 @@ final class StatusItemController: NSObject {
         menu.addItem(hintItem)
         menu.addItem(.separator())
 
+        // ⌥Space is a Carbon global hotkey (GlobalHotKey); the key equivalent
+        // here is for discoverability — the menu shows the shortcut.
         let openChat = NSMenuItem(
-            title: "Open Chat", action: #selector(openChatAction), keyEquivalent: "")
+            title: "Open Chat", action: #selector(openChatAction), keyEquivalent: " ")
+        openChat.keyEquivalentModifierMask = [.option]
         openChat.target = self
         menu.addItem(openChat)
 

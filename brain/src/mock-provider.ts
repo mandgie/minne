@@ -21,7 +21,9 @@ import {
  * Its models stream deterministically (no HTTP), scripted by the last user
  * message:
  *   - a line "FAIL: <reason>" -> stream error, errorMessage "mock failure: <reason>"
- *   - starts with "SLOW" -> many small deltas with sleeps, for abort tests
+ *   - starts with "SLOW" -> many small deltas with sleeps (25 ms, or
+ *                           MINNE_MOCK_SLOW_DELTA_MS) — for abort tests, and
+ *                           for screenshotting a UI mid-stream
  *   - a line "TOOL: <name> <json args>" -> one tool call per such line, in
  *                           order, one per turn, then (once the last result
  *                           comes back) "tool <name> said: <result text>" — the
@@ -32,6 +34,9 @@ import {
  *                           along in a seeded snapshot's captured text. The
  *                           same lines in MINNE_MOCK_SCRIPT apply to every
  *                           message, for prompts a test does not compose.
+ *   - MINNE_MOCK_REPLY    -> once any script is spent, exactly that text,
+ *                           streamed word by word. The way to drive a UI to a
+ *                           known answer (markdown, say) from outside.
  *   - anything else      -> "echo: <text> [history=<n>]" split into deltas,
  *                           where <n> is the message count sent to the model
  *                           (verifies session persistence / new_chat resets)
@@ -64,6 +69,12 @@ function lastUserText(context: Context): string {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Pause between "SLOW" deltas; stretched when a UI is being screenshotted. */
+function slowDeltaMs(): number {
+  const override = Number(process.env["MINNE_MOCK_SLOW_DELTA_MS"]);
+  return Number.isFinite(override) && override > 0 ? override : 25;
+}
 
 /** Every `TOOL: <name> <json>` line in the message, in order. */
 function scriptedToolCalls(text: string): ToolCall[] {
@@ -171,6 +182,40 @@ function mockStreams(): ProviderStreams {
         return;
       }
 
+      const slow = text.startsWith("SLOW");
+
+      // One fixed answer for the whole run, once any script is spent. Exists so
+      // a UI can be driven to a known reply — markdown included, which none of
+      // the canned replies below can produce.
+      const fixedReply = process.env["MINNE_MOCK_REPLY"];
+      if (fixedReply !== undefined && fixedReply !== "") {
+        stream.push({ type: "start", partial: partial("") });
+        stream.push({ type: "text_start", contentIndex: 0, partial: partial("") });
+        let written = "";
+        for (const chunk of fixedReply.match(/\S+\s*/g) ?? []) {
+          if (slow) await sleep(slowDeltaMs());
+          written += chunk;
+          stream.push({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: chunk,
+            partial: partial(written),
+          });
+        }
+        stream.push({
+          type: "text_end",
+          contentIndex: 0,
+          content: written,
+          partial: partial(written),
+        });
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: { ...partial(written), stopReason: "stop" },
+        });
+        return;
+      }
+
       // The script is spent and a tool result just came back: report it and end
       // the turn, so a scripted run always terminates.
       const toolResult = lastToolResult(context);
@@ -204,7 +249,6 @@ function mockStreams(): ProviderStreams {
         return;
       }
 
-      const slow = text.startsWith("SLOW");
       const deltas = slow
         ? Array.from({ length: MOCK_SLOW_DELTAS }, (_, i) => `chunk${i} `)
         : ["echo:", ` ${text}`, ` [history=${context.messages.length}]`];
@@ -213,7 +257,7 @@ function mockStreams(): ProviderStreams {
       stream.push({ type: "text_start", contentIndex: 0, partial: partial("") });
       let accumulated = "";
       for (const delta of deltas) {
-        if (slow) await sleep(25);
+        if (slow) await sleep(slowDeltaMs());
         if (signal?.aborted) {
           stream.push({
             type: "error",

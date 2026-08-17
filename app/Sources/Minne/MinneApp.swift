@@ -10,6 +10,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var brainClient: BrainClient?
     private let permission = AccessibilityPermission()
     private var onboarding: OnboardingWindowController?
+    private let chatModel = ChatModel()
+    private var chat: ChatWindowController?
+    private var chatHotKey: GlobalHotKey?
     private var capture: CaptureEngine?
     private var store: SourceStore?
     private var retentionTimer: Timer?
@@ -29,25 +32,42 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         let controller = StatusItemController(
             permission: permission.state,
             debugActions: [
-                // Temporary debug entries until US-013/US-014 build real UI.
+                // Temporary debug entries until US-014 builds the real UI.
                 .init(title: "Sign in to Claude…") { [weak self] in self?.signInAnthropic() },
-                .init(title: "Test chat") { [weak self] in self?.testChat() },
                 .init(title: "Search memory…") { [weak self] in self?.testSearchSources() },
                 .init(title: "Show Onboarding…") { [weak self] in self?.showOnboarding() },
             ])
-        controller.onOpenChat = {
-            BrainClient.log("Open Chat: chat window arrives in US-013")
-        }
+        controller.onOpenChat = { [weak self] in self?.showChat() }
         controller.onOpenSettings = {
-            BrainClient.log("Settings: settings window arrives in US-014")
+            BrainClient.log("Settings: settings window arrives in US-015")
         }
         controller.onOpenOnboarding = { [weak self] in self?.showOnboarding() }
         controller.onPauseChange = { [weak self] pause in self?.capture?.update(pause: pause) }
         statusController = controller
 
+        startChat()
         startCapture()
         startPermissionTracking()
         connectBrain()
+    }
+
+    // MARK: - Chat
+
+    private func startChat() {
+        chat = ChatWindowController(model: chatModel)
+        chatHotKey = GlobalHotKey(
+            keyCode: GlobalHotKey.optionSpace.keyCode,
+            modifiers: GlobalHotKey.optionSpace.modifiers
+        ) { [weak self] in
+            self?.chat?.toggle()
+        }
+        if chatHotKey == nil {
+            BrainClient.log("⌥Space is taken by another app — chat opens from the menu bar only")
+        }
+    }
+
+    private func showChat() {
+        chat?.show()
     }
 
     // MARK: - Capture
@@ -166,6 +186,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
         let client = BrainClient(launch: launch)
         brainClient = client
+        chatModel.backend = BrainChatBackend(client: client)
         Task {
             do {
                 let hello = try await client.start()
@@ -211,29 +232,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Sends a canned chat prompt and logs the streamed reply (US-013 builds real UI).
-    private func testChat() {
-        guard let client = brainClient else {
-            BrainClient.log("test chat: brain not connected")
-            return
-        }
-        Task {
-            do {
-                let result = try await client.request(
-                    .chat(
-                        id: UUID().uuidString,
-                        message: "Say hello in one short sentence.",
-                        newChat: true))
-                BrainClient.log("test chat done: \(String(describing: result))")
-            } catch {
-                BrainClient.log("test chat failed: \(error)")
-            }
-        }
-    }
-
     /// Round-trips a query through the brain's `search_sources` — the app
-    /// writes the index, the brain reads it. Real UI arrives with the chat
-    /// window in US-013.
+    /// writes the index, the brain reads it. Chat asks the same question
+    /// through its tools; this stays as a debug probe of the raw index.
     private func testSearchSources() {
         guard let client = brainClient else {
             BrainClient.log("search: brain not connected")
@@ -258,8 +259,10 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private func handleBrainEvent(_ event: BrainEvent) async {
         guard let client = brainClient else { return }
         switch event {
-        case .textDelta(let id, let delta):
-            BrainClient.log("chat \(id) delta: \(delta)")
+        case .textDelta, .toolCall:
+            // The chat window is the only consumer of a turn's intermediate
+            // events; it ignores anything that isn't its in-flight request.
+            chatModel.apply(event)
         case .authURL(_, let url):
             BrainClient.log("auth: opening \(url)")
             if let parsed = URL(string: url) { NSWorkspace.shared.open(parsed) }
