@@ -39,6 +39,8 @@ final class CaptureEngine {
     private var pause: PauseState = .active
     private var timer: Timer?
     private var running = false
+    /// Last exclusion logged, so the same one is not repeated every tick.
+    private var lastExclusionKey: String?
 
     init(
         source: FocusedWindowSource,
@@ -94,16 +96,37 @@ final class CaptureEngine {
     /// instead of waiting on real timers.
     @discardableResult
     func tick(trigger: CaptureScheduler.Trigger, now: Date = Date()) -> CaptureSnapshot? {
+        let window = source.currentWindow()
         let decision = scheduler.decide(
-            trigger: trigger, window: source.currentWindow(), permission: permission,
-            pause: pause, now: now)
-        guard case .capture = decision else { return nil }
-        guard let candidate = source.readFocusedWindow(byteBudget: configuration.maxSnapshotBytes)
-        else { return nil }
-        guard case .accepted(let snapshot) = scheduler.accept(candidate, now: now) else {
+            trigger: trigger, window: window, permission: permission, pause: pause, now: now)
+        guard case .capture = decision else {
+            if case .skip(.blacklistedApp) = decision { noteExclusion("blacklisted app", window) }
+            if case .skip(.privateWindow) = decision { noteExclusion("private window", window) }
             return nil
         }
-        onSnapshot?(snapshot)
-        return snapshot
+        guard let candidate = source.readFocusedWindow(byteBudget: configuration.maxSnapshotBytes)
+        else { return nil }
+        switch scheduler.accept(candidate, now: now) {
+        case .accepted(let snapshot):
+            onSnapshot?(snapshot)
+            return snapshot
+        case .rejected(.blacklistedDomain):
+            noteExclusion("blacklisted domain", candidate.window)
+            return nil
+        case .rejected:
+            return nil
+        }
+    }
+
+    /// Exclusions are the one skip worth a log line: "why did Minne learn
+    /// nothing about my bank?" is a question the user will ask. Recorded once
+    /// per window and reason so the 5 s poll cannot flood stderr, and never
+    /// with the window title or URL, which are the parts that could be
+    /// sensitive.
+    private func noteExclusion(_ reason: String, _ window: WindowIdentity?) {
+        let key = "\(reason)|\(window?.bundleIdentifier ?? "-")|\(window?.windowTitle ?? "-")"
+        guard key != lastExclusionKey else { return }
+        lastExclusionKey = key
+        BrainClient.log("capture skipped — \(reason): \(window?.appName ?? "unknown app")")
     }
 }

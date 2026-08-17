@@ -36,8 +36,10 @@ struct CaptureCandidate: Equatable, Sendable {
     }
 }
 
-/// One accepted observation of the foreground window. Nothing persists these
-/// yet — US-009 builds the raw source store; for now `MinneApp` logs a summary.
+/// One accepted observation of the foreground window, already masked — a
+/// snapshot only exists once `CaptureScheduler.accept` has run every exclusion
+/// and redaction rule over it. Nothing persists these yet; US-009 builds the
+/// raw source store, and for now `MinneApp` logs a summary.
 struct CaptureSnapshot: Equatable, Sendable {
     let capturedAt: Date
     let bundleIdentifier: String
@@ -47,12 +49,31 @@ struct CaptureSnapshot: Equatable, Sendable {
     let text: String
     /// Text was cut, either by the walk's ceilings or by the byte cap.
     let truncated: Bool
+    /// How many sensitive spans `SensitiveMasker` replaced across text, title
+    /// and URL. Counted rather than described: what was removed must not come
+    /// back as metadata.
+    let redactions: Int
+
+    init(
+        capturedAt: Date, bundleIdentifier: String, appName: String, windowTitle: String,
+        url: String?, text: String, truncated: Bool, redactions: Int = 0
+    ) {
+        self.capturedAt = capturedAt
+        self.bundleIdentifier = bundleIdentifier
+        self.appName = appName
+        self.windowTitle = windowTitle
+        self.url = url
+        self.text = text
+        self.truncated = truncated
+        self.redactions = redactions
+    }
 
     /// One-line stderr summary; the text itself never reaches the log.
     var logSummary: String {
         var parts = ["\(appName) [\(bundleIdentifier)]", "“\(windowTitle)”"]
         if let url { parts.append(url) }
         parts.append("\(text.count) chars\(truncated ? " (truncated)" : "")")
+        if redactions > 0 { parts.append("\(redactions) masked") }
         return parts.joined(separator: " · ")
     }
 }

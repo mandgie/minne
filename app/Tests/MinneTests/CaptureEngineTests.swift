@@ -135,6 +135,65 @@ final class CaptureEngineTests: XCTestCase {
         XCTAssertEqual(box.snapshots.count, 2)
     }
 
+    // MARK: - Exclusions
+
+    private func makeEngine(
+        window: WindowIdentity, url: String? = nil, blacklist: CaptureBlacklist
+    ) -> (engine: CaptureEngine, source: FakeWindowSource, snapshots: Box) {
+        let source = FakeWindowSource()
+        source.window = window
+        source.url = url
+        var configuration = CaptureScheduler.Configuration()
+        configuration.blacklist = blacklist
+        let engine = CaptureEngine(
+            source: source, permission: .granted, configuration: configuration)
+        let box = Box()
+        engine.onSnapshot = { box.snapshots.append($0) }
+        return (engine, source, box)
+    }
+
+    func testBlacklistedAppIsNeverWalked() {
+        let (engine, source, box) = makeEngine(
+            window: WindowIdentity(
+                bundleIdentifier: "com.1password.1password", appName: "1Password",
+                windowTitle: "Personal"),
+            blacklist: CaptureBlacklist(bundleIdentifiers: ["com.1password.1password"]))
+        engine.tick(trigger: .focusChange, now: start)
+        engine.tick(trigger: .timer, now: start.addingTimeInterval(60))
+        XCTAssertEqual(source.walks, 0, "a blacklisted app's tree is never even read")
+        XCTAssertTrue(box.snapshots.isEmpty)
+    }
+
+    func testPrivateBrowserWindowIsNeverWalked() {
+        let (engine, source, box) = makeEngine(
+            window: WindowIdentity(
+                bundleIdentifier: "com.google.Chrome", appName: "Chrome",
+                windowTitle: "Bank — Google Chrome (Incognito)"),
+            blacklist: CaptureBlacklist())
+        engine.tick(trigger: .focusChange, now: start)
+        XCTAssertEqual(source.walks, 0)
+        XCTAssertTrue(box.snapshots.isEmpty)
+    }
+
+    func testBlacklistedDomainEmitsNothing() {
+        let (engine, source, box) = makeEngine(
+            window: window("Konton"), url: "https://www.bank.se/konton",
+            blacklist: CaptureBlacklist(domains: ["bank.se"]))
+        engine.tick(trigger: .focusChange, now: start)
+        XCTAssertEqual(source.walks, 1, "the URL is only known after the walk")
+        XCTAssertTrue(box.snapshots.isEmpty, "but no snapshot ever leaves the engine")
+    }
+
+    func testEmittedSnapshotsAreAlreadyMasked() {
+        let (engine, source, box) = makeEngine()
+        source.text = "kortnummer 4111 1111 1111 1111 och personnummer 811218-9876"
+        engine.tick(trigger: .focusChange, now: start)
+        XCTAssertEqual(box.snapshots.count, 1)
+        XCTAssertEqual(box.snapshots.first?.redactions, 2)
+        XCTAssertFalse(box.snapshots.first?.text.contains("4111") ?? true)
+        XCTAssertFalse(box.snapshots.first?.text.contains("9876") ?? true)
+    }
+
     func testNoFocusedWindowProducesNothing() {
         let (engine, source, box) = makeEngine()
         source.window = nil

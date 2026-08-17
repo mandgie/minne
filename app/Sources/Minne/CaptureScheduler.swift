@@ -26,6 +26,8 @@ struct CaptureScheduler {
         /// so a long session over many windows cannot grow without limit;
         /// evicting a window only costs one redundant capture.
         var trackedWindows: Int = 16
+        /// Apps and domains that produce no snapshot at all.
+        var blacklist: CaptureBlacklist = .standard
 
         init() {}
     }
@@ -41,6 +43,10 @@ struct CaptureScheduler {
         case permissionMissing
         case paused
         case noFocusedWindow
+        /// The frontmost app is blacklisted.
+        case blacklistedApp
+        /// The window title says this is a private/incognito browser window.
+        case privateWindow
         /// This window was walked less than `debounceInterval` ago.
         case debounced
     }
@@ -54,6 +60,10 @@ struct CaptureScheduler {
         /// Nothing but whitespace came back from the walk.
         case empty
         case duplicate(similarity: Double)
+        /// The window's URL is on the domain blacklist. Only knowable after
+        /// the walk — the address lives deep in the AX tree — so the text is
+        /// read and then dropped on the floor, never becoming a snapshot.
+        case blacklistedDomain
     }
 
     enum Acceptance: Equatable, Sendable {
@@ -98,6 +108,15 @@ struct CaptureScheduler {
         guard !pause.resolved(now: now).isPaused else { return .skip(.paused) }
         guard let window else { return .skip(.noFocusedWindow) }
 
+        // Excluded sources are rejected before the debounce is consulted, so
+        // they never take a slot in the tracked-window state either.
+        guard !configuration.blacklist.blocks(bundleIdentifier: window.bundleIdentifier) else {
+            return .skip(.blacklistedApp)
+        }
+        guard !PrivateBrowsing.isPrivateWindowTitle(window.windowTitle) else {
+            return .skip(.privateWindow)
+        }
+
         // The same rule covers both triggers: a window first seen (a genuine
         // switch, including alt-tab to something new) is captured at once,
         // while returning to a window just walked — or sitting in it — waits
@@ -114,10 +133,27 @@ struct CaptureScheduler {
         return .capture
     }
 
-    /// Applies the byte cap and the near-duplicate rule to a walk's output.
+    /// Applies the domain blacklist, masking, the byte cap and the
+    /// near-duplicate rule to a walk's output.
+    ///
+    /// This is the only exit from the capture engine, which is why masking
+    /// happens here rather than at the persistence layer: there is no path by
+    /// which unmasked text can reach a caller. Masking runs before the cap so
+    /// the cap's byte guarantee still holds over the text that is emitted, and
+    /// before the duplicate check so both sides of the comparison are masked.
     mutating func accept(_ candidate: CaptureCandidate, now: Date) -> Acceptance {
+        guard !configuration.blacklist.blocks(url: candidate.url) else {
+            return .rejected(.blacklistedDomain)
+        }
+
+        let maskedText = SensitiveMasker.masking(candidate.text)
+        let maskedTitle = SensitiveMasker.masking(candidate.window.windowTitle)
+        let maskedURL = candidate.url.map(SensitiveMasker.masking)
+        let redactions =
+            maskedText.kinds.count + maskedTitle.kinds.count + (maskedURL?.kinds.count ?? 0)
+
         let (capped, wasCapped) = Self.cap(
-            candidate.text, toBytes: configuration.maxSnapshotBytes)
+            maskedText.text, toBytes: configuration.maxSnapshotBytes)
         guard !capped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .rejected(.empty)
         }
@@ -135,10 +171,11 @@ struct CaptureScheduler {
                 capturedAt: now,
                 bundleIdentifier: candidate.window.bundleIdentifier,
                 appName: candidate.window.appName,
-                windowTitle: candidate.window.windowTitle,
-                url: candidate.url,
+                windowTitle: maskedTitle.text,
+                url: maskedURL?.text,
                 text: capped,
-                truncated: wasCapped || candidate.truncatedByWalk))
+                truncated: wasCapped || candidate.truncatedByWalk,
+                redactions: redactions))
     }
 
     // MARK: - Byte cap

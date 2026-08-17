@@ -26,6 +26,11 @@ final class AccessibilityWindowSource: FocusedWindowSource {
     private static let textRoles: Set<String> = [
         kAXTextFieldRole, kAXTextAreaRole, kAXStaticTextRole, kAXComboBoxRole, "AXWebArea",
     ]
+    /// Roles worth one extra round trip to check for a secure subrole: WebKit
+    /// exposes a password input as a text field whose subrole says otherwise.
+    private static let subroleBearingRoles: Set<String> = [
+        kAXTextFieldRole, kAXTextAreaRole,
+    ]
 
     private struct FrontApp {
         let pid: pid_t
@@ -118,13 +123,16 @@ final class AccessibilityWindowSource: FocusedWindowSource {
         }
         walk.elements += 1
 
-        // US-008 owns masking, but a secure field's contents must never be
-        // read in the first place, so the whole subtree is skipped here. The
-        // subrole is only fetched for text fields — every attribute read is a
-        // round trip to the other process, and this walk makes thousands.
+        // A secure field's contents are never read in the first place — not
+        // read and then masked — so the whole subtree is skipped here (see
+        // `SecureField`). The subrole is only fetched for the roles that can
+        // carry it: every attribute read is a round trip to the other process,
+        // and this walk makes thousands.
         let role = string(element, kAXRoleAttribute)
-        if role == "AXSecureTextField" { return }
-        if role == kAXTextFieldRole, string(element, kAXSubroleAttribute) == "AXSecureTextField" {
+        if SecureField.isSecure(role) { return }
+        if let role, Self.subroleBearingRoles.contains(role),
+            SecureField.isSecure(string(element, kAXSubroleAttribute))
+        {
             return
         }
 

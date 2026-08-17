@@ -89,6 +89,126 @@ final class CaptureSchedulerTests: XCTestCase {
             .capture)
     }
 
+    // MARK: - Blacklist and private windows
+
+    private func scheduler(blocking blacklist: CaptureBlacklist) -> CaptureScheduler {
+        scheduler { $0.blacklist = blacklist }
+    }
+
+    func testBlacklistedAppIsNeverWalked() {
+        var scheduler = scheduler(
+            blocking: CaptureBlacklist(bundleIdentifiers: ["com.1password.1password"]))
+        let vault = WindowIdentity(
+            bundleIdentifier: "com.1password.1password", appName: "1Password",
+            windowTitle: "Personal")
+        XCTAssertEqual(
+            scheduler.decide(
+                trigger: .focusChange, window: vault, permission: .granted, pause: .active,
+                now: start),
+            .skip(.blacklistedApp))
+        // Still blocked on the next tick: nothing about the decision decays.
+        XCTAssertEqual(
+            scheduler.decide(
+                trigger: .timer, window: vault, permission: .granted, pause: .active,
+                now: start.addingTimeInterval(60)),
+            .skip(.blacklistedApp))
+    }
+
+    func testPrivateBrowserWindowIsNeverWalked() {
+        var scheduler = scheduler()
+        XCTAssertEqual(
+            scheduler.decide(
+                trigger: .focusChange, window: window("Bank — Google Chrome (Incognito)"),
+                permission: .granted, pause: .active, now: start),
+            .skip(.privateWindow))
+    }
+
+    func testBlacklistedDomainProducesNoSnapshotEvenThoughTheWalkHappened() {
+        // The address only surfaces once the tree has been walked, so the rule
+        // lands here — but nothing is emitted and nothing is remembered.
+        var scheduler = scheduler(blocking: CaptureBlacklist(domains: ["bank.se"]))
+        let page = window("Konton")
+        XCTAssertEqual(
+            scheduler.accept(
+                candidate("account 123 balance", page, url: "https://www.bank.se/konton"),
+                now: start),
+            .rejected(.blacklistedDomain))
+        // A different page in the same window is unaffected.
+        guard
+            case .accepted = scheduler.accept(
+                candidate("a news article about interest rates", page, url: "https://news.se/a"),
+                now: start)
+        else { return XCTFail("an unlisted domain must still be captured") }
+    }
+
+    func testExclusionsAreCheckedBeforeTheDebounceStateIsTouched() {
+        var scheduler = scheduler(blocking: CaptureBlacklist(bundleIdentifiers: ["com.evil.app"]))
+        let blocked = WindowIdentity(
+            bundleIdentifier: "com.evil.app", appName: "Evil", windowTitle: "Docs")
+        _ = scheduler.decide(
+            trigger: .focusChange, window: blocked, permission: .granted, pause: .active,
+            now: start)
+        // The blocked window must not have consumed a tracked-window slot in a
+        // way that changes how a legitimate window behaves.
+        XCTAssertEqual(decide(&scheduler, window("Docs"), at: start), .capture)
+    }
+
+    // MARK: - Masking
+
+    func testSensitiveTextIsMaskedBeforeItLeavesTheScheduler() {
+        var scheduler = scheduler()
+        let input = candidate("Betala med 4111 1111 1111 1111 idag", window("Faktura"))
+        guard case .accepted(let snapshot) = scheduler.accept(input, now: start) else {
+            return XCTFail("snapshot must be accepted")
+        }
+        XCTAssertEqual(snapshot.text, "Betala med \(SensitiveMasker.token) idag")
+        XCTAssertEqual(snapshot.redactions, 1)
+    }
+
+    func testWindowTitleAndURLAreMaskedToo() {
+        var scheduler = scheduler()
+        let identity = WindowIdentity(
+            bundleIdentifier: "com.apple.Safari", appName: "Safari",
+            windowTitle: "Patient 811218-9876 — journal")
+        let input = CaptureCandidate(
+            window: identity, url: "https://vard.se/p/811218-9876", text: "notes for the visit")
+        guard case .accepted(let snapshot) = scheduler.accept(input, now: start) else {
+            return XCTFail("snapshot must be accepted")
+        }
+        XCTAssertEqual(snapshot.windowTitle, "Patient \(SensitiveMasker.token) — journal")
+        XCTAssertEqual(snapshot.url, "https://vard.se/p/\(SensitiveMasker.token)")
+        XCTAssertEqual(snapshot.redactions, 2)
+    }
+
+    func testDedupComparesMaskedText() {
+        // Two visits to the same form with different card numbers typed in
+        // mask to the same text, so the second is a duplicate — the point
+        // being that the comparison never sees the unmasked digits.
+        var scheduler = scheduler()
+        let form = window("Checkout")
+        guard
+            case .accepted = scheduler.accept(
+                candidate("pay with 4111 1111 1111 1111 now please confirm", form), now: start)
+        else { return XCTFail("first snapshot must be accepted") }
+        guard
+            case .rejected(.duplicate) = scheduler.accept(
+                candidate("pay with 5500 0000 0000 0004 now please confirm", form), now: start)
+        else { return XCTFail("both snapshots mask to the same text") }
+    }
+
+    func testMaskingHappensBeforeTheByteCap() {
+        // Masking can lengthen text (a 16-digit card becomes three 3-byte
+        // blocks), so capping first would let a snapshot exceed the limit.
+        var scheduler = scheduler { $0.maxSnapshotBytes = 32 }
+        let input = candidate(
+            "card 4111111111111111 4111111111111111 4111111111111111", window("A"))
+        guard case .accepted(let snapshot) = scheduler.accept(input, now: start) else {
+            return XCTFail("snapshot must be accepted")
+        }
+        XCTAssertLessThanOrEqual(snapshot.text.utf8.count, 32)
+        XCTAssertFalse(snapshot.text.contains("4111"))
+    }
+
     // MARK: - Debounce
 
     func testSameWindowIsDebouncedForTheFullInterval() {
