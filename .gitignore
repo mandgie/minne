@@ -17,3 +17,6 @@ node_modules/
 
 # Assembled bundles and binaries
 build/
+
+# Browser automation scratch
+.playwright-mcp/
