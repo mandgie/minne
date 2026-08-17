@@ -1,7 +1,7 @@
 // minne-brain entrypoint: JSON-lines protocol server over stdio.
 // stdout is reserved for protocol events; ALL logging goes to stderr.
 import { readLines, stdinChunks } from "./jsonlines";
-import { appSupportDir } from "./paths";
+import { appSupportDir, memoryRoot } from "./paths";
 import { PROTOCOL_VERSION, decodeRequest, encodeEvent, errorEvent, type BrainEvent } from "./protocol";
 import { MinneBrain } from "./service";
 
@@ -21,6 +21,7 @@ const brain = new MinneBrain({
   send,
   log,
   dataDir: appSupportDir(),
+  memoryRoot: memoryRoot(),
   brainVersion: BRAIN_VERSION,
 });
 

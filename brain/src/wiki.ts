@@ -211,8 +211,18 @@ export interface WikiTree {
   sources?: Set<string>;
 }
 
+export interface LoadOptions {
+  /**
+   * Walk `sources/` as well, so citations can be checked against what is
+   * actually on disk. Defaults to true; pass `false` when only the pages are
+   * wanted (the wiki half of `search_memory`), because the sources tree is one
+   * directory per day and grows without bound while the wiki does not.
+   */
+  includeSources?: boolean;
+}
+
 /** Reads a memory root into a `WikiTree`, ready for `lintWiki`. */
-export function loadWikiTree(root: string): WikiTree {
+export function loadWikiTree(root: string, options: LoadOptions = {}): WikiTree {
   const files: Record<string, string> = {};
   for (const relative of [SCHEMA_FILE, INDEX_FILE, LOG_FILE]) {
     const text = readIfPresent(join(root, relative));
@@ -222,6 +232,7 @@ export function loadWikiTree(root: string): WikiTree {
     const text = readIfPresent(join(root, relative));
     if (text !== null) files[relative] = text;
   }
+  if (options.includeSources === false) return { files };
   return { files, sources: new Set(markdownUnder(root, SOURCES_DIR)) };
 }
 

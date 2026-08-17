@@ -3,6 +3,7 @@
 // JSON-lines over its stdio. Not a test file itself — imported by *.test.ts.
 import { expect } from "bun:test";
 import { Database } from "bun:sqlite";
+import { join } from "node:path";
 import { PROTOCOL_VERSION, type BrainEvent } from "./protocol";
 import { databasePath } from "./sources";
 
@@ -14,7 +15,16 @@ function spawnBrain(dataDir: string, env?: Record<string, string | undefined>) {
     stdin: "pipe" as const,
     stdout: "pipe" as const,
     stderr: "ignore" as const,
-    env: { ...process.env, MINNE_APP_SUPPORT_DIR: dataDir, MINNE_MOCK_PROVIDER: "1", ...env },
+    env: {
+      ...process.env,
+      MINNE_APP_SUPPORT_DIR: dataDir,
+      // Never the real ~/Minne: the memory tools write, and a test that forgot
+      // this would edit the user's own wiki. Defaults inside the data dir the
+      // caller already owns, overridable for tests that seed a memory.
+      MINNE_MEMORY_ROOT: join(dataDir, "memory"),
+      MINNE_MOCK_PROVIDER: "1",
+      ...env,
+    },
   });
 }
 

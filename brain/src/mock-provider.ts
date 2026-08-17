@@ -9,6 +9,7 @@ import {
   type Provider,
   type ProviderStreams,
   type StreamOptions,
+  type ToolCall,
   type Usage,
 } from "@earendil-works/pi-ai";
 
@@ -21,6 +22,10 @@ import {
  * message:
  *   - "FAIL: <reason>"  -> stream error with errorMessage "mock failure: <reason>"
  *   - starts with "SLOW" -> many small deltas with sleeps, for abort tests
+ *   - "TOOL: <name> <json args>" -> one tool call, then (once the result comes
+ *                           back) "tool <name> said: <result text>" — the
+ *                           scripted way to drive a real tool round trip
+ *                           through the agent loop and the protocol
  *   - anything else      -> "echo: <text> [history=<n>]" split into deltas,
  *                           where <n> is the message count sent to the model
  *                           (verifies session persistence / new_chat resets)
@@ -54,6 +59,31 @@ function lastUserText(context: Context): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The `TOOL: <name> <json>` script, parsed. */
+function scriptedToolCall(text: string): ToolCall | null {
+  const match = /^TOOL:\s*(\S+)\s*(\{[\s\S]*\})?\s*$/.exec(text);
+  if (!match) return null;
+  return {
+    type: "toolCall",
+    id: `mock-call-${Date.now()}`,
+    name: match[1] as string,
+    arguments: match[2] === undefined ? {} : (JSON.parse(match[2]) as Record<string, unknown>),
+  };
+}
+
+/** What the last tool result said, so the mock can echo it back as prose. */
+function lastToolResult(context: Context): { name: string; text: string } | null {
+  const last = context.messages.at(-1);
+  if (last === undefined || last.role !== "toolResult") return null;
+  return {
+    name: last.toolName,
+    text: last.content
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim(),
+  };
+}
+
 /** Deterministic in-process replacement for a real streaming API. */
 function mockStreams(): ProviderStreams {
   const run = (
@@ -80,6 +110,38 @@ function mockStreams(): ProviderStreams {
 
     void (async () => {
       const text = lastUserText(context);
+
+      // A tool result just came back: report it and end the turn, so a scripted
+      // tool call is exactly two turns and never loops.
+      const toolResult = lastToolResult(context);
+      if (toolResult !== null) {
+        const reply = `tool ${toolResult.name} said: ${toolResult.text}`;
+        stream.push({ type: "start", partial: partial("") });
+        stream.push({ type: "text_start", contentIndex: 0, partial: partial("") });
+        stream.push({ type: "text_delta", contentIndex: 0, delta: reply, partial: partial(reply) });
+        stream.push({ type: "text_end", contentIndex: 0, content: reply, partial: partial(reply) });
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: { ...partial(reply), stopReason: "stop" },
+        });
+        return;
+      }
+
+      const toolCall = scriptedToolCall(text);
+      if (toolCall !== null) {
+        const calling: AssistantMessage = { ...base, content: [toolCall] };
+        stream.push({ type: "start", partial: partial("") });
+        stream.push({ type: "toolcall_start", contentIndex: 0, partial: calling });
+        stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: calling });
+        stream.push({
+          type: "done",
+          reason: "toolUse",
+          message: { ...calling, stopReason: "toolUse" },
+        });
+        return;
+      }
+
       if (text.startsWith("FAIL:")) {
         stream.push({
           type: "error",

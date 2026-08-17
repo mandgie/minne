@@ -24,6 +24,8 @@ import {
   type SearchSourcesRequest,
 } from "./protocol";
 import { EmptyQueryError, searchSources } from "./sources";
+import { Memory } from "./memory";
+import { memoryTools } from "./memory-tools";
 import { buildRegistry, ollamaProviderFrom, type Registry } from "./providers";
 
 interface PromptWaiter {
@@ -33,19 +35,35 @@ interface PromptWaiter {
 }
 
 /**
- * System prompt for the chat agent. Memory tools arrive in a later story, so
- * the prompt promises nothing the brain can't do yet.
+ * System prompt for the chat agent. It describes the memory the tools in
+ * memory-tools.ts open onto; SCHEMA.md in the user's own memory holds the full
+ * rules and the agent can read it whenever it needs them.
  */
-const MINNE_SYSTEM_PROMPT = `You are Minne, a local memory companion that lives in the macOS menu bar. \
-You chat with the user about whatever they bring up. Your memory of their work \
-(a local markdown wiki) is not wired up yet, so answer from this conversation \
-alone and say so if asked about past activity. Be concise and direct.`;
+const MINNE_SYSTEM_PROMPT = `You are Minne, a local memory companion that lives in the macOS menu bar.
+
+You hold the user's memory: a plain markdown wiki in ~/Minne, in three layers.
+"sources/" is the raw, immutable capture of what has been on their screen, one
+file per app per hour. "index.md", "log.md" and "wiki/" are yours: distilled,
+interlinked pages that cite the captures they came from. "SCHEMA.md" is the
+contract you work to — read it when you are unsure how something is organised.
+
+Answer questions about the user's past activity from your tools, never from
+guesswork: search memory first, and say plainly when you find nothing. Name the
+capture a claim came from when the user asks where something came from.
+
+When the conversation establishes something durable about a person, a project
+or a topic, record it with write_page and note what you did with append_log
+(pass "chat"). Passing chatter is not memory; do not write a page for it.
+
+Be concise and direct.`;
 
 export interface MinneBrainDeps {
   send: (event: BrainEvent) => void;
   log: (...args: unknown[]) => void;
   /** ~/Library/Application Support/Minne (or a test override) */
   dataDir: string;
+  /** ~/Minne (or a test override) — the user's markdown memory */
+  memoryRoot: string;
   brainVersion: string;
 }
 
@@ -62,6 +80,7 @@ export class MinneBrain {
   private readonly dataDir: string;
   private readonly configPath: string;
   private readonly store: FileCredentialStore;
+  private readonly memory: Memory;
   private config: MinneConfig;
   private registry: Registry;
 
@@ -82,6 +101,7 @@ export class MinneBrain {
     this.dataDir = deps.dataDir;
     this.configPath = join(deps.dataDir, "config.json");
     this.store = new FileCredentialStore(join(deps.dataDir, "auth.json"));
+    this.memory = new Memory({ root: deps.memoryRoot, dataDir: deps.dataDir });
     this.config = loadConfig(this.configPath);
     this.registry = buildRegistry(this.config, this.store);
   }
@@ -237,15 +257,37 @@ export class MinneBrain {
     }
   }
 
-  /** Lazily creates the session Agent and bridges its deltas to the protocol. */
+  /**
+   * Lazily creates the session Agent and bridges its events to the protocol:
+   * assistant deltas as `text_delta`, each tool the model reaches for as
+   * `tool_call` so the UI can say what memory is being consulted.
+   *
+   * The tools are the ones from memory-tools.ts — the same array the ingestion
+   * pass uses, which is why a chat turn can already read and write the wiki.
+   */
   private ensureChatAgent(model: Model<Api>): Agent {
     if (this.chatAgent) return this.chatAgent;
     const agent = new Agent({
-      initialState: { systemPrompt: MINNE_SYSTEM_PROMPT, model },
+      initialState: {
+        systemPrompt: MINNE_SYSTEM_PROMPT,
+        model,
+        tools: memoryTools(this.memory),
+      },
       streamFn: this.registry.models.streamSimple.bind(this.registry.models),
     });
     agent.subscribe((event) => {
-      if (event.type !== "message_update" || this.activeChatId === null) return;
+      if (this.activeChatId === null) return;
+      if (event.type === "tool_execution_start") {
+        this.log(`chat ${this.activeChatId}: tool ${event.toolName}`);
+        this.send({
+          type: "tool_call",
+          id: this.activeChatId,
+          name: event.toolName,
+          args: isRecord(event.args) ? event.args : {},
+        });
+        return;
+      }
+      if (event.type !== "message_update") return;
       const streamEvent = event.assistantMessageEvent;
       if (streamEvent.type === "text_delta") {
         this.send({ type: "text_delta", id: this.activeChatId, delta: streamEvent.delta });
@@ -519,4 +561,8 @@ export class MinneBrain {
   private selectedModel(): string | null {
     return this.config.model ?? this.defaultModelFor(this.config.provider);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

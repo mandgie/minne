@@ -42,6 +42,20 @@ export function databasePath(dataDir: string): string {
 }
 
 /**
+ * The words of a query, in FTS5's terms: runs of letters, digits and `_`,
+ * each optionally ending in `*` for a prefix match. Everything else — quotes,
+ * colons, `AND` as punctuation — is separator. Shared with the wiki search in
+ * memory.ts so both halves of `search_memory` split a query the same way.
+ */
+export function queryTerms(query: string): string[] {
+  const terms = query.match(/[\p{L}\p{N}_]+\*?/gu) ?? [];
+  if (terms.length === 0) {
+    throw new EmptyQueryError(`no searchable terms in query "${query}"`);
+  }
+  return terms;
+}
+
+/**
  * Turns a user (or agent) query into an FTS5 MATCH expression.
  *
  * Everything is quoted term by term, so FTS5 operators typed by accident —
@@ -50,11 +64,7 @@ export function databasePath(dataDir: string): string {
  * trailing `*` for prefix matching. Terms are ANDed, which is FTS5's default.
  */
 export function toMatchExpression(query: string): string {
-  const terms = query.match(/[\p{L}\p{N}_]+\*?/gu) ?? [];
-  if (terms.length === 0) {
-    throw new EmptyQueryError(`no searchable terms in query "${query}"`);
-  }
-  return terms
+  return queryTerms(query)
     .map((term) =>
       term.endsWith("*") ? `"${term.slice(0, -1)}"*` : `"${term}"`,
     )

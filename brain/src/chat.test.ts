@@ -2,7 +2,7 @@
 // deterministic mock streaming provider (MINNE_MOCK_PROVIDER=1). No network,
 // no live LLM calls — the mock scripts deltas, failures, and abort behavior.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MOCK_LOGIN_CODE, MOCK_SLOW_DELTAS } from "./mock-provider";
@@ -11,14 +11,19 @@ import { BrainSession, hello } from "./test-support";
 
 let dirs: string[] = [];
 let sessions: BrainSession[] = [];
+/** Memory root of the session made last — where its tools write. */
+let memoryRoot = "";
 
 function makeSession(): BrainSession {
   const dir = mkdtempSync(join(tmpdir(), "minne-chat-"));
   dirs.push(dir);
-  // Strip real API keys so nothing can leak into auth checks.
+  memoryRoot = join(dir, "memory");
+  // Strip real API keys so nothing can leak into auth checks, and keep the
+  // memory tools inside the scratch dir rather than the user's own ~/Minne.
   const session = new BrainSession(dir, {
     ANTHROPIC_API_KEY: undefined,
     OPENAI_API_KEY: undefined,
+    MINNE_MEMORY_ROOT: memoryRoot,
   });
   sessions.push(session);
   return session;
@@ -151,6 +156,43 @@ describe("chat over the protocol", () => {
     const events = await session.request({ type: "chat", id: "c1", message: "hi" });
     expect(events).toHaveLength(1);
     expect(events.at(-1)).toMatchObject({ type: "error", id: "c1", code: "not_authenticated" });
+  }, 15000);
+
+  test("a chat turn can write memory and read it back through its tools", async () => {
+    const session = makeSession();
+    await hello(session);
+    await signIn(session);
+
+    // The mock model's `TOOL:` script stands in for a model choosing a tool:
+    // the call goes through the real agent loop, the real tool, and the real
+    // memory on disk.
+    const wrote = await session.request({
+      type: "chat",
+      id: "c1",
+      message:
+        'TOOL: write_page {"type":"project","title":"Oslo Trip",' +
+        '"summary":"Moving the team in September.","body":"# Oslo Trip\\n\\nFlights are booked."}',
+    });
+    expect(wrote).toContainEqual({
+      type: "tool_call",
+      id: "c1",
+      name: "write_page",
+      args: expect.objectContaining({ title: "Oslo Trip" }),
+    });
+    expect(deltasOf(wrote, "c1").join("")).toContain("Created wiki/oslo-trip.md");
+    expect(wrote.at(-1)).toMatchObject({ type: "done", id: "c1", result: { stopReason: "stop" } });
+
+    const page = readFileSync(join(memoryRoot, "wiki", "oslo-trip.md"), "utf8");
+    expect(page).toContain("title: Oslo Trip");
+    expect(page).toContain("Flights are booked.");
+    expect(readFileSync(join(memoryRoot, "index.md"), "utf8")).toContain("- [[Oslo Trip]] —");
+
+    const found = await session.request({
+      type: "chat",
+      id: "c2",
+      message: 'TOOL: search_memory {"query":"flights"}',
+    });
+    expect(deltasOf(found, "c2").join("")).toContain("[wiki] wiki/oslo-trip.md — Oslo Trip");
   }, 15000);
 
   test("provider failures surface as provider_error and roll back the exchange", async () => {
