@@ -29,10 +29,10 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-013 Chat window
 - [x] US-014 Onboarding — provider sign-in
 - [x] US-015 Settings window
-- [~] US-016 Release build pipeline
+- [x] US-016 Release build pipeline
 
 ## Phase 5 — The Minne key (post-v1)
-- [ ] US-017 Global hotkey and caret overlay
+- [~] US-017 Global hotkey and caret overlay
 - [ ] US-018 Draft generation and insertion
 
 ## Log
@@ -52,3 +52,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-17 · US-013 · minne-us013 · verified green (240 bun tests, 194 swift tests; orchestrator live check found Spaces ordering bug + fast-reply truncation, both fixed in follow-ups 0aadfc6/130259b with regression tests; live UI round-trip: empty state, streaming, reconciled final text) · d37476a+0aadfc6+130259b
 - 2026-08-17 · US-014 · minne-us014 · verified green (242 bun tests, 233 swift tests re-run by orchestrator; AX-driven mock OAuth incl. stale-prompt race verified by agent; orchestrator screenshot of provider step: 4 cards + model picker + live auth row) · 29fe02e
 - 2026-08-17 · US-015 · minne-us015 · verified green (242 bun tests, 261 swift tests re-run by orchestrator; agent live checks: blacklist edit hits running engine, retention prunes at once, typed wipe re-seeds + auth flips; orchestrator screenshots: Account + Privacy sections) · cb0ee18
+- 2026-08-17 · US-016 · minne-us016 · verified green (242 bun tests, 261 swift tests; unsigned dmg e2e + orchestrator-found seal gap fixed by always ad-hoc signing, strict --deep verify passes on app and dmg contents; workflows actionlint-clean) · 41aaa2d+1abd56f · Phase 4 complete — v1 done
