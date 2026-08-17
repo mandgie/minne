@@ -26,8 +26,8 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - [x] US-012 Ingestion job (/sync)
 
 ## Phase 4 — Chat UI and settings
-- [~] US-013 Chat window
-- [ ] US-014 Onboarding — provider sign-in
+- [x] US-013 Chat window
+- [~] US-014 Onboarding — provider sign-in
 - [ ] US-015 Settings window
 - [ ] US-016 Release build pipeline
 
@@ -49,3 +49,4 @@ Legend: `[ ]` todo · `[~]` in flight · `[x]` verified & committed
 - 2026-08-17 · US-010 · minne-us010 · verified green (131 bun tests, 164 swift tests re-run by orchestrator; brain/templates single source of truth, drift-guard test in MemorySeedTests, wiki-lint with error/warning report) · 3ea2837
 - 2026-08-17 · US-011 · minne-us011 · verified green (221 bun tests, 164 swift tests re-run by orchestrator; five memory tools wired into chat agent, traversal-proof paths, diff-based write validation, mock-provider tool round-trip) · 8b49cbf
 - 2026-08-17 · US-012 · minne-us012 · verified green (239 bun tests, 165 swift tests re-run by orchestrator; watermark in brain-owned sync-state.json, idempotent re-run proven by mock call count, busy-guard, authless skip) · 1e6b3bf · Phase 3 complete
+- 2026-08-17 · US-013 · minne-us013 · verified green (240 bun tests, 194 swift tests; orchestrator live check found Spaces ordering bug + fast-reply truncation, both fixed in follow-ups 0aadfc6/130259b with regression tests; live UI round-trip: empty state, streaming, reconciled final text) · d37476a+0aadfc6+130259b
