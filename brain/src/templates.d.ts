@@ -6,3 +6,9 @@ declare module "*.md" {
   const contents: string;
   export default contents;
 }
+
+// The repo-root VERSION file is imported the same way (see main.ts).
+declare module "*/VERSION" {
+  const contents: string;
+  export default contents;
+}

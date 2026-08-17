@@ -45,6 +45,37 @@ cd brain && bun install && bun run typecheck && bun test
 There is no Xcode project — the app is plain SwiftPM, and `scripts/build.sh`
 assembles the `.app` bundle itself.
 
+## Release
+
+`scripts/release.sh` builds the bundle and packages it as `build/Minne-<version>.dmg`.
+The version comes from the `VERSION` file at the repo root — the single source for
+both `CFBundleShortVersionString` and the brain's reported version.
+
+```sh
+# Contributors: unsigned dmg, no Apple developer account needed
+scripts/release.sh
+
+# Maintainers: signed, notarized and stapled
+MINNE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+MINNE_NOTARY_PROFILE=minne-notary \
+  scripts/release.sh
+```
+
+Without those two variables the script prints what it is skipping and produces an
+**unsigned** dmg. That build runs fine when you build it yourself, but macOS
+quarantines it if it travels through a browser or a chat app — open it once with
+right-click → Open, or clear the flag with `xattr -dr com.apple.quarantine Minne.app`.
+
+`MINNE_NOTARY_PROFILE` names a keychain profile you create once with
+`xcrun notarytool store-credentials`. The bundled brain is a Bun binary and is
+signed separately with `scripts/minne-brain.entitlements`, which grants the
+JIT exception JavaScriptCore needs under the hardened runtime.
+
+CI (`.github/workflows/ci.yml`) builds and tests both halves on every push and pull
+request. Pushing a `v*` tag that matches `VERSION` runs the same checks and then
+publishes the dmg to a GitHub Release (`.github/workflows/release.yml`); it signs
+and notarizes only if the repository provides the signing secrets.
+
 ## A note on subscription OAuth
 
 Using your Claude or ChatGPT subscription from a third-party app is a gray area under provider terms of service. You authenticate with your own account and the risk sits with that account. The API-key and local-model paths are always-safe alternatives.

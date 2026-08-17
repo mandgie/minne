@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macOS runners ship Xcode (and therefore Swift) preinstalled; the app is
+    # plain SwiftPM, so no Xcode project setup is needed.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.4
+
+      - name: Toolchain versions
+        run: |
+          swift --version
+          bun --version
+
+      # Before `swift test`: BrainClientTests spawns the real brain with
+      # `bun run src/main.ts`, which needs brain/node_modules in place.
+      - name: Install brain dependencies
+        run: bun install --frozen-lockfile
+        working-directory: brain
+
+      - name: Typecheck brain
+        run: bun run typecheck
+        working-directory: brain
+
+      - name: Test brain
+        run: bun test
+        working-directory: brain
+
+      - name: Build app
+        run: swift build
+        working-directory: app
+
+      - name: Test app
+        run: swift test
+        working-directory: app

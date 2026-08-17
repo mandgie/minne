@@ -18,14 +18,15 @@ enum BrainClientError: Error, CustomStringConvertible {
 
 /// How to launch the brain process.
 enum BrainLaunch: Sendable {
-    /// Compiled minne-brain binary (bundled in Resources or standalone).
+    /// Compiled minne-brain binary (bundled in Contents/MacOS, or standalone).
     case executable(URL)
     /// Dev fallback: `bun run <main.ts>` on the uncompiled sources.
     case bunScript(URL)
 
     /// Resolution order: `MINNE_BRAIN_PATH` env override (a binary, or a .ts
-    /// entrypoint run via bun), the bundled Resources binary, then walking up
-    /// from the executable's directory to find `brain/src/main.ts` (dev runs).
+    /// entrypoint run via bun), the binary bundled next to the app executable,
+    /// then walking up from the executable's directory to find
+    /// `brain/src/main.ts` (dev runs).
     static func locate() -> BrainLaunch? {
         if let override = ProcessInfo.processInfo.environment["MINNE_BRAIN_PATH"],
             !override.isEmpty
@@ -33,7 +34,11 @@ enum BrainLaunch: Sendable {
             let url = URL(fileURLWithPath: override)
             return override.hasSuffix(".ts") ? .bunScript(url) : .executable(url)
         }
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("minne-brain"),
+        // Contents/MacOS: a nested executable has to sit beside the main one to
+        // be signed as code rather than sealed as a resource.
+        if let bundled = Bundle.main.executableURL?
+            .deletingLastPathComponent()
+            .appendingPathComponent("minne-brain"),
             FileManager.default.isExecutableFile(atPath: bundled.path)
         {
             return .executable(bundled)

@@ -4,8 +4,12 @@ import { readLines, stdinChunks } from "./jsonlines";
 import { appSupportDir, memoryRoot } from "./paths";
 import { PROTOCOL_VERSION, decodeRequest, encodeEvent, errorEvent, type BrainEvent } from "./protocol";
 import { MinneBrain } from "./service";
+// The repo-root VERSION file is the single source of the release version (it
+// also becomes CFBundleShortVersionString in scripts/build.sh). Imported as
+// text so `bun build --compile` embeds it, like the wiki templates.
+import versionFile from "../../VERSION" with { type: "text" };
 
-const BRAIN_VERSION = "0.1.0";
+const BRAIN_VERSION = versionFile.trim();
 
 function log(...args: unknown[]): void {
   console.error("[minne-brain]", ...args);

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- minne-brain is a Bun (JavaScriptCore) binary: under the hardened
+	     runtime it dies at startup with "Ran out of executable memory"
+	     without this. JSC allocates its JIT through MAP_JIT, so the narrow
+	     allow-jit exception is enough; allow-unsigned-executable-memory is
+	     not needed (verified against a full agent turn under `-o runtime`). -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>
