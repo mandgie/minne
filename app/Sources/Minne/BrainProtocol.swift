@@ -67,8 +67,12 @@ enum JSONValue: Codable, Sendable, Equatable {
 enum BrainRequest: Encodable, Sendable {
     case hello(id: String, protocolVersion: Int, client: String)
     /// Streams `textDelta` events on this id, then `done` whose result is
-    /// `{model, stopReason, usage?: {input, output, totalTokens}, aborted?: true}`,
-    /// or a typed error (code "busy", "not_authenticated", or "provider_error").
+    /// `{model, stopReason, text, usage?: {input, output, totalTokens},
+    /// aborted?: true}`, or a typed error (code "busy", "not_authenticated", or
+    /// "provider_error"). `text` is everything the assistant said this turn:
+    /// the terminal event settles the request without waiting for the event
+    /// stream to drain, so it is what the transcript reconciles against rather
+    /// than trusting that every delta was seen.
     /// `newChat: true` clears the brain's in-memory session first.
     case chat(id: String, message: String, newChat: Bool?)
     /// Cancels the in-flight request `targetId`. An aborted chat still ends

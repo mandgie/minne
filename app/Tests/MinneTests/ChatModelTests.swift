@@ -139,6 +139,53 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(activity.label(finished: true), "Used count_beans")
     }
 
+    // MARK: - Reconciliation (the terminal event does not wait for the deltas)
+
+    func testATurnThatSettlesWhileDeltasAreStillQueuedKeepsTheWholeAnswer() {
+        // A fast reply: the brain answers and settles the request before the
+        // app has drained more than the first delta or two off the event
+        // stream. The transcript must still end up with the full text.
+        model.submit("What did I do yesterday?")
+        model.apply(.textDelta(id: "req1", delta: "Yesterday you"))
+        backend.finish("req1", result: .object(["text": .string("Yesterday you worked on Minne.")]))
+        XCTAssertEqual(model.messages.last?.text, "Yesterday you worked on Minne.")
+
+        // The stragglers land after the turn is over and must not double up.
+        model.apply(.textDelta(id: "req1", delta: " worked on Minne."))
+        XCTAssertEqual(model.messages.last?.text, "Yesterday you worked on Minne.")
+        XCTAssertFalse(model.messages.last?.isStreaming == true)
+    }
+
+    func testAToolCallThatArrivesAfterTheAnswerIsStillShown() {
+        model.submit("What did I do yesterday?")
+        backend.finish("req1", result: .object(["text": .string("You were in Oslo.")]))
+        model.apply(
+            .toolCall(
+                id: "req1", name: "search_memory", args: .object(["query": .string("yesterday")])))
+        XCTAssertEqual(
+            model.messages.last?.activity.map(\.tool), ["search_memory"],
+            "which memory was consulted is part of the finished answer")
+        XCTAssertEqual(model.messages.last?.text, "You were in Oslo.")
+    }
+
+    func testEventsFromASettledTurnStopAtTheNextTurn() {
+        model.submit("one")
+        backend.finish("req1", result: .object(["text": .string("first")]))
+        model.submit("two")
+        // req1 is two turns back now; its stragglers belong nowhere.
+        model.apply(.toolCall(id: "req1", name: "search_memory", args: .object([:])))
+        XCTAssertTrue(model.messages.allSatisfy { $0.activity.isEmpty })
+    }
+
+    func testAnOutcomeWithoutTextLeavesTheStreamedTextAlone() {
+        // Older brains (and any future terminal event that omits it) must not
+        // blank the answer the deltas already built.
+        model.submit("hi")
+        model.apply(.textDelta(id: "req1", delta: "Hello."))
+        backend.finish("req1", result: .object(["model": .string("mock-model")]))
+        XCTAssertEqual(model.messages.last?.text, "Hello.")
+    }
+
     func testStoppedTurnKeepsItsPartialText() {
         model.submit("SLOW one")
         model.apply(.textDelta(id: "req1", delta: "half an ans"))

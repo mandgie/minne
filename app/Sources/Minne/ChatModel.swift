@@ -105,6 +105,12 @@ final class ChatModel {
     private(set) var activeRequestId: String?
     /// Message the deltas are landing in.
     private var activeMessageId: UUID?
+    /// The turn that just settled. Its events can still be in flight — the
+    /// terminal event settles the request without waiting for the event stream
+    /// to drain — and a tool the model used is worth showing even if the
+    /// answer beat it here.
+    private var settledRequestId: String?
+    private var settledMessageId: UUID?
     /// Prompt of the last failed turn, resent by `retry()`.
     private(set) var retryPrompt: String?
     /// The next turn must tell the brain to reset its session. True at start:
@@ -135,6 +141,11 @@ final class ChatModel {
         guard !prompt.isEmpty, !isStreaming else { return }
         draft = ""
         retryPrompt = nil
+        // Stragglers are only ever expected in the moment after a turn ends;
+        // once the user has asked something else, anything still arriving for
+        // the old turn is stale.
+        settledRequestId = nil
+        settledMessageId = nil
         messages.append(ChatMessage(id: UUID(), role: .user, text: prompt))
         let answer = ChatMessage(id: UUID(), role: .assistant, isStreaming: true)
         messages.append(answer)
@@ -175,6 +186,8 @@ final class ChatModel {
         stop()
         activeRequestId = nil
         activeMessageId = nil
+        settledRequestId = nil
+        settledMessageId = nil
         messages.removeAll()
         draft = ""
         retryPrompt = nil
@@ -196,21 +209,36 @@ final class ChatModel {
 
     // MARK: - Brain events
 
-    /// Intermediate events for the in-flight turn. Anything for another request
-    /// (a login, an older aborted turn) is ignored.
+    /// Intermediate events for the in-flight turn — or for the one that just
+    /// settled, whose events can still be arriving. Anything for another
+    /// request (a login, an older turn) is ignored.
     func apply(_ event: BrainEvent) {
-        guard event.id == activeRequestId, let messageId = activeMessageId else { return }
-        switch event {
-        case .textDelta(_, let delta):
-            mutate(messageId) { $0.text += delta }
-        case .toolCall(_, let name, let args):
-            mutate(messageId) {
-                $0.activity.append(
-                    ChatToolActivity(
-                        tool: name, detail: ChatToolActivity.detail(tool: name, args: args)))
+        if event.id == activeRequestId, let messageId = activeMessageId {
+            switch event {
+            case .textDelta(_, let delta):
+                mutate(messageId) { $0.text += delta }
+            case .toolCall(_, let name, let args):
+                appendActivity(to: messageId, name: name, args: args)
+            default:
+                break
             }
-        default:
-            break
+            return
+        }
+        // A late tool call still belongs in the transcript; a late delta does
+        // not, because `complete` already installed the brain's authoritative
+        // text and appending would duplicate it.
+        if event.id == settledRequestId, let messageId = settledMessageId,
+            case .toolCall(_, let name, let args) = event
+        {
+            appendActivity(to: messageId, name: name, args: args)
+        }
+    }
+
+    private func appendActivity(to messageId: UUID, name: String, args: JSONValue) {
+        mutate(messageId) {
+            $0.activity.append(
+                ChatToolActivity(
+                    tool: name, detail: ChatToolActivity.detail(tool: name, args: args)))
         }
     }
 
@@ -219,10 +247,24 @@ final class ChatModel {
         guard id == activeRequestId, let messageId = activeMessageId else { return }
         activeRequestId = nil
         activeMessageId = nil
+        settledRequestId = id
+        settledMessageId = messageId
         switch result {
         case .success(let value):
-            let aborted = value?.objectValue?["aborted"] == .bool(true)
-            finishStreaming(messageId: messageId) { $0.wasStopped = aborted }
+            let outcome = value?.objectValue
+            let aborted = outcome?["aborted"] == .bool(true)
+            // The brain's copy of what was said is authoritative. Deltas are a
+            // stream and the terminal event settles the request directly, so
+            // when a turn is answered faster than the UI drains its events the
+            // last deltas arrive after this point (and the stream may drop some
+            // under a burst). Without this the transcript keeps a truncated
+            // answer — the bug that a fast reply exposed and every slow test
+            // hid.
+            let finalText = outcome?["text"]?.stringValue
+            finishStreaming(messageId: messageId) {
+                if let finalText, !finalText.isEmpty { $0.text = finalText }
+                $0.wasStopped = aborted
+            }
         case .failure(let error):
             // The brain only resets its session once a turn reaches the agent,
             // so a failed turn leaves the reset owing.

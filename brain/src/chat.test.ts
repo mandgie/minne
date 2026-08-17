@@ -90,6 +90,27 @@ describe("chat over the protocol", () => {
     expect(usage.totalTokens).toBe(usage.input + usage.output);
   }, 15000);
 
+  test("done carries the whole answer, so a client can reconcile its deltas", async () => {
+    const session = makeSession();
+    await hello(session);
+    await signIn(session);
+
+    // A UI settles the request the moment `done` lands, without waiting for the
+    // event stream to drain — so `text` has to be the complete answer, deltas
+    // or no deltas. Across a tool round trip that means every assistant turn's
+    // prose, not just the last message's.
+    const events = await session.request({
+      type: "chat",
+      id: "c1",
+      message: "TOOL: list_index {}",
+    });
+    const done = events.at(-1);
+    if (done?.type !== "done") throw new Error("chat did not finish");
+    const { text } = done.result as { text: string };
+    expect(text).toBe(deltasOf(events, "c1").join(""));
+    expect(text).toContain("tool list_index said:");
+  }, 15000);
+
   test("session persists across chats and new_chat resets it", async () => {
     const session = makeSession();
     await hello(session);

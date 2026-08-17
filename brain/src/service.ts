@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
   Api,
   AuthEvent,
@@ -29,6 +29,26 @@ import { EmptyQueryError, searchSources } from "./sources";
 import { Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
 import { buildRegistry, ollamaProviderFrom, type Registry } from "./providers";
+
+/**
+ * Everything the assistant said across the messages one turn produced: its
+ * text parts, in order, which is exactly the concatenation of the `text_delta`
+ * events that went out. Thinking and tool calls are not part of it.
+ *
+ * A turn can span several assistant messages (one per tool round trip), so
+ * this is not `messages.at(-1)` — prose written before a tool call belongs to
+ * the answer too.
+ */
+function assistantText(messages: readonly AgentMessage[]): string {
+  let text = "";
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const part of message.content) {
+      if (part.type === "text") text += part.text;
+    }
+  }
+  return text;
+}
 
 /** The model for a turn, or why there is none and which error code says so. */
 type ResolvedModel =
@@ -253,6 +273,7 @@ export class MinneBrain {
         doneEvent(id, {
           model: last.model,
           stopReason: last.stopReason,
+          text: assistantText(agent.state.messages.slice(transcriptLength)),
           usage: {
             input: last.usage.input,
             output: last.usage.output,

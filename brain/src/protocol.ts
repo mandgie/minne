@@ -19,11 +19,17 @@ export interface HelloRequest {
 /**
  * One user turn against the in-memory chat session. The brain streams
  * `text_delta` events carrying this request's id, then terminates with `done`
- * whose result is `{ model, stopReason, usage?: {input, output, totalTokens},
- * aborted?: true }`, or a typed `error` (`busy` while another chat streams,
+ * whose result is `{ model, stopReason, text, usage?: {input, output,
+ * totalTokens}, aborted?: true }`, or a typed `error` (`busy` while another
+ * chat streams,
  * `not_authenticated` when the selected provider has no credentials,
  * `provider_error` for network/API failures). `newChat: true` clears the
  * session before this message.
+ *
+ * `text` is everything the assistant said during this turn — the same content
+ * the deltas carried. It is there so a client can reconcile: deltas are a
+ * stream and a UI may still be draining them (or may have dropped some) when
+ * the terminal event settles the request.
  */
 export interface ChatRequest {
   type: "chat";
