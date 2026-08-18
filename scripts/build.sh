@@ -23,6 +23,7 @@ APP_BIN="$(cd "$ROOT/app" && swift build -c release --show-bin-path)/Minne"
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$ROOT/scripts/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$APP_BIN" "$APP/Contents/MacOS/Minne"
 # The brain lives in Contents/MacOS, not Contents/Resources: an executable
 # under Resources is a sealed resource rather than nested code, which codesign
@@ -38,6 +39,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>Minne</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>sh.minne.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
