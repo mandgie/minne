@@ -14,7 +14,9 @@ import {
   MAX_WINDOW_CHARS,
   buildDraftPrompt,
   cleanDraft,
+  findMemoryPages,
   findStylePage,
+  memoryIndexMap,
   type DraftContext,
 } from "./draft";
 import { Memory } from "./memory";
@@ -122,6 +124,83 @@ describe("findStylePage", () => {
 
   test("no style page at all is null, not an error", () => {
     expect(findStylePage(memoryWith({}), "Mail")).toBeNull();
+  });
+});
+
+function personPage(name: string, body: string): string {
+  return [
+    "---",
+    `title: ${name}`,
+    "type: person",
+    `summary: What Minne knows about ${name}.`,
+    "sources: [sources/2026-08-17/1400-slack.md#1]",
+    "last_updated: 2026-08-17",
+    "---",
+    "",
+    `# ${name}`,
+    "",
+    body,
+    "",
+  ].join("\n");
+}
+
+describe("findMemoryPages", () => {
+  function memoryWith(pages: Record<string, string>): Memory {
+    const root = scratch();
+    for (const [relative, text] of Object.entries(pages)) write(root, relative, text);
+    return new Memory({ root, dataDir: root });
+  }
+
+  test("the recipient's wiki page is prefetched, cited by path", () => {
+    const memory = memoryWith({
+      "wiki/ingrid-berg.md": personPage("Ingrid Berg", "Runs the Oslo office."),
+    });
+    const pages = findMemoryPages(memory, "Ingrid Berg");
+    expect(pages.map((page) => page.path)).toEqual(["wiki/ingrid-berg.md"]);
+    expect(pages[0]?.text).toContain("Runs the Oslo office.");
+  });
+
+  test("style pages are skipped — findStylePage already injects them by rule", () => {
+    const memory = memoryWith({
+      "wiki/style/style-slack-ingrid-berg.md": stylePage(
+        "Style — Slack — Ingrid Berg",
+        "Norwegian, warmer.",
+      ),
+      "wiki/ingrid-berg.md": personPage("Ingrid Berg", "Runs the Oslo office."),
+    });
+    const pages = findMemoryPages(memory, "Ingrid Berg");
+    expect(pages.map((page) => page.path)).toEqual(["wiki/ingrid-berg.md"]);
+  });
+
+  test("a recipient with no searchable words is nobody to look up, not an error", () => {
+    const memory = memoryWith({
+      "wiki/ingrid-berg.md": personPage("Ingrid Berg", "Runs the Oslo office."),
+    });
+    expect(findMemoryPages(memory, "…")).toEqual([]);
+  });
+
+  test("no recipient, no hits, no pages", () => {
+    const memory = memoryWith({
+      "wiki/ingrid-berg.md": personPage("Ingrid Berg", "Runs the Oslo office."),
+    });
+    expect(findMemoryPages(memory)).toEqual([]);
+    expect(findMemoryPages(memory, "Nobody Known")).toEqual([]);
+  });
+});
+
+describe("memoryIndexMap", () => {
+  test("one line per page, with path, type and summary", () => {
+    const root = scratch();
+    write(root, "wiki/ingrid-berg.md", personPage("Ingrid Berg", "Runs the Oslo office."));
+    const map = memoryIndexMap(new Memory({ root, dataDir: root }));
+    expect(map).toContain("wiki/ingrid-berg.md");
+    expect(map).toContain("(person)");
+    expect(map).toContain("What Minne knows about Ingrid Berg.");
+  });
+
+  test("an empty wiki has no map — the prompt earns no block", () => {
+    const root = scratch();
+    expect(memoryIndexMap(new Memory({ root, dataDir: root }))).toBeNull();
   });
 });
 
@@ -257,6 +336,32 @@ describe("buildDraftPrompt", () => {
     );
     expect(prompt.length).toBeLessThan(MAX_WINDOW_CHARS + 2_000);
     expect(prompt).toContain("…");
+  });
+});
+
+describe("buildDraftPrompt grounding", () => {
+  const grounding = {
+    indexMap: "wiki/ingrid-berg.md — Ingrid Berg (person): Runs the Oslo office.",
+    pages: [{ path: "wiki/ingrid-berg.md", text: "# Ingrid Berg\n\nRuns the Oslo office." }],
+  };
+
+  test("prefetched pages are quoted and cited by path", () => {
+    const prompt = buildDraftPrompt(context({ recipient: "Ingrid Berg" }), null, grounding);
+    expect(prompt).toContain("What memory holds about this correspondent, from `wiki/ingrid-berg.md`");
+    expect(prompt).toContain("Runs the Oslo office.");
+  });
+
+  test("the index map rides along so the model knows what it can look up", () => {
+    const prompt = buildDraftPrompt(context(), null, grounding);
+    expect(prompt).toContain("Every page in the user's memory");
+    expect(prompt).toContain("wiki/ingrid-berg.md — Ingrid Berg (person)");
+  });
+
+  test("no grounding leaves the prompt exactly as it was", () => {
+    const bare = buildDraftPrompt(context(), null);
+    expect(bare).toBe(buildDraftPrompt(context(), null, { indexMap: null, pages: [] }));
+    expect(bare).not.toContain("What memory holds");
+    expect(bare).not.toContain("Every page in the user's memory");
   });
 });
 

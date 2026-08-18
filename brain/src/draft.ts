@@ -15,6 +15,7 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { NotFoundError, type Memory } from "./memory";
 import { readOnlyMemoryTools } from "./memory-tools";
+import { EmptyQueryError } from "./sources";
 import { stylePagePaths } from "./wiki";
 
 /**
@@ -63,6 +64,27 @@ export interface StylePage {
   text: string;
 }
 
+/** A wiki page prefetched into the prompt, cited by path. */
+export interface MemoryExcerpt {
+  path: string;
+  text: string;
+}
+
+/**
+ * What the prompt is grounded in beyond the press itself: pages about the
+ * correspondent, prefetched so the common case needs no tool round trip, and
+ * a map of the wiki so the model knows what a search could find. Both come
+ * from local file reads — grounding a draft this way costs milliseconds,
+ * where a tool turn costs a whole model round trip.
+ */
+export interface MemoryGrounding {
+  /** one line per wiki page; null when the memory has no pages yet */
+  indexMap: string | null;
+  pages: MemoryExcerpt[];
+}
+
+const NO_GROUNDING: MemoryGrounding = { indexMap: null, pages: [] };
+
 export interface DraftResult {
   mode: DraftMode;
   text: string;
@@ -70,6 +92,8 @@ export interface DraftResult {
   stopReason: string;
   /** the style page the prompt cited, or null when the user has none yet */
   stylePage: string | null;
+  /** wiki pages prefetched into the prompt for the correspondent */
+  memoryPages: string[];
   usage: { input: number; output: number; totalTokens: number };
 }
 
@@ -84,8 +108,17 @@ export class DraftFailedError extends Error {
 /** Ceilings on what one press may send. A window can hold a whole inbox. */
 export const MAX_WINDOW_CHARS = 6_000;
 export const MAX_FIELD_CHARS = 4_000;
-/** Tool round trips a draft gets. It is a reply, not a research project. */
-export const MAX_DRAFT_TURNS = 6;
+/** Wiki pages prefetched for the correspondent, and how much of each. */
+export const MAX_MEMORY_PAGES = 2;
+export const MAX_MEMORY_PAGE_CHARS = 2_000;
+/** The index map's ceiling — one line per page, a big wiki still fits. */
+export const MAX_INDEX_MAP_CHARS = 4_000;
+/**
+ * Tool round trips a draft gets. Enough to search and read a handful of
+ * pages — the user has said a right draft beats a fast one — but still a
+ * bound: it is a reply, not a research project.
+ */
+export const MAX_DRAFT_TURNS = 10;
 
 const DRAFT_SYSTEM_PROMPT = `You are Minne's drafting key. The user pressed a key in a text
 field somewhere on their Mac and you are writing the text that will be inserted
@@ -104,12 +137,14 @@ Your entire reply is inserted verbatim. So:
   user actually writes. Follow it over your own instincts.
 
 You have read-only tools over the user's memory (a markdown wiki of people,
-projects and topics distilled from what has been on their screen). Use them when
-the draft turns on a fact you do not have — who someone is, what a project's
-state is, what was decided. One or two searches at most; a draft the user is
-waiting on is not the place for a research pass. Never invent a fact about a
-person or a commitment on the user's behalf: if you do not know, write the
-sentence so it does not need to be known.`;
+projects and topics distilled from what has been on their screen), and the
+prompt below may quote pages from it, along with a map of every page it holds.
+This user prefers a right draft over a fast one: when the draft turns on a
+fact — who someone is, what a project's state is, what was agreed, what
+happened last time — and the quoted pages do not settle it, look it up before
+writing, and read the page rather than trusting a search snippet. Never invent
+a fact about a person or a commitment on the user's behalf: if memory cannot
+settle it either, write the sentence so it does not need to be known.`;
 
 /**
  * The style page for this context, most specific first: the one for this app
@@ -134,6 +169,56 @@ export function findStylePage(
     }
   }
   return null;
+}
+
+/**
+ * The wiki pages about the person being written to, prefetched by searching
+ * the recipient's name.
+ *
+ * Unlike the style page there is no path rule for "the page about Ingrid" —
+ * her page is named whatever the wiki named it — so this is the one prefetch
+ * that searches. Style pages are skipped: `findStylePage` already injects the
+ * right one by rule, and a name search would surface them again. A recipient
+ * whose name has no searchable words ("…", an emoji) is simply nobody to look
+ * up, not an error.
+ */
+export function findMemoryPages(memory: Memory, recipient?: string): MemoryExcerpt[] {
+  if (recipient === undefined || recipient.trim() === "") return [];
+  let hits;
+  try {
+    hits = memory.search(recipient, { scope: "wiki", limit: MAX_MEMORY_PAGES + 1 }).results;
+  } catch (err) {
+    if (err instanceof EmptyQueryError) return [];
+    throw err;
+  }
+  const excerpts: MemoryExcerpt[] = [];
+  for (const hit of hits) {
+    if (excerpts.length >= MAX_MEMORY_PAGES) break;
+    if (hit.kind !== "wiki" || hit.path.startsWith("wiki/style/")) continue;
+    try {
+      const page = memory.read(hit.path, { maxChars: MAX_MEMORY_PAGE_CHARS });
+      excerpts.push({ path: page.path, text: page.text });
+    } catch (err) {
+      if (err instanceof NotFoundError) continue;
+      throw err;
+    }
+  }
+  return excerpts;
+}
+
+/**
+ * One line per wiki page — path, title, type, summary — so the model can see
+ * what memory holds without spending a turn on `list_index`. Null when the
+ * wiki has no pages yet: an empty map teaches nothing and earns no block.
+ */
+export function memoryIndexMap(memory: Memory): string | null {
+  const listing = memory.listIndex();
+  if (listing.pages.length === 0) return null;
+  const rows = listing.pages.map(
+    (page) =>
+      `${page.path} — ${page.title ?? "(no title)"} (${page.type ?? "?"}): ${page.summary ?? ""}`,
+  );
+  return clip(rows.join("\n"), MAX_INDEX_MAP_CHARS);
 }
 
 /** Trims to `limit` characters on a line boundary where it can. */
@@ -215,7 +300,11 @@ function reworkLines(context: DraftContext): string[] {
  * the field text means — an instruction to follow, a passage to rewrite, or
  * nothing at all.
  */
-export function buildDraftPrompt(context: DraftContext, style: StylePage | null): string {
+export function buildDraftPrompt(
+  context: DraftContext,
+  style: StylePage | null,
+  grounding: MemoryGrounding = NO_GROUNDING,
+): string {
   const where = [`Application: ${context.app}`];
   if (context.windowTitle !== undefined && context.windowTitle.trim() !== "") {
     where.push(`Window: ${context.windowTitle}`);
@@ -260,6 +349,24 @@ export function buildDraftPrompt(context: DraftContext, style: StylePage | null)
   lines.push("", "Where this is being typed:", ...where.map((line) => `- ${line}`));
   if (window.trim() !== "") {
     lines.push(...block("What the rest of the window says", window));
+  }
+  for (const page of grounding.pages) {
+    lines.push(
+      "",
+      `What memory holds about this correspondent, from \`${page.path}\` — use ` +
+        "what is relevant, ignore the rest:",
+      "```",
+      page.text,
+      "```",
+    );
+  }
+  if (grounding.indexMap !== null) {
+    lines.push(
+      ...block(
+        "Every page in the user's memory, so you know what the tools can look up",
+        grounding.indexMap,
+      ),
+    );
   }
   if (style !== null) {
     lines.push(
@@ -315,6 +422,10 @@ export async function runDraft(
   deps: RunDraftDeps,
 ): Promise<DraftResult> {
   const style = findStylePage(deps.memory, context.app, context.recipient);
+  const grounding: MemoryGrounding = {
+    indexMap: memoryIndexMap(deps.memory),
+    pages: findMemoryPages(deps.memory, context.recipient),
+  };
   let turns = 0;
   const agent = new Agent({
     initialState: {
@@ -335,7 +446,7 @@ export async function runDraft(
   deps.signal?.addEventListener("abort", stop, { once: true });
   try {
     deps.signal?.throwIfAborted();
-    await agent.prompt(buildDraftPrompt(context, style));
+    await agent.prompt(buildDraftPrompt(context, style, grounding));
   } finally {
     deps.signal?.removeEventListener("abort", stop);
   }
@@ -368,6 +479,7 @@ export async function runDraft(
     model: last.model,
     stopReason: last.stopReason,
     stylePage: style?.path ?? null,
+    memoryPages: grounding.pages.map((page) => page.path),
     usage: {
       input: last.usage.input,
       output: last.usage.output,

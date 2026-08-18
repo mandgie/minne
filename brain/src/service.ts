@@ -426,7 +426,8 @@ export class MinneBrain {
       });
       this.log(
         `draft ${id}: ${result.mode} in ${context.app}, ${result.text.length} chars, ` +
-          `style ${result.stylePage ?? "(none)"}` +
+          `style ${result.stylePage ?? "(none)"}, ` +
+          `memory ${result.memoryPages.length === 0 ? "(none)" : result.memoryPages.join(" ")}` +
           (context.regenerate === true ? ", another take" : "") +
           (context.guidance !== undefined && context.guidance.length > 0
             ? `, guided by ${context.guidance.length}`
