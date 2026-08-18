@@ -99,7 +99,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         // point is to look inside the wiki (or drag it onto Obsidian).
         model.onOpenFolder = { url in NSWorkspace.shared.open(url) }
         model.onHotKeyChange = { [weak self] enabled in self?.updateChatHotKey(enabled: enabled) }
-        model.onMinneKeyChange = { [weak self] enabled in self?.minneKey?.setEnabled(enabled) }
+        model.onMinneKeyChange = { [weak self] trigger in self?.minneKey?.apply(trigger: trigger) }
         model.onWipe = { [weak self] paths in
             guard let self else { return MemoryWipe.wipe(paths: paths) }
             return self.wipeMemory(paths: paths)
@@ -179,7 +179,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             // one that would have accepted an AX write.
             writer: AccessibilityFieldWriter(
                 forcePasteboard: UserDefaults.standard.bool(forKey: "minneKeyForcePaste")),
-            enabled: settingsModel?.minneKeyEnabled ?? true, permission: permission.state,
+            trigger: settingsModel?.minneKeyTrigger ?? .rightOption, permission: permission.state,
             blacklist: settingsStore.blacklist)
         controller.onActiveChange = { [weak self] active in
             self?.settingsModel?.adopt(minneKeyActive: active)

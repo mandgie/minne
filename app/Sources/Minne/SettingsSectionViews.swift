@@ -458,7 +458,7 @@ final class GeneralSectionView: NSView {
     private let launchCheckbox: NSButton
     private let hotKeyCheckbox: NSButton
     private let hotKeyNote = NSTextField(wrappingLabelWithString: "")
-    private let minneKeyCheckbox: NSButton
+    private let minneKeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let minneKeyNote = NSTextField(wrappingLabelWithString: "")
 
     init(model: SettingsModel, width: CGFloat) {
@@ -467,17 +467,18 @@ final class GeneralSectionView: NSView {
             checkboxWithTitle: "Launch Minne at login", target: nil, action: nil)
         hotKeyCheckbox = NSButton(
             checkboxWithTitle: "Open chat with ⌥Space", target: nil, action: nil)
-        minneKeyCheckbox = NSButton(
-            checkboxWithTitle: "Wake Minne at the caret with right-Option", target: nil,
-            action: nil)
         super.init(frame: .zero)
 
         launchCheckbox.target = self
         launchCheckbox.action = #selector(launchToggled)
         hotKeyCheckbox.target = self
         hotKeyCheckbox.action = #selector(hotKeyToggled)
-        minneKeyCheckbox.target = self
-        minneKeyCheckbox.action = #selector(minneKeyToggled)
+        // A popup rather than a checkbox: on international (AltGr) layouts
+        // right-Option is a typing key, and a future release re-maps the
+        // trigger instead of only switching it off (US-103).
+        minneKeyPopup.addItems(withTitles: MinneKeyTrigger.allCases.map(\.title))
+        minneKeyPopup.target = self
+        minneKeyPopup.action = #selector(minneKeyChanged)
         for note in [hotKeyNote, minneKeyNote] {
             note.font = .systemFont(ofSize: 11)
             note.textColor = .secondaryLabelColor
@@ -496,7 +497,7 @@ final class GeneralSectionView: NSView {
                 shortcutRow("Close a Minne window", "esc", width: width),
                 hotKeyCheckbox,
                 hotKeyNote,
-                minneKeyCheckbox,
+                minneKeyRow(width: width),
                 minneKeyNote,
             ], width: width)
         SettingsStyle.fill(self, with: stack, width: width)
@@ -528,6 +529,17 @@ final class GeneralSectionView: NSView {
         return row
     }
 
+    private func minneKeyRow(width: CGFloat) -> NSView {
+        let name = NSTextField(labelWithString: "Wake Minne at the caret with")
+        name.font = .systemFont(ofSize: 12)
+        let row = NSStackView(views: [name, minneKeyPopup])
+        row.orientation = .horizontal
+        row.distribution = .fill
+        row.alignment = .firstBaseline
+        name.widthAnchor.constraint(equalToConstant: width * 0.6).isActive = true
+        return row
+    }
+
     private func render(_ model: SettingsModel) {
         launchCheckbox.state = LaunchAtLogin.isEnabled ? .on : .off
         launchCheckbox.isEnabled = LaunchAtLogin.isSupported
@@ -536,7 +548,9 @@ final class GeneralSectionView: NSView {
             ? nil : "Only available when running from Minne.app (build with scripts/build.sh)"
         hotKeyCheckbox.state = model.hotKeyEnabled ? .on : .off
         hotKeyNote.stringValue = model.hotKeyLine
-        minneKeyCheckbox.state = model.minneKeyEnabled ? .on : .off
+        if let index = MinneKeyTrigger.allCases.firstIndex(of: model.minneKeyTrigger) {
+            minneKeyPopup.selectItem(at: index)
+        }
         minneKeyNote.stringValue = model.minneKeyLine
     }
 
@@ -553,7 +567,9 @@ final class GeneralSectionView: NSView {
         model.setHotKeyEnabled(hotKeyCheckbox.state == .on)
     }
 
-    @objc private func minneKeyToggled() {
-        model.setMinneKeyEnabled(minneKeyCheckbox.state == .on)
+    @objc private func minneKeyChanged() {
+        let index = minneKeyPopup.indexOfSelectedItem
+        guard MinneKeyTrigger.allCases.indices.contains(index) else { return }
+        model.setMinneKeyTrigger(MinneKeyTrigger.allCases[index])
     }
 }

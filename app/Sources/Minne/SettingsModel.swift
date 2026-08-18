@@ -93,8 +93,8 @@ final class SettingsModel {
     var onOpenFolder: (@MainActor (URL) -> Void)?
     /// Registers or unregisters the ⌥Space hotkey, live.
     var onHotKeyChange: (@MainActor (Bool) -> Void)?
-    /// Installs or removes the right-Option event tap, live.
-    var onMinneKeyChange: (@MainActor (Bool) -> Void)?
+    /// Applies a Minne key trigger change to the running controller, live.
+    var onMinneKeyChange: (@MainActor (MinneKeyTrigger) -> Void)?
 
     private var observers = ObserverRegistry<SettingsModel>()
 
@@ -109,7 +109,7 @@ final class SettingsModel {
         self.blacklist = store.blacklist
         self.retentionDays = store.retention.days
         self.hotKeyEnabled = store.chatHotKeyEnabled
-        self.minneKeyEnabled = store.minneKeyEnabled
+        self.minneKeyTrigger = store.minneKeyTrigger
         // Account state is live in Settings for the same reason it is live in
         // the menu bar: one model, rendered wherever it is shown.
         auth.observe(self) { [weak self] _ in self?.notify() }
@@ -254,18 +254,26 @@ final class SettingsModel {
 
     // MARK: - General: the Minne key
 
-    /// Whether right-Option should wake Minne at the caret (US-017).
-    private(set) var minneKeyEnabled: Bool
+    /// Which key wakes Minne at the caret (US-017, US-103): right-Option, or
+    /// none. The old `minneKeyEnabled` boolean is a view over this — `off` is
+    /// how "disabled" is spelled now.
+    private(set) var minneKeyTrigger: MinneKeyTrigger
+    var minneKeyEnabled: Bool { minneKeyTrigger.installsTap }
     /// Whether the event tap is actually installed. It needs Accessibility, so
     /// the preference being on is not the same as the key working.
     private(set) var minneKeyActive = false
 
-    func setMinneKeyEnabled(_ enabled: Bool) {
-        guard enabled != minneKeyEnabled else { return }
-        minneKeyEnabled = enabled
-        store.setMinneKeyEnabled(enabled)
-        onMinneKeyChange?(enabled)
+    func setMinneKeyTrigger(_ trigger: MinneKeyTrigger) {
+        guard trigger != minneKeyTrigger else { return }
+        minneKeyTrigger = trigger
+        store.setMinneKeyTrigger(trigger)
+        onMinneKeyChange?(trigger)
         notify()
+    }
+
+    /// The boolean spelling, kept for callers that only know on/off.
+    func setMinneKeyEnabled(_ enabled: Bool) {
+        setMinneKeyTrigger(enabled ? .rightOption : .off)
     }
 
     func adopt(minneKeyActive: Bool) {
@@ -279,7 +287,9 @@ final class SettingsModel {
             return "Right-Option behaves like any other Option key."
         }
         if minneKeyActive {
-            return "Tap right-Option in any text field to bring Minne to your caret."
+            return "Tap right-Option in any text field to bring Minne to your caret. "
+                + "A bare tap only: typing with it held — @, €, ~ on international "
+                + "(AltGr) layouts — works as it always did."
         }
         return permission.isGranted
             ? "The Minne key could not start — Minne cannot watch the keyboard."

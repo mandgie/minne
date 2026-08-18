@@ -64,6 +64,7 @@ struct SettingsStore {
     }
 
     static let minneKeyKey = "minneKeyEnabled"
+    static let minneKeyTriggerKey = "minneKeyTrigger"
 
     /// On unless the user turned it off. A bare tap of right-Option types
     /// nothing, and holding it still reaches every ⌥ character and shortcut
@@ -73,8 +74,25 @@ struct SettingsStore {
         defaults.object(forKey: Self.minneKeyKey) as? Bool ?? true
     }
 
-    func setMinneKeyEnabled(_ enabled: Bool) {
-        defaults.set(enabled, forKey: Self.minneKeyKey)
+    /// The trigger subsumes the boolean: `off` is what "disabled" is spelled
+    /// as now, and `setMinneKeyTrigger` keeps `minneKeyEnabled` written in
+    /// agreement. The boolean is still honoured on read — as a kill switch,
+    /// false wins over any stored trigger — which is what keeps a pre-trigger
+    /// "off" choice off, and the `-minneKeyEnabled NO` debug launch argument
+    /// working. An unrecognised stored value (a trigger from a newer version)
+    /// falls back to the default rather than to off: the user asked for *a*
+    /// key, not for none.
+    var minneKeyTrigger: MinneKeyTrigger {
+        guard minneKeyEnabled else { return .off }
+        guard let raw = defaults.string(forKey: Self.minneKeyTriggerKey),
+            let trigger = MinneKeyTrigger(rawValue: raw)
+        else { return .rightOption }
+        return trigger
+    }
+
+    func setMinneKeyTrigger(_ trigger: MinneKeyTrigger) {
+        defaults.set(trigger.rawValue, forKey: Self.minneKeyTriggerKey)
+        defaults.set(trigger.installsTap, forKey: Self.minneKeyKey)
     }
 
     // MARK: - Retention

@@ -103,6 +103,14 @@ final class MinneKeyTap {
         CGEvent.tapEnable(tap: port, enable: true)
     }
 
+    /// For tests only: no `CGEventTap` behind it, so `handle(_:)` can be driven
+    /// with synthetic `Signal`s exactly as the C callback drives it. The
+    /// designated initializer installs a live tap, which needs Accessibility
+    /// and taps the real keyboard — neither belongs in `swift test`.
+    init(forTestingTapWindow tapWindow: TimeInterval) {
+        discriminator = MinneKeyDiscriminator(tapWindow: tapWindow)
+    }
+
     deinit {
         Self.tearDown(machPort: machPort, runLoopSource: runLoopSource)
         machPort = nil

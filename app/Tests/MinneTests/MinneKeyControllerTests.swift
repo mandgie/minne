@@ -241,12 +241,12 @@ final class MinneKeyControllerTests: XCTestCase {
     }
 
     private func makeController(
-        enabled: Bool = true, permission: CapturePermissionState = .granted,
+        trigger: MinneKeyTrigger = .rightOption, permission: CapturePermissionState = .granted,
         blacklist: CaptureBlacklist = CaptureBlacklist()
     ) -> MinneKeyController {
         let controller = MinneKeyController(
             locator: locator, presenter: overlay, writer: writer, pasteboard: pasteboard,
-            enabled: enabled, permission: permission, blacklist: blacklist,
+            trigger: trigger, permission: permission, blacklist: blacklist,
             makeTap: { [weak self] in
                 guard let self, self.tapCanBeCreated else { return nil }
                 let tap = FakeTap()
@@ -284,19 +284,20 @@ final class MinneKeyControllerTests: XCTestCase {
     }
 
     func testNoTapWhenTurnedOffInSettings() {
-        let controller = makeController(enabled: false)
+        let controller = makeController(trigger: .off)
         XCTAssertFalse(controller.isActive)
     }
 
-    /// The setting takes effect immediately, both ways — no relaunch.
+    /// The setting takes effect immediately, both ways — no relaunch. `off`
+    /// tears the tap down exactly like the old disabled toggle (US-103).
     func testTogglingTheSettingInstallsAndRemovesTheTapLive() {
-        let controller = makeController(enabled: false)
+        let controller = makeController(trigger: .off)
         var actives: [Bool] = []
         controller.onActiveChange = { actives.append($0) }
 
-        controller.setEnabled(true)
+        controller.apply(trigger: .rightOption)
         XCTAssertTrue(controller.isActive)
-        controller.setEnabled(false)
+        controller.apply(trigger: .off)
         XCTAssertFalse(controller.isActive)
         XCTAssertEqual(tap.invalidations, 1)
         XCTAssertEqual(actives, [true, false])

@@ -129,7 +129,10 @@ final class MinneKeyController {
     /// when nothing else holds this object.
     private nonisolated(unsafe) var workspaceObserver: (any NSObjectProtocol)?
 
-    private(set) var isEnabled: Bool
+    /// Which key the user chose, `off` included. Today the only tap that
+    /// exists watches right-Option; a future trigger picks its own tap in
+    /// `refreshTap()`, and everything else here already works per-trigger.
+    private(set) var trigger: MinneKeyTrigger
     private(set) var permission: CapturePermissionState
     /// Apps Minne is not allowed to look at. The same list capture obeys: an
     /// app whose contents may not become memory may not become a prompt either.
@@ -152,7 +155,7 @@ final class MinneKeyController {
         presenter: any MinneKeyPresenting = MinneKeyOverlayController(),
         writer: any FieldWriting = AccessibilityFieldWriter(),
         pasteboard: any PasteboardHolding = SystemPasteboard(),
-        enabled: Bool,
+        trigger: MinneKeyTrigger,
         permission: CapturePermissionState,
         blacklist: CaptureBlacklist = .standard,
         makeTap: @escaping TapFactory = { MinneKeyTap() },
@@ -170,7 +173,7 @@ final class MinneKeyController {
         self.makeTap = makeTap
         self.makeRequestId = makeRequestId
         self.schedule = schedule
-        self.isEnabled = enabled
+        self.trigger = trigger
         self.permission = permission
         self.blacklist = blacklist
         // The overlay belongs to the app the user was typing in; when they
@@ -200,9 +203,11 @@ final class MinneKeyController {
 
     // MARK: - Lifecycle
 
-    func setEnabled(_ enabled: Bool) {
-        guard enabled != isEnabled else { return }
-        isEnabled = enabled
+    /// `off` tears the tap down exactly as revoked Accessibility does; any
+    /// other trigger installs it (US-103).
+    func apply(trigger: MinneKeyTrigger) {
+        guard trigger != self.trigger else { return }
+        self.trigger = trigger
         refreshTap()
     }
 
@@ -218,7 +223,7 @@ final class MinneKeyController {
         self.blacklist = blacklist
     }
 
-    private var shouldRun: Bool { isEnabled && permission.isGranted }
+    private var shouldRun: Bool { trigger.installsTap && permission.isGranted }
 
     private func refreshTap() {
         let wasActive = isActive

@@ -201,18 +201,69 @@ final class SettingsModelTests: XCTestCase {
 
     func testMinneKeyToggleIsAppliedLiveAndRemembered() {
         let model = makeModel()
-        var applied: [Bool] = []
+        var applied: [MinneKeyTrigger] = []
         model.onMinneKeyChange = { applied.append($0) }
         XCTAssertTrue(model.minneKeyEnabled, "on unless the user turns it off")
+        XCTAssertEqual(model.minneKeyTrigger, .rightOption, "right-Option unless re-mapped")
 
         model.setMinneKeyEnabled(false)
-        XCTAssertEqual(applied, [false])
+        XCTAssertEqual(applied, [.off])
         XCTAssertFalse(reloaded().minneKeyEnabled)
         XCTAssertEqual(model.minneKeyLine, "Right-Option behaves like any other Option key.")
 
         model.setMinneKeyEnabled(true)
         model.adopt(minneKeyActive: true)
         XCTAssertTrue(model.minneKeyLine.contains("Tap right-Option"))
+    }
+
+    /// The `off` trigger is "disabled" spelled as a trigger (US-103): it tears
+    /// the tap down through the same callback, and both spellings agree on
+    /// disk and after a reload.
+    func testTheOffTriggerIsExactlyTheDisabledToggle() {
+        let model = makeModel()
+        var applied: [MinneKeyTrigger] = []
+        model.onMinneKeyChange = { applied.append($0) }
+
+        model.setMinneKeyTrigger(.off)
+        XCTAssertEqual(applied, [.off])
+        XCTAssertFalse(model.minneKeyEnabled)
+        let after = reloaded()
+        XCTAssertEqual(after.minneKeyTrigger, .off)
+        XCTAssertFalse(after.minneKeyEnabled)
+
+        model.setMinneKeyTrigger(.rightOption)
+        XCTAssertEqual(applied, [.off, .rightOption])
+        XCTAssertTrue(reloaded().minneKeyEnabled)
+    }
+
+    /// A pre-trigger install knows only the boolean; false must read as `off`,
+    /// and — because `-minneKeyEnabled NO` is also how a dev run switches the
+    /// key off — the boolean wins over any stored trigger.
+    func testTheLegacyBooleanStillDecides() {
+        defaults.set(false, forKey: SettingsStore.minneKeyKey)
+        XCTAssertEqual(makeModel().minneKeyTrigger, .off)
+
+        defaults.set(MinneKeyTrigger.rightOption.rawValue, forKey: SettingsStore.minneKeyTriggerKey)
+        XCTAssertEqual(makeModel().minneKeyTrigger, .off, "false is a kill switch")
+
+        defaults.set(true, forKey: SettingsStore.minneKeyKey)
+        XCTAssertEqual(makeModel().minneKeyTrigger, .rightOption)
+    }
+
+    /// A trigger written by a newer version falls back to the default key, not
+    /// to off: the user asked for *a* key, not for none.
+    func testAnUnknownStoredTriggerFallsBackToRightOption() {
+        defaults.set("fn", forKey: SettingsStore.minneKeyTriggerKey)
+        XCTAssertEqual(makeModel().minneKeyTrigger, .rightOption)
+    }
+
+    /// The settings copy has to reassure exactly the people the key worries:
+    /// AltGr typists on international layouts (US-103).
+    func testTheMinneKeyCopyMentionsInternationalLayouts() {
+        let model = makeModel()
+        model.adopt(minneKeyActive: true)
+        XCTAssertTrue(model.minneKeyLine.contains("international"))
+        XCTAssertTrue(model.minneKeyLine.contains("AltGr"))
     }
 
     /// The Minne key is an event tap, so it needs Accessibility. On but
