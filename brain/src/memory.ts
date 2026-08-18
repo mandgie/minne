@@ -643,7 +643,7 @@ function stampIndexDate(text: string, date: string): string {
  * user has already broken somewhere else never blocks a write.
  */
 function introducedIssues(before: WikiTree, after: WikiTree): LintIssue[] {
-  const key = (issue: LintIssue) => `${issue.code} ${issue.path} ${issue.detail ?? ""}`;
+  const key = (issue: LintIssue) => `${issue.code}\u0000${issue.path}\u0000${issue.detail ?? ""}`;
   const baseline = new Set(lintWiki(before).issues.map(key));
   return lintWiki(after).issues.filter((issue) => !baseline.has(key(issue)));
 }
