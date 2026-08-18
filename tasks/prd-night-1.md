@@ -236,3 +236,21 @@ screen.
   and pinned by `brain/src/draft-evals.test.ts`. Left as-is per the story's
   no-behavior-change rule; if double-wrapped model output ever shows up in the
   wild, decide deliberately whether stripping should loop to a fixed point.
+
+- US-105 (Mail and Gmail are honest negatives, by evidence): no Mail window
+  title names a recipient — compose is the subject ("New Message" before one
+  exists), the viewer is the mailbox or the open message's subject — and
+  Gmail's tab titles carry the subject plus the *user's own* address, with
+  compose changing the title not at all. Both are therefore encoded as
+  explicit nil with negative tests (`testMailTitlesNeverNameARecipient`,
+  `testGmailTitlesNeverNameARecipient`); a Mail/Gmail recipient has to come
+  from a future windowText-based hint (the To: field is in the AX walk, not
+  the title), which this story deliberately did not parse. LinkedIn messaging
+  IS wired: "Messaging | <Name> | LinkedIn" (optional "(N) " unread badge,
+  optional browser tail after "LinkedIn") across the browser bundle ids in
+  `InsertionPolicy.webBundleIdentifiers`; inbox/profile/feed shapes answer
+  nil. One assumption to verify in daylight against live tabs (the app and
+  desktop were off-limits overnight): that LinkedIn's current tab title
+  really is "Messaging | <Name> | LinkedIn" and not a name-first variant —
+  the fixtures in DraftContextTests encode the pattern above, and an
+  unrecognized shape fails safe to nil.

@@ -165,4 +165,97 @@ final class DraftContextTests: XCTestCase {
         XCTAssertNil(
             RecipientHint.from(bundleIdentifier: "com.tinyspeck.slackmacgap", windowTitle: ""))
     }
+
+    /// Mail was considered for US-105 and rejected on the evidence: no Mail
+    /// window title names a recipient. Compose is titled with the subject
+    /// ("New Message" before one exists), the viewer with the mailbox or the
+    /// open message's subject. Inventing one from any of these would ground
+    /// the draft in the wrong person's pages — worse than none.
+    func testMailTitlesNeverNameARecipient() {
+        for title in [
+            "New Message",
+            "Re: Thursday?",
+            "Fwd: Q3 numbers",
+            "Inbox — magnus@example.com",
+            "Inbox (2 messages, 1 unread)",
+            "Trip to Oslo",
+        ] {
+            XCTAssertNil(
+                RecipientHint.from(bundleIdentifier: "com.apple.mail", windowTitle: title),
+                "Mail title \"\(title)\" must not yield a recipient")
+        }
+    }
+
+    /// Gmail's tab titles carry the subject and the *user's own* address, and
+    /// opening compose does not change the title at all — so every Gmail shape
+    /// answers nil, whatever browser it is in.
+    func testGmailTitlesNeverNameARecipient() {
+        for title in [
+            "Inbox (12) - magnus@example.com - Gmail - Google Chrome",
+            "Trip to Oslo - magnus@example.com - Gmail",
+            "Sent Mail - magnus@example.com - Gmail — Mozilla Firefox",
+            "Gmail - Google Chrome",
+        ] {
+            XCTAssertNil(
+                RecipientHint.from(bundleIdentifier: "com.google.Chrome", windowTitle: title))
+            XCTAssertNil(
+                RecipientHint.from(bundleIdentifier: "com.apple.Safari", windowTitle: title))
+        }
+    }
+
+    /// LinkedIn messaging is the browser tab that does name the counterpart.
+    /// Safari's AX title is the bare page title; Chrome and Firefox append
+    /// their own name; an unread badge may sit in front. All of it comes off.
+    /// (Shapes encoded from the "Messaging | <Name> | LinkedIn" pattern;
+    /// verify against a live tab in daylight — prd-night-1.md Open Questions.)
+    func testLinkedInConversationTitlesNameTheCounterpart() {
+        XCTAssertEqual(
+            RecipientHint.from(
+                bundleIdentifier: "com.apple.Safari",
+                windowTitle: "Messaging | Ingrid Berg | LinkedIn"),
+            "Ingrid Berg")
+        XCTAssertEqual(
+            RecipientHint.from(
+                bundleIdentifier: "com.google.Chrome",
+                windowTitle: "(3) Messaging | Ingrid Berg | LinkedIn - Google Chrome"),
+            "Ingrid Berg")
+        XCTAssertEqual(
+            RecipientHint.from(
+                bundleIdentifier: "org.mozilla.firefox",
+                windowTitle: "Messaging | Ingrid Berg | LinkedIn — Mozilla Firefox"),
+            "Ingrid Berg")
+        XCTAssertEqual(
+            RecipientHint.from(
+                bundleIdentifier: "com.brave.Browser",
+                windowTitle: "(12) Messaging | Dr. Åsa Lindqvist-Øst | LinkedIn - Brave"),
+            "Dr. Åsa Lindqvist-Øst")
+    }
+
+    /// The inbox with nobody open, a profile page, the feed, and every other
+    /// LinkedIn surface must stay nil — a wrong recipient sends the draft to
+    /// the wrong style page, which is worse than having none.
+    func testLinkedInListViewsGiveNoRecipient() {
+        for title in [
+            "Messaging | LinkedIn",
+            "(3) Messaging | LinkedIn - Google Chrome",
+            "Ingrid Berg | LinkedIn",
+            "Feed | LinkedIn",
+            "(2) Notifications | LinkedIn - Google Chrome",
+            "Ingrid Berg | Messaging | LinkedIn Learning",
+            "• Messaging | Ingrid Berg | LinkedIn",
+        ] {
+            XCTAssertNil(
+                RecipientHint.from(bundleIdentifier: "com.google.Chrome", windowTitle: title),
+                "LinkedIn title \"\(title)\" must not yield a recipient")
+        }
+    }
+
+    /// The LinkedIn shape only counts inside a browser: a non-browser app
+    /// whose title happens to match is not LinkedIn.
+    func testLinkedInShapeOutsideABrowserIsIgnored() {
+        XCTAssertNil(
+            RecipientHint.from(
+                bundleIdentifier: "com.example.notes",
+                windowTitle: "Messaging | Ingrid Berg | LinkedIn"))
+    }
 }

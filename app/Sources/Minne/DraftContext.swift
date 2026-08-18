@@ -242,9 +242,49 @@ enum RecipientHint {
         case "com.apple.MobileSMS":
             // Messages titles its window with the conversation.
             return clean(title)
-        default:
+        case "com.apple.mail":
+            // Considered, and the honest answer is no: a Mail window title
+            // never names a recipient. Compose is the subject ("Re: Thursday?",
+            // or "New Message" before one is typed) and the viewer is the
+            // mailbox or the open message's subject. The recipient lives in the
+            // To: field — windowText, not the title — so Mail waits for a
+            // windowText-based hint (prd-night-1.md, Open Questions).
             return nil
+        default:
+            // A browser's title is the page's, and only one page worth knowing
+            // about puts the correspondent there: LinkedIn messaging. Gmail
+            // does not — its titles carry the subject and the user's *own*
+            // address ("Trip to Oslo - magnus@… - Gmail"), and compose leaves
+            // the title untouched — so Gmail stays nil like the rest of the web.
+            guard InsertionPolicy.webBundleIdentifiers.contains(bundleIdentifier) else {
+                return nil
+            }
+            return linkedInConversation(title)
         }
+    }
+
+    /// "Messaging | Ingrid Berg | LinkedIn", possibly wearing an unread badge
+    /// ("(3) Messaging | …") and the browser's own tail ("… | LinkedIn -
+    /// Google Chrome"). Exactly three segments, "Messaging" first and
+    /// "LinkedIn" last, or it is not a conversation: the inbox with nobody
+    /// open is "Messaging | LinkedIn", a profile is "<Name> | LinkedIn", and
+    /// both must answer nil.
+    private static func linkedInConversation(_ title: String) -> String? {
+        let parts = title.components(separatedBy: " | ")
+        guard parts.count == 3, stripUnreadBadge(from: parts[0]) == "Messaging" else { return nil }
+        let tail = parts[2]
+        guard tail == "LinkedIn" || tail.hasPrefix("LinkedIn - ") || tail.hasPrefix("LinkedIn — ")
+        else { return nil }
+        return clean(parts[1])
+    }
+
+    /// "(3) Messaging" → "Messaging". Only a parenthesised count comes off —
+    /// anything else in front means the title is not the shape we know.
+    private static func stripUnreadBadge(from text: String) -> String {
+        guard text.hasPrefix("("), let close = text.range(of: ") ") else { return text }
+        let count = text[text.index(after: text.startIndex)..<close.lowerBound]
+        guard !count.isEmpty, count.allSatisfy(\.isNumber) else { return text }
+        return String(text[close.upperBound...])
     }
 
     private static func clean(_ raw: String) -> String? {
