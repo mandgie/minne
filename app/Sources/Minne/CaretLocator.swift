@@ -52,6 +52,15 @@ protocol CaretLocating: AnyObject {
     /// The focused text element's caret, or nil when there is nothing to
     /// anchor to: no text focus, a password field, or Minne itself in front.
     func locateCaret() -> CaretTarget?
+
+    /// The pid of the app the last `locateCaret()` just asked to wake, when
+    /// that call still came up empty — the one nil worth retrying once the
+    /// tree has had time to build (US-104). Nil after every other locate.
+    var lastLocateWokeApp: pid_t? { get }
+}
+
+extension CaretLocating {
+    var lastLocateWokeApp: pid_t? { nil }
 }
 
 /// Real `CaretLocating`: the frontmost app's focused Accessibility element,
@@ -79,6 +88,7 @@ final class AccessibilityCaretLocator: CaretLocating {
     private lazy var windowSource = AccessibilityWindowSource()
 
     func locateCaret() -> CaretTarget? {
+        lastLocateWokeApp = nil
         guard let running = NSWorkspace.shared.frontmostApplication else { return nil }
         let pid = running.processIdentifier
         // Right-Option inside Minne's own chat window is just Option.
@@ -129,6 +139,10 @@ final class AccessibilityCaretLocator: CaretLocating {
     /// Apps already asked to wake, so the set is tried once per app run.
     private var wokenApps: Set<pid_t> = []
 
+    /// See `CaretLocating`. Set when the last locate flipped the wake switch
+    /// and *still* found no focus — the tree was dark and is now building.
+    private(set) var lastLocateWokeApp: pid_t?
+
     /// The app's focused element, waking a dark Chromium tree when it has none.
     ///
     /// Chromium keeps its accessibility tree switched off until it detects an
@@ -140,7 +154,8 @@ final class AccessibilityCaretLocator: CaretLocating {
     /// set for whatever app will not name its focus rather than kept behind a
     /// bundle-id list. The tree builds asynchronously, though: the immediate
     /// retry sometimes lands, but a press that found the tree dark may still
-    /// come up empty — the wake is what makes the *next* one work.
+    /// come up empty — `lastLocateWokeApp` then tells the controller this nil
+    /// is worth one delayed retry (US-104).
     private func focusedElement(of app: AXUIElement, pid: pid_t) -> AXUIElement? {
         if let focused = element(app, kAXFocusedUIElementAttribute) { return focused }
         guard wokenApps.insert(pid).inserted else { return nil }
@@ -148,7 +163,9 @@ final class AccessibilityCaretLocator: CaretLocating {
             app, Self.manualAccessibilityAttribute as CFString, kCFBooleanTrue)
         BrainClient.log(
             "minne key: no focused element — set \(Self.manualAccessibilityAttribute), retrying")
-        return element(app, kAXFocusedUIElementAttribute)
+        let retried = element(app, kAXFocusedUIElementAttribute)
+        if retried == nil { lastLocateWokeApp = pid }
+        return retried
     }
 
     /// Walks `AXParent` looking for a web area.

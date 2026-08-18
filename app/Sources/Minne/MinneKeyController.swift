@@ -8,6 +8,7 @@ protocol MinneKeyTapping: AnyObject {
     var onTap: (@MainActor () -> Void)? { get set }
     var onCommand: (@MainActor (MinneKeyCommand) -> Bool)? { get set }
     var onClick: (@MainActor (CGPoint) -> Void)? { get set }
+    var onUserInput: (@MainActor () -> Void)? { get set }
     func invalidate()
 }
 
@@ -89,6 +90,13 @@ final class MinneKeyController {
     /// would land nowhere at all.
     static let focusReturnDelay: TimeInterval = 0.12
 
+    /// How long a freshly woken Chromium accessibility tree gets to build
+    /// before the press's locate is retried (US-104). The tree is constructed
+    /// asynchronously after `AXManualAccessibility` is set, so the immediate
+    /// retry usually misses; half a second is enough for it to come up and
+    /// short enough that the overlay still arrives as the answer to the press.
+    static let wakeRetryDelay: TimeInterval = 0.5
+
     /// One press, from the key going down to the overlay going away.
     ///
     /// A rework — another take, or a steer — starts a new request but stays the
@@ -119,9 +127,15 @@ final class MinneKeyController {
     private let pasteboard: any PasteboardHolding
     private let makeTap: TapFactory
     private let makeRequestId: () -> String
+    private let frontmostPid: @MainActor () -> pid_t?
     private let schedule: Scheduler
     private var tap: (any MinneKeyTapping)?
     private var session: Session?
+    /// The one delayed retry a wake earns, while its timer is armed (US-104).
+    private var wakeRetry: MinneKeyWakeRetry?
+    /// Bumped whenever a retry is scheduled, so a timer armed for an earlier
+    /// press cannot fire a later press's retry ahead of its time.
+    private var wakeRetryGeneration = 0
     /// Bumped by everything that changes what the overlay is showing, so a
     /// timer armed for an earlier state does not close a later one.
     private var overlayGeneration = 0
@@ -160,6 +174,9 @@ final class MinneKeyController {
         blacklist: CaptureBlacklist = .standard,
         makeTap: @escaping TapFactory = { MinneKeyTap() },
         makeRequestId: @escaping () -> String = { UUID().uuidString },
+        frontmostPid: @escaping @MainActor () -> pid_t? = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        },
         schedule: @escaping Scheduler = { delay, work in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 MainActor.assumeIsolated(work)
@@ -172,6 +189,7 @@ final class MinneKeyController {
         self.pasteboard = pasteboard
         self.makeTap = makeTap
         self.makeRequestId = makeRequestId
+        self.frontmostPid = frontmostPid
         self.schedule = schedule
         self.trigger = trigger
         self.permission = permission
@@ -242,6 +260,7 @@ final class MinneKeyController {
         tap.onTap = { [weak self] in self?.keyTapped() }
         tap.onCommand = { [weak self] command in self?.command(command) ?? false }
         tap.onClick = { [weak self] point in self?.clicked(at: point) }
+        tap.onUserInput = { [weak self] in self?.cancelWakeRetry(.typing) }
         BrainClient.log("minne key: right-Option is live")
         return tap
     }
@@ -251,12 +270,28 @@ final class MinneKeyController {
     /// A deliberate right-Option tap. Toggles, so a second press dismisses.
     func keyTapped() {
         guard shouldRun else { return }
+        // A new press supersedes a pending wake retry: its own locate is
+        // fresher than the one the timer would repeat.
+        cancelWakeRetry(.anotherPress)
         if presenter.isPresenting {
             dismiss()
             return
         }
+        press(isWakeRetry: false)
+    }
+
+    /// One attempt at turning the press into a draft. The wake retry comes
+    /// back through here too, so a press that needed one proceeds exactly like
+    /// a press that did not: same blacklist check, same logging, same overlay.
+    private func press(isWakeRetry: Bool) {
         guard let target = locator.locateCaret() else {
-            BrainClient.log("minne key: no text field is focused")
+            if !isWakeRetry, let pid = locator.lastLocateWokeApp {
+                // Not logged as a failure yet: the retry's outcome speaks for
+                // this press, so the "no text field" line fires once, there.
+                scheduleWakeRetry(afterWaking: pid)
+            } else {
+                BrainClient.log("minne key: no text field is focused")
+            }
             return
         }
         guard !blacklist.blocks(bundleIdentifier: target.bundleIdentifier) else {
@@ -271,6 +306,46 @@ final class MinneKeyController {
         overlayGeneration += 1
         presenter.present(target, state: .working(mode))
         send(session)
+    }
+
+    // MARK: - The wake retry
+
+    /// The press found the app's tree dark and this locate just flipped the
+    /// wake switch; the tree builds asynchronously, so the locate is repeated
+    /// once after it has had time to (US-104). `MinneKeyWakeRetry` holds the
+    /// rules; this is only the timer around it.
+    private func scheduleWakeRetry(afterWaking pid: pid_t) {
+        wakeRetry = MinneKeyWakeRetry(pid: pid)
+        wakeRetryGeneration += 1
+        let generation = wakeRetryGeneration
+        BrainClient.log(
+            "minne key: retrying in \(Int(Self.wakeRetryDelay * 1000)) ms — "
+                + "the accessibility tree may still be building")
+        schedule(Self.wakeRetryDelay) { [weak self] in self?.wakeRetryFired(generation) }
+    }
+
+    private func wakeRetryFired(_ generation: Int) {
+        guard generation == wakeRetryGeneration, var retry = wakeRetry else { return }
+        wakeRetry = nil
+        let wasPending = retry.phase == .pending
+        guard retry.shouldFire(frontmostPid: frontmostPid()) else {
+            // A cancellation noticed only now: the frontmost app changed
+            // without a press, keystroke or click. The earlier ones already
+            // said why when they happened.
+            if wasPending {
+                BrainClient.log(
+                    "minne key: wake retry abandoned — "
+                        + MinneKeyWakeRetry.Cancellation.appSwitch.rawValue)
+            }
+            return
+        }
+        guard shouldRun, !presenter.isPresenting else { return }
+        press(isWakeRetry: true)
+    }
+
+    private func cancelWakeRetry(_ reason: MinneKeyWakeRetry.Cancellation) {
+        guard wakeRetry?.cancel(reason) == true else { return }
+        BrainClient.log("minne key: wake retry abandoned — \(reason.rawValue)")
     }
 
     /// Puts one session's request on the wire and shows nothing — the caller
@@ -617,13 +692,16 @@ final class MinneKeyController {
     // MARK: - Going away
 
     /// A click anywhere but on the overlay puts the user somewhere else — very
-    /// likely a different caret — so the overlay goes away.
+    /// likely a different caret — so the overlay goes away, and so does any
+    /// retry still waiting on a woken tree.
     func clicked(at point: CGPoint) {
+        cancelWakeRetry(.click)
         guard presenter.isPresenting, !presenter.contains(quartzPoint: point) else { return }
         dismiss()
     }
 
     func appSwitched() {
+        cancelWakeRetry(.appSwitch)
         dismiss()
     }
 

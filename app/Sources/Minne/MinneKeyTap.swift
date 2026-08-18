@@ -61,6 +61,12 @@ final class MinneKeyTap {
     var onCommand: (@MainActor (MinneKeyCommand) -> Bool)?
     /// A mouse press, in Quartz screen coordinates.
     var onClick: (@MainActor (CGPoint) -> Void)?
+    /// The user doing something at the keyboard that is not completing a Minne
+    /// tap: any key going down, or right-Option starting a fresh press. The
+    /// controller uses it to abandon a wake retry that has not fired yet
+    /// (US-104) — an overlay arriving on top of new typing would be worse than
+    /// the dud press it repairs.
+    var onUserInput: (@MainActor () -> Void)?
 
     private var discriminator: MinneKeyDiscriminator
     /// Optionals only because `self` cannot be handed to `passUnretained` until
@@ -196,10 +202,15 @@ final class MinneKeyTap {
                 // Never inline: locating the caret is Accessibility IPC, and
                 // this callback sits in the keyboard's critical path.
                 DispatchQueue.main.async { [weak self] in self?.onTap?() }
+            } else if input == .rightOptionDown {
+                // A fresh press starting: whatever a pending wake retry would
+                // show, this press is about to supersede it.
+                notifyUserInput()
             }
             return .pass
 
         case .keyDown:
+            notifyUserInput()
             if let command = Self.command(keyCode: signal.keyCode, flags: signal.flags),
                 onCommand?(command) == true
             {
@@ -265,6 +276,13 @@ final class MinneKeyTap {
         default:
             return nil
         }
+    }
+
+    /// Asynchronously, like `onTap` and `onClick`: this callback sits in the
+    /// keyboard's critical path and does bookkeeping only.
+    private func notifyUserInput() {
+        guard let onUserInput else { return }
+        DispatchQueue.main.async { onUserInput() }
     }
 
     @discardableResult

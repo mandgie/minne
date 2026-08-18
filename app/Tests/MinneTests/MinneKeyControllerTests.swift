@@ -13,10 +13,26 @@ private final class FakeCaretLocator: CaretLocating {
             text: "", selection: "", selectedRange: NSRange(location: 0, length: 0),
             windowText: "From: Ingrid\nCan you review the doc?", windowTitle: "Untitled"))
     private(set) var calls = 0
+    /// Results for the next locates, consumed first; after that, `target`
+    /// again. `nil` entries script a locate that found nothing.
+    var nextResults: [CaretTarget?] = []
+    /// Pids the next locates report as "just woken, still dark" (US-104),
+    /// consumed one per call; locates beyond the script woke nothing.
+    var pendingWakes: [pid_t] = []
+    private(set) var lastLocateWokeApp: pid_t?
 
     func locateCaret() -> CaretTarget? {
         calls += 1
+        lastLocateWokeApp = pendingWakes.isEmpty ? nil : pendingWakes.removeFirst()
+        if !nextResults.isEmpty { return nextResults.removeFirst() }
         return target
+    }
+
+    /// Scripts US-104's first press in a dark app: the next locate finds
+    /// nothing but has just woken `pid`; the one after answers as usual.
+    func scriptWake(pid: pid_t) {
+        nextResults = [nil]
+        pendingWakes = [pid]
     }
 
     /// Replaces the field half of the scripted target, keeping the rest.
@@ -109,6 +125,7 @@ private final class FakeTap: MinneKeyTapping {
     var onTap: (@MainActor () -> Void)?
     var onCommand: (@MainActor (MinneKeyCommand) -> Bool)?
     var onClick: (@MainActor (CGPoint) -> Void)?
+    var onUserInput: (@MainActor () -> Void)?
     private(set) var invalidations = 0
 
     func invalidate() { invalidations += 1 }
@@ -220,6 +237,9 @@ final class MinneKeyControllerTests: XCTestCase {
     private var scheduled: [(delay: TimeInterval, work: @MainActor () -> Void)] = []
     /// Set to false to simulate a tap that cannot be created.
     private var tapCanBeCreated = true
+    /// What the controller sees as the frontmost app's pid at wake-retry fire
+    /// time (US-104).
+    private var frontmostPid: pid_t? = 4242
     /// Held for the length of the test: the tap's callbacks capture the
     /// controller weakly, so a released one would silently ignore every event.
     private var controller: MinneKeyController?
@@ -233,6 +253,7 @@ final class MinneKeyControllerTests: XCTestCase {
         taps = []
         scheduled = []
         tapCanBeCreated = true
+        frontmostPid = 4242
         controller = nil
     }
 
@@ -254,6 +275,7 @@ final class MinneKeyControllerTests: XCTestCase {
                 return tap
             },
             makeRequestId: { [ids] in ids.next() },
+            frontmostPid: { [weak self] in self?.frontmostPid },
             schedule: { [weak self] delay, work in self?.scheduled.append((delay, work)) })
         controller.backend = backend
         self.controller = controller
@@ -877,6 +899,109 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertEqual(writer.reverts.count, 1)
         overlay.onAction?(.dismiss)
         XCTAssertFalse(overlay.isPresenting)
+    }
+
+    // MARK: - The wake retry (US-104)
+
+    /// The story's headline: a first press in a freshly woken Chromium app
+    /// produces the draft itself, not just a working second press. The retry
+    /// runs the normal press flow, so the overlay and the request look exactly
+    /// like an ordinary press's.
+    func testAPressThatWokeADarkAppRetriesOnceAndPresents() {
+        locator.scriptWake(pid: 4242)
+        makeControllerAndTap()
+        XCTAssertFalse(overlay.isPresenting, "nothing to show until the tree is up")
+        XCTAssertTrue(backend.requests.isEmpty)
+        XCTAssertEqual(scheduled.count, 1)
+        XCTAssertEqual(scheduled.first?.delay, MinneKeyController.wakeRetryDelay)
+
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 2)
+        XCTAssertTrue(overlay.isPresenting)
+        XCTAssertEqual(overlay.states.first, .working(.infer))
+        XCTAssertEqual(backend.requests.count, 1)
+    }
+
+    /// The retry is the same flow as a press, rules included: an app the user
+    /// blacklisted stays blacklisted at fire time.
+    func testTheRetryStillHonoursTheBlacklist() {
+        locator.scriptWake(pid: 4242)
+        _ = makeController(blacklist: CaptureBlacklist(bundleIdentifiers: ["com.apple.TextEdit"]))
+        tap.onTap?()
+        runScheduledWork()
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertTrue(backend.requests.isEmpty)
+    }
+
+    /// One retry ever: a retry that finds the tree still dark does not earn
+    /// another, even when the locator reports another wake.
+    func testARetryThatStillFindsNothingGivesUp() {
+        locator.nextResults = [nil, nil]
+        locator.pendingWakes = [4242, 4242]
+        makeControllerAndTap()
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 2)
+        XCTAssertTrue(scheduled.isEmpty, "a retry never schedules a second retry")
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertTrue(backend.requests.isEmpty)
+    }
+
+    /// The user pressing the key again is the retry, done by hand — the new
+    /// press locates for itself and the stale timer must not double it.
+    func testPressingTheKeyAgainSupersedesThePendingRetry() {
+        locator.scriptWake(pid: 4242)
+        makeControllerAndTap()
+        XCTAssertEqual(scheduled.count, 1)
+
+        tap.onTap?()
+        XCTAssertTrue(overlay.isPresenting, "the second press found the tree up")
+        XCTAssertEqual(backend.requests.count, 1)
+
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 2, "the stale timer locates nothing")
+        XCTAssertEqual(backend.requests.count, 1)
+        XCTAssertEqual(overlay.presented.count, 1)
+    }
+
+    func testTypingAbandonsThePendingRetry() {
+        locator.scriptWake(pid: 4242)
+        makeControllerAndTap()
+        tap.onUserInput?()
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 1)
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertTrue(backend.requests.isEmpty)
+    }
+
+    func testAClickAbandonsThePendingRetry() {
+        locator.scriptWake(pid: 4242)
+        makeControllerAndTap()
+        tap.onClick?(CGPoint(x: 900, y: 700))
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 1)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    func testSwitchingAppAbandonsThePendingRetry() {
+        locator.scriptWake(pid: 4242)
+        makeControllerAndTap()
+        controller?.appSwitched()
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 1)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    /// The frontmost app can change without a keystroke or click reaching the
+    /// tap (Spotlight, a notification banner), so the pid is checked again at
+    /// fire time: a locate now would read a different app than was woken.
+    func testARetryFiringInADifferentFrontmostAppIsAbandoned() {
+        locator.scriptWake(pid: 4242)
+        makeControllerAndTap()
+        frontmostPid = 9999
+        runScheduledWork()
+        XCTAssertEqual(locator.calls, 1)
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertTrue(backend.requests.isEmpty)
     }
 
     // MARK: - Another take
