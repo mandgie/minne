@@ -69,28 +69,27 @@ private final class MinneKeyOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// The panel's background: the system's own material, rounded, with a hairline
-/// edge so it still reads as a surface against a white page.
+/// The panel's background: one flat white surface with a hairline edge.
 ///
-/// The border is re-resolved on every appearance change: a `CGColor` is a
+/// Solid rather than the system's `.popover` material, which is what put grey
+/// into the panel in the first place — a translucent surface takes its colour
+/// from whatever the user happens to be typing over, and no amount of white
+/// inside it survives that. White is a decision here, not an average.
+///
+/// The colours are re-resolved on every appearance change: a `CGColor` is a
 /// resolved colour and not a dynamic one, so a layer painted once in light mode
-/// keeps that exact grey when the Mac turns dark.
-private final class OverlayChromeView: NSVisualEffectView {
+/// keeps that exact white when the Mac turns dark.
+private final class OverlayChromeView: NSView {
     static let cornerRadius: CGFloat = 14
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        // `.popover` rather than `.hudWindow`: HUD is dark in both appearances,
-        // and this panel sits inside the user's document, not over a video.
-        material = .popover
-        blendingMode = .behindWindow
-        state = .active
         wantsLayer = true
         layer?.cornerRadius = Self.cornerRadius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 1
-        applyBorderColor()
+        applyColors()
     }
 
     @available(*, unavailable)
@@ -98,12 +97,41 @@ private final class OverlayChromeView: NSVisualEffectView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        applyBorderColor()
+        applyColors()
     }
 
-    private func applyBorderColor() {
+    private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.borderColor = NSColor.separatorColor.cgColor
+            layer?.backgroundColor = OverlayPalette.surface.cgColor
+            layer?.borderColor = OverlayPalette.edge.cgColor
+        }
+    }
+}
+
+/// The one rule in the panel: a single hairline under the header, at exactly the
+/// content inset every other child starts at.
+private final class OverlayRule: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        applyColors()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 1)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+
+    private func applyColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = OverlayPalette.hairline.cgColor
         }
     }
 }
@@ -116,7 +144,7 @@ private final class OverlayChromeView: NSVisualEffectView {
 /// user's keystrokes through the event tap.
 @MainActor
 final class ThinkingDots: NSView {
-    private static let dotSize: CGFloat = 5
+    private static let dotSize: CGFloat = 4.5
     private static let gap: CGFloat = 4
     private static let period: CFTimeInterval = 0.62
 
@@ -159,7 +187,7 @@ final class ThinkingDots: NSView {
 
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance { [dots] in
-            for dot in dots { dot.backgroundColor = NSColor.controlAccentColor.cgColor }
+            for dot in dots { dot.backgroundColor = OverlayPalette.blue.cgColor }
         }
     }
 
@@ -185,60 +213,20 @@ final class ThinkingDots: NSView {
     }
 }
 
-/// The draft's own surface: a soft, bordered card behind the one paragraph of
-/// prose the panel shows.
+/// Three pale blue lines where the draft will be, with a highlight sweeping
+/// across them.
 ///
-/// A plain layer-backed view rather than an `NSBox`, which lays its content view
-/// out by frame — a wrapping label inside one measures as nothing at all and the
-/// card collapses (verified: the draft simply did not appear).
-private final class DraftCard: NSView {
-    static let padding: CGFloat = 11
-
-    init(content: NSView) {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 9
-        layer?.cornerCurve = .continuous
-        layer?.borderWidth = 1
-        content.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.padding),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.padding),
-            content.topAnchor.constraint(equalTo: topAnchor, constant: Self.padding - 2),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(Self.padding - 2)),
-        ])
-        applyColors()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not used") }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        applyColors()
-    }
-
-    private func applyColors() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.5).cgColor
-            layer?.borderColor = NSColor.separatorColor.cgColor
-        }
-    }
-}
-
-/// Three bars where the draft will be, with a highlight sweeping across them.
-///
-/// It is the same box the finished draft appears in, which is the point: the
-/// panel takes its shape the moment it opens and then fills in, rather than
-/// jumping a hundred points when the model answers. The sweep is a gradient
-/// mask animated on the render server — no timer, no redraw, nothing on the
-/// thread that is carrying the user's keystrokes.
+/// They sit on the panel's white directly, on the same grid and at the same
+/// width as the prose that replaces them: the panel takes its shape the moment
+/// it opens and then fills in, rather than jumping a hundred points when the
+/// model answers. The sweep is a gradient mask animated on the render server —
+/// no timer, no redraw, nothing on the thread that is carrying the user's
+/// keystrokes.
 private final class ShimmerLines: NSView {
-    private static let barHeight: CGFloat = 9
-    private static let gap: CGFloat = 7
+    private static let barHeight: CGFloat = 8
+    private static let gap: CGFloat = 8
     /// Ragged ends, so it reads as a paragraph rather than a progress bar.
-    private static let widths: [CGFloat] = [1.0, 0.93, 0.6]
+    private static let widths: [CGFloat] = [1.0, 0.92, 0.56]
     private static let sweep: CFTimeInterval = 1.5
 
     private let bars: [CALayer]
@@ -257,9 +245,9 @@ private final class ShimmerLines: NSView {
         sweepMask.startPoint = CGPoint(x: 0, y: 0.5)
         sweepMask.endPoint = CGPoint(x: 1, y: 0.5)
         sweepMask.colors = [
-            NSColor.black.withAlphaComponent(0.45).cgColor,
+            NSColor.black.withAlphaComponent(0.5).cgColor,
             NSColor.black.cgColor,
-            NSColor.black.withAlphaComponent(0.45).cgColor,
+            NSColor.black.withAlphaComponent(0.5).cgColor,
         ]
         sweepMask.locations = [0, 0.2, 0.4]
         layer?.mask = sweepMask
@@ -300,7 +288,7 @@ private final class ShimmerLines: NSView {
 
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance { [bars] in
-            let ink = NSColor.labelColor.withAlphaComponent(0.16).cgColor
+            let ink = OverlayPalette.shimmer.cgColor
             for bar in bars { bar.backgroundColor = ink }
         }
     }
@@ -332,6 +320,11 @@ private final class ShimmerLines: NSView {
 /// draws in its inactive state: `bezelColor` is ignored and an accent-tinted
 /// primary comes out the same flat grey as everything beside it. Painting a
 /// capsule ourselves is what makes Insert look like the thing to press.
+///
+/// One capsule is filled blue and the rest are outlines — no grey fills. The
+/// filled one is the answer to the panel's question; the outlined ones are the
+/// ways out, and on white they weigh almost nothing until the pointer is over
+/// them, which is exactly the hierarchy the panel wants.
 private final class OverlayButton: NSButton {
     /// Text at the end of a title, dimmer than the label: the key that does the
     /// same thing.
@@ -343,8 +336,8 @@ private final class OverlayButton: NSButton {
     private let isPrimary: Bool
     private var isHovered = false
 
-    private static let height: CGFloat = 23
-    private static let horizontalPadding: CGFloat = 12
+    private static let height: CGFloat = 24
+    private static let horizontalPadding: CGFloat = 13
 
     init(label: String, hint: String?, isPrimary: Bool, target: AnyObject, action: Selector) {
         self.hint = hint
@@ -357,6 +350,7 @@ private final class OverlayButton: NSButton {
         wantsLayer = true
         layer?.cornerRadius = Self.height / 2
         layer?.cornerCurve = .continuous
+        layer?.borderWidth = isPrimary ? 0 : 1
         attributedTitle = titleText()
         applyColors()
     }
@@ -404,8 +398,8 @@ private final class OverlayButton: NSButton {
         let text = NSMutableAttributedString(
             string: label,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 11.5, weight: isPrimary ? .semibold : .regular),
-                .foregroundColor: isPrimary ? NSColor.white : NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 11.5, weight: isPrimary ? .semibold : .medium),
+                .foregroundColor: isPrimary ? OverlayPalette.onBlue : OverlayPalette.inkSecondary,
             ])
         if let hint {
             text.append(
@@ -414,8 +408,8 @@ private final class OverlayButton: NSButton {
                     attributes: [
                         .font: NSFont.systemFont(ofSize: 11),
                         .foregroundColor: isPrimary
-                            ? NSColor.white.withAlphaComponent(0.75)
-                            : NSColor.secondaryLabelColor,
+                            ? OverlayPalette.onBlue.withAlphaComponent(0.7)
+                            : OverlayPalette.inkTertiary,
                     ]))
         }
         return text
@@ -423,22 +417,37 @@ private final class OverlayButton: NSButton {
 
     /// A `CGColor` is resolved, not dynamic, so every colour here is re-read
     /// whenever the appearance, the hover or the press changes.
+    ///
+    /// The quiet capsule has no fill at rest — the pointer washes it with the
+    /// accent instead of with grey, and its edge follows.
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
-            let base: NSColor =
-                isPrimary ? .controlAccentColor : NSColor.labelColor.withAlphaComponent(0.09)
-            let lift: CGFloat = isHighlighted ? -0.12 : (isHovered ? 0.06 : 0)
-            layer?.backgroundColor = Self.adjusted(base, by: lift).cgColor
+            if isPrimary {
+                let lift: CGFloat = isHighlighted ? -0.14 : (isHovered ? 0.08 : 0)
+                layer?.backgroundColor = Self.adjusted(OverlayPalette.blueFill, by: lift).cgColor
+            } else {
+                layer?.backgroundColor =
+                    isHighlighted
+                    ? OverlayPalette.blueWashPressed.cgColor
+                    : (isHovered ? OverlayPalette.blueWash.cgColor : NSColor.clear.cgColor)
+                layer?.borderColor =
+                    (isHovered || isHighlighted)
+                    ? OverlayPalette.blue.withAlphaComponent(0.45).cgColor
+                    : OverlayPalette.quietEdge.cgColor
+            }
         }
     }
 
-    /// Hover lightens and a press darkens, by the same small amount for the
-    /// accent capsule and the quiet ones.
+    /// Hover lightens the accent capsule and a press darkens it, by the same
+    /// small amount either way.
     private static func adjusted(_ color: NSColor, by amount: CGFloat) -> NSColor {
         guard amount != 0 else { return color }
+        // A dynamic colour has no components to blend until it is resolved
+        // against the appearance in force — `blended` on one returns nil.
+        let resolved = color.usingColorSpace(.sRGB) ?? color
         return amount > 0
-            ? color.blended(withFraction: amount, of: .white) ?? color
-            : color.blended(withFraction: -amount, of: .black) ?? color
+            ? resolved.blended(withFraction: amount, of: .white) ?? resolved
+            : resolved.blended(withFraction: -amount, of: .black) ?? resolved
     }
 }
 
@@ -454,21 +463,25 @@ final class MinneKeyOverlayView: NSView {
     /// view. Elided by hand rather than by `lineBreakMode`: a wrapping label
     /// asked to truncate stops wrapping and puts the whole draft on one line.
     static let maxPreviewCharacters = 600
-    /// Room around the column.
-    static let inset = NSSize(width: 16, height: 13)
+    /// The one internal grid. Every child of the panel — the spark, the status
+    /// line, the draft, the first capsule — starts at `inset.width` from the
+    /// panel's border and nothing starts anywhere else; top and bottom are equal.
+    static let inset = NSSize(width: 14, height: 14)
 
     var onAction: (@MainActor (MinneKeyAction) -> Void)?
 
     private let spark = NSImageView()
     private let title = NSTextField(labelWithString: "Minne")
+    private let separator = NSTextField(labelWithString: "·")
     private let app = NSTextField(labelWithString: "")
     private let dots = ThinkingDots(frame: .zero)
-    private let warning = NSImageView()
+    /// Marks the two states that are an outcome rather than a progress report:
+    /// a blue tick when the draft landed, a warm mark when it did not.
+    private let outcome = NSImageView()
     private let status = NSTextField(labelWithString: "")
     private let draft = NSTextField(wrappingLabelWithString: "")
-    private lazy var card = DraftCard(content: draft)
     private let shimmer = ShimmerLines(frame: .zero)
-    private lazy var thinkingCard = DraftCard(content: shimmer)
+    private let rule = OverlayRule(frame: .zero)
     private let buttons = NSStackView()
     private let column = NSStackView()
 
@@ -496,45 +509,54 @@ final class MinneKeyOverlayView: NSView {
     /// The spark, the name, and the app being written into.
     private func buildHeader() {
         spark.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Minne")
-        spark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-        spark.contentTintColor = .controlAccentColor
+        spark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)
+        spark.contentTintColor = OverlayPalette.blue
         spark.setContentHuggingPriority(.required, for: .horizontal)
+        spark.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         title.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        title.textColor = .labelColor
+        title.textColor = OverlayPalette.ink
+        separator.font = .systemFont(ofSize: 11.5)
+        separator.textColor = OverlayPalette.inkTertiary
+        separator.setContentHuggingPriority(.required, for: .horizontal)
         app.font = .systemFont(ofSize: 11.5)
-        app.textColor = .tertiaryLabelColor
+        app.textColor = OverlayPalette.inkTertiary
         app.lineBreakMode = .byTruncatingTail
         app.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     private func buildBody() {
-        warning.image = NSImage(
-            systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
-        warning.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-        warning.contentTintColor = .systemOrange
-        warning.setContentHuggingPriority(.required, for: .horizontal)
+        // Outlines rather than `.fill` symbols: an outcome is said in one line
+        // of coloured ink and one hairline glyph — the panel never grows a
+        // coloured block to say it.
+        outcome.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10.5, weight: .medium)
+        outcome.setContentHuggingPriority(.required, for: .horizontal)
 
         status.font = .systemFont(ofSize: 11.5)
-        status.textColor = .secondaryLabelColor
+        status.textColor = OverlayPalette.inkSecondary
         status.lineBreakMode = .byWordWrapping
         status.maximumNumberOfLines = 3
-        status.preferredMaxLayoutWidth = Self.contentWidth - 18
+        status.preferredMaxLayoutWidth = Self.contentWidth - Self.outcomeColumn
 
         draft.isSelectable = true
+        draft.textColor = OverlayPalette.ink
         // A wrapping label with no width yet lays out on one endless line, and
         // the panel then reports a fitting size wider than the screen. Telling
-        // it the width up front is what makes the draft wrap.
-        draft.preferredMaxLayoutWidth = Self.contentWidth - DraftCard.padding * 2
+        // it the width up front is what makes the draft wrap — and the width is
+        // the grid's, since the draft now sits on the panel's own surface.
+        draft.preferredMaxLayoutWidth = Self.contentWidth
 
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 7
 
-        let name = NSStackView(views: [spark, title, app])
+        let name = NSStackView(views: [spark, title, separator, app])
         name.orientation = .horizontal
         name.alignment = .centerY
-        name.spacing = 6
+        name.spacing = 5
+        // A hair more after the glyph than between the words: SF Symbols carry
+        // side bearing that a text field does not, so an equal gap reads tight.
+        name.setCustomSpacing(6, after: spark)
         // The dots sit at the far end of the header, so how the model is doing
         // is always in the same place, whatever the panel is saying below.
         let spacer = NSView()
@@ -544,22 +566,35 @@ final class MinneKeyOverlayView: NSView {
         header.alignment = .centerY
         header.spacing = 8
 
-        let statusRow = NSStackView(views: [warning, status])
+        let statusRow = NSStackView(views: [outcome, status])
         statusRow.orientation = .horizontal
         statusRow.alignment = .firstBaseline
         statusRow.spacing = 5
 
-        column.setViews([header, statusRow, thinkingCard, card, buttons], in: .top)
+        column.setViews([header, rule, statusRow, shimmer, draft, buttons], in: .top)
+        // Air, in three sizes: tight around the rule, a line's worth before the
+        // draft, and a little more before the row of capsules.
+        column.setCustomSpacing(9, after: header)
+        column.setCustomSpacing(9, after: rule)
+        column.setCustomSpacing(11, after: statusRow)
+        column.setCustomSpacing(13, after: shimmer)
+        column.setCustomSpacing(13, after: draft)
         NSLayoutConstraint.activate([
             header.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            card.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            thinkingCard.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            rule.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            shimmer.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            draft.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
             statusRow.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
         ])
     }
 
+    /// What the outcome glyph and its gap take off the status line's width.
+    private static let outcomeColumn: CGFloat = 18
+
     func render(_ target: CaretTarget, state: MinneKeyOverlayState) {
         app.stringValue = target.appName
+        separator.isHidden = target.appName.isEmpty
+        app.isHidden = target.appName.isEmpty
         render(state)
     }
 
@@ -586,6 +621,19 @@ final class MinneKeyOverlayView: NSView {
         }
     }
 
+    /// The glyph before the status line, in the two states that are an outcome:
+    /// the draft went in, or it did not. Everything else is Minne narrating
+    /// itself and needs no mark.
+    private static func outcomeMark(_ state: MinneKeyOverlayState)
+        -> (symbol: String, tint: NSColor)?
+    {
+        switch state {
+        case .inserted: return ("checkmark.circle", OverlayPalette.blue)
+        case .failed: return ("exclamationmark.circle", OverlayPalette.warm)
+        default: return nil
+        }
+    }
+
     /// "Searching your memory…" rather than the tool's name: the user is waiting
     /// on a sentence, not reading a trace.
     private static func toolLabel(_ tool: String) -> String {
@@ -604,20 +652,29 @@ final class MinneKeyOverlayView: NSView {
         if case .failed = state { failed = true } else { failed = false }
 
         status.stringValue = text
-        status.textColor = failed ? .labelColor : .secondaryLabelColor
-        warning.isHidden = !failed
+        // Warm ink, and only ink: what went wrong is said in a colour, never
+        // fenced off in a coloured block.
+        status.textColor = failed ? OverlayPalette.warm : OverlayPalette.inkSecondary
+        let mark = Self.outcomeMark(state)
+        outcome.image =
+            mark.map {
+                NSImage(systemSymbolName: $0.symbol, accessibilityDescription: nil)
+            } ?? nil
+        outcome.contentTintColor = mark?.tint
+        outcome.isHidden = mark == nil
 
         if state.isThinking { dots.start() } else { dots.stop() }
         dots.isHidden = !state.isThinking
-        // The draft's box is there from the first moment, shimmering, and the
-        // draft lands in it — rather than the panel doubling in height when the
-        // model answers.
+        // The draft's lines are there from the first moment, shimmering on the
+        // same grid the prose will use — rather than the panel doubling in
+        // height when the model answers.
         if state.isThinking { shimmer.start() } else { shimmer.stop() }
-        thinkingCard.isHidden = !state.isThinking
+        shimmer.isHidden = !state.isThinking
 
         draft.attributedStringValue =
-            body.map { Self.body(Self.preview($0)) } ?? NSAttributedString()
-        card.isHidden = body == nil
+            body.map { Self.body(Self.preview($0), elided: $0.count > Self.maxPreviewCharacters) }
+            ?? NSAttributedString()
+        draft.isHidden = body == nil
 
         buttons.setViews(actions.map(button(for:)), in: .leading)
         buttons.isHidden = actions.isEmpty
@@ -625,17 +682,39 @@ final class MinneKeyOverlayView: NSView {
 
     /// The draft, set with a little air between its lines — it is the one
     /// paragraph of prose in the panel and the thing being judged.
-    private static func body(_ text: String) -> NSAttributedString {
+    ///
+    /// The elision note is the one thing here that is not the draft, so it is
+    /// set as an aside: smaller, and in the ink the app's own name uses.
+    static func body(_ text: String, elided: Bool) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 2.5
-        return NSAttributedString(
+        paragraph.lineSpacing = 3
+        let body = NSMutableAttributedString(
             string: text,
             attributes: [
                 .font: NSFont.systemFont(ofSize: 12.5),
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: OverlayPalette.ink,
                 .paragraphStyle: paragraph,
             ])
+        // Gated on the panel having elided, never on the text's shape: a draft
+        // is allowed to end in a bracketed line of its own.
+        if elided, let note = text.range(of: elisionSeparator, options: .backwards) {
+            // UTF-16 offsets, not Character ones: an emoji in the draft is two
+            // units and would shift the note's range by one per emoji.
+            let separator = NSRange(note, in: text)
+            let start = separator.upperBound - 1
+            body.addAttributes(
+                [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: OverlayPalette.inkTertiary,
+                ], range: NSRange(location: start, length: body.length - start))
+        }
+        return body
     }
+
+    /// What separates an elided draft from the note saying so — matched when the
+    /// draft is set, which is why it is a constant and not a literal in two
+    /// places.
+    private static let elisionSeparator = "\n\n["
 
     /// The draft as the panel shows it: whole, or elided with what is missing
     /// said out loud rather than silently cut.
@@ -643,7 +722,7 @@ final class MinneKeyOverlayView: NSView {
         guard draft.count > maxPreviewCharacters else { return draft }
         let shown = draft.prefix(maxPreviewCharacters)
         let rest = draft.count - shown.count
-        return "\(shown)…\n\n[\(rest) more characters — Insert takes all of it]"
+        return "\(shown)…\(elisionSeparator)\(rest) more characters — Insert takes all of it]"
     }
 
     private func button(for action: MinneKeyAction) -> NSButton {
@@ -737,7 +816,10 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
 
     init() {
         panel = MinneKeyOverlayPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 372, height: 44),
+            contentRect: NSRect(
+                x: 0, y: 0,
+                width: MinneKeyOverlayView.contentWidth + MinneKeyOverlayView.inset.width * 2,
+                height: 44),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)

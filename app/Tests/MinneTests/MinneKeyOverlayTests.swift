@@ -26,4 +26,28 @@ final class MinneKeyOverlayTests: XCTestCase {
         let draft = String(repeating: "x", count: MinneKeyOverlayView.maxPreviewCharacters)
         XCTAssertEqual(MinneKeyOverlayView.preview(draft), draft)
     }
+
+    /// The elision note is an aside about the draft, not part of it, and is set
+    /// in the quiet ink to say so. `body` finds it by the separator `preview`
+    /// wrote — this is the test that keeps those two in step.
+    func testTheElisionNoteIsSetApartFromTheDraft() {
+        let draft = String(repeating: "word ", count: 400)
+        let body = MinneKeyOverlayView.body(MinneKeyOverlayView.preview(draft), elided: true)
+        let noteColor =
+            body.attribute(
+                .foregroundColor, at: body.length - 1, effectiveRange: nil) as? NSColor
+        let draftColor = body.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        XCTAssertEqual(noteColor, OverlayPalette.inkTertiary)
+        XCTAssertEqual(draftColor, OverlayPalette.ink)
+    }
+
+    /// A draft short enough to be shown whole is one colour throughout — the
+    /// note styling must not fire on a bracketed line the user wrote themselves.
+    func testAnUnelidedDraftIsAllOneInk() {
+        let draft = "Done.\n\n[see notes]"
+        let body = MinneKeyOverlayView.body(MinneKeyOverlayView.preview(draft), elided: false)
+        var range = NSRange()
+        _ = body.attribute(.foregroundColor, at: 0, effectiveRange: &range)
+        XCTAssertEqual(range.length, body.length)
+    }
 }
