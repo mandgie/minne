@@ -10,21 +10,24 @@ import { writeFileSync } from "node:fs";
 
 const W = 1440;
 const H = 900;
-const EYE = [1.6, 0.3, 12];
-const TARGET = [2.6, 0.1, -2];
-const FOV = (40 * Math.PI) / 180;
+const EYE = [2.0, 0.2, 12.6];
+const TARGET = [3.0, 0.1, -2];
+const FOV = (42 * Math.PI) / 180;
 
+// Mirrors CLUSTERS in src/hero.js — keep the two in step.
 const CLUSTERS = [
-  { x: 2.4, y: 3.4, z: -1.4, r: 1.7, n: 62 },
-  { x: 5.6, y: 4.6, z: -3.0, r: 1.5, n: 52 },
-  { x: 8.2, y: 2.4, z: -1.6, r: 1.8, n: 70 },
-  { x: 5.5, y: -0.6, z: -0.6, r: 1.7, n: 78 },
-  { x: 2.7, y: -2.8, z: -2.3, r: 1.9, n: 60 },
-  { x: 7.4, y: -3.9, z: -3.1, r: 1.7, n: 58 },
-  { x: 0.1, y: -4.2, z: -1.0, r: 1.4, n: 34 },
-  { x: 9.8, y: -0.6, z: -4.6, r: 2.0, n: 54 },
-  { x: 10.4, y: 3.8, z: -2.6, r: 1.6, n: 44 },
-  { x: 12.6, y: 1.2, z: -3.4, r: 1.8, n: 46 },
+  { x: 5.4, y: -0.4, z: 0.4, r: 1.8, n: 96 },
+  { x: 8.4, y: 2.3, z: -1.4, r: 1.8, n: 84 },
+  { x: 2.6, y: 3.3, z: -1.0, r: 1.7, n: 78 },
+  { x: 7.6, y: -3.6, z: -2.2, r: 1.7, n: 76 },
+  { x: 2.2, y: -3.1, z: -1.8, r: 1.8, n: 74 },
+  { x: 11.4, y: -0.4, z: -3.4, r: 1.9, n: 72 },
+  { x: 5.6, y: 4.6, z: -3.2, r: 1.5, n: 58 },
+  { x: -0.8, y: 0.6, z: -2.6, r: 1.7, n: 62 },
+  { x: 10.6, y: 4.2, z: -4.4, r: 1.6, n: 56 },
+  { x: 13.2, y: 1.6, z: -2.2, r: 1.7, n: 54 },
+  { x: -3.4, y: -3.4, z: -3.0, r: 1.6, n: 48 },
+  { x: -2.6, y: 4.0, z: -4.2, r: 1.5, n: 44 },
 ];
 
 function rng(seed) {
@@ -47,8 +50,8 @@ CLUSTERS.forEach((c, ci) => {
       y: c.y + gauss() * c.r * 0.8,
       z: c.z + gauss() * c.r * 0.7,
       hub,
-      size: hub ? 4.0 : 0.8 + rand() * 1.2,
-      raw: !hub && rand() < 0.22,
+      size: hub ? 4.4 : 0.9 + rand() * 1.35,
+      raw: !hub && rand() < 0.24,
     });
   }
 });
@@ -75,7 +78,7 @@ for (let i = 0; i < hubs.length; i++) {
     const a = nodes[hubs[i]];
     const b = nodes[hubs[j]];
     const span = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-    if (span < 4.6 && Math.abs(a.z - b.z) < 2.0 && rand() < 0.8) edges.add(key(hubs[i], hubs[j]));
+    if (span < 4.0 && Math.abs(a.z - b.z) < 1.8 && rand() < 0.55) edges.add(key(hubs[i], hubs[j]));
   }
 }
 
@@ -125,7 +128,7 @@ for (const k of edges) {
 const lines = linePaths
   .map((d, i) => {
     if (!d.length) return "";
-    const alpha = (0.13 * (0.55 + (0.45 * i) / (BUCKETS - 1))).toFixed(3);
+    const alpha = (0.19 * (0.55 + (0.45 * i) / (BUCKETS - 1))).toFixed(3);
     return `<path d="${d.join("")}" stroke="#6b95f2" stroke-opacity="${alpha}" fill="none"/>`;
   })
   .filter(Boolean)
@@ -143,7 +146,7 @@ nodes.forEach((n, i) => {
 const dots = [...dotGroups]
   .map(([id, list]) => {
     const [kind, f] = id.split("-");
-    const glow = 0.95 * (0.55 + (0.45 * Number(f)) / (BUCKETS - 1));
+    const glow = 1.05 * (0.55 + (0.45 * Number(f)) / (BUCKETS - 1));
     const fill = kind === "raw" ? "#d9a066" : "#8fb4ff";
     return `<g fill="${fill}" fill-opacity="${Math.min(1, glow).toFixed(2)}">${list.join(
       ""

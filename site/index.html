@@ -212,31 +212,46 @@ came from.</code></pre>
     </header>
 
     <div class="keyshow" data-reveal>
-      <figure class="shot shot--key">
-        <img src="assets/key-result.png" width="750" height="357" loading="lazy" decoding="async"
-             alt="Minne's overlay in a Chrome text field: the header reads Minne — Google Chrome, then 'Draft ready', a drafted reply in Norwegian, and the buttons Insert, Copy and Dismiss.">
+      <figure class="ui ui--key" data-ui="key">
+        <div class="key" aria-hidden="true">
+          <div class="key__head">
+            <svg class="spark" viewBox="0 0 24 24" focusable="false"><path d="M12 1.5c.6 4.6 1.8 6.9 4.3 8.2 1.4.7 3.2 1.2 6.2 1.6v1.4c-3 .4-4.8.9-6.2 1.6-2.5 1.3-3.7 3.6-4.3 8.2h-1.4c-.6-4.6-1.8-6.9-4.3-8.2-1.4-.7-3.2-1.2-6.2-1.6v-1.4c3-.4 4.8-.9 6.2-1.6C8.8 8.4 10 6.1 10.6 1.5Z"/></svg>
+            <span class="key__name">Minne</span>
+            <span class="key__ctx">Google Chrome</span>
+            <span class="key__dots"><i></i><i></i><i></i></span>
+          </div>
+          <p class="key__status">Drafting a reply…</p>
+          <div class="key__draft">
+            <div class="key__skeleton"><span></span><span></span><span></span></div>
+            <p class="key__text">Hei Ingrid — torsdag passer fint for meg. Skal vi si 14:00 på kontoret? Da rekker vi å gå gjennom både budsjettet og Oslo-flyttingen før du reiser.</p>
+          </div>
+          <div class="key__buttons">
+            <span class="key__btn key__btn--primary">Insert <b>↩</b></span>
+            <span class="key__btn">Copy</span>
+            <span class="key__btn">Dismiss <b>esc</b></span>
+          </div>
+        </div>
+        <figcaption>
+          Right-Option in a Chrome reply box. Minne drafts in Norwegian because that is how
+          you write to Ingrid, and waits: Insert puts it in the field, ⌘Z takes it back out.
+        </figcaption>
       </figure>
-      <figure class="shot shot--keysmall">
-        <img src="assets/key-working.png" width="755" height="342" loading="lazy" decoding="async"
-             alt="The same overlay while it works: 'Drafting a reply…' above three placeholder lines and a Dismiss button.">
-        <figcaption>While it thinks, it shows only that it is thinking.</figcaption>
-      </figure>
-    </div>
 
-    <ul class="modes" data-reveal>
-      <li>
-        <p class="modes__when">empty field</p>
-        <p>It infers the reply from the conversation already on your screen and what your memory knows about the people in it.</p>
-      </li>
-      <li>
-        <p class="modes__when">text selected</p>
-        <p>It rewrites your selection — same point, your phrasing, tightened.</p>
-      </li>
-      <li>
-        <p class="modes__when">an instruction typed in</p>
-        <p>Write <em>“say yes but push to Thursday”</em>, tap, and the instruction is replaced by the reply.</p>
-      </li>
-    </ul>
+      <ul class="modes">
+        <li>
+          <p class="modes__when">empty field</p>
+          <p>It infers the reply from the conversation already on your screen and what your memory knows about the people in it.</p>
+        </li>
+        <li>
+          <p class="modes__when">text selected</p>
+          <p>It rewrites your selection — same point, your phrasing, tightened.</p>
+        </li>
+        <li>
+          <p class="modes__when">an instruction typed in</p>
+          <p>Write <em>“say yes but push to Thursday”</em>, tap, and the instruction is replaced by the reply.</p>
+        </li>
+      </ul>
+    </div>
 
     <p class="note" data-reveal>
       Right-Option is a bare modifier, so Minne watches for a <em>tap</em> and never a hold —
@@ -263,14 +278,47 @@ came from.</code></pre>
       </p>
     </div>
     <div class="ask__shots" data-reveal>
-      <figure class="shot shot--window shot--chat">
-        <img src="assets/chat-window.png" width="960" height="1140" loading="lazy" decoding="async"
-             alt="Minne's chat window, empty: a heading 'Ask your memory', the line 'Minne answers from the wiki it keeps of what you have been working on', three suggested questions, and a composer that reads 'Ask your memory…'.">
-      </figure>
-      <figure class="shot shot--detail">
-        <img src="assets/chat-answer.png" width="960" height="320" loading="lazy" decoding="async"
-             alt="An answer in the chat window: a line reading 'Searched memory for yesterday', then a short markdown summary of two projects with a link to a wiki page.">
-        <figcaption>An answer, with the search it ran to get there.</figcaption>
+      <figure class="ui ui--chat" data-ui="chat">
+        <div class="chat" aria-hidden="true">
+          <div class="chat__bar">
+            <span class="chat__lights"><i></i><i></i><i></i></span>
+            <span class="chat__title">Minne</span>
+          </div>
+          <div class="chat__head">
+            <span class="chat__subject">New chat</span>
+            <svg class="chat__new" viewBox="0 0 24 24" focusable="false"><path d="M4 20h4.5L20 8.5 15.5 4 4 15.5V20Zm2-3.7L15.5 6.8l1.7 1.7L7.7 18H6v-1.7Z"/></svg>
+          </div>
+          <div class="chat__log">
+            <div class="chat__empty">
+              <p class="chat__emptyTitle">Ask your memory</p>
+              <p class="chat__emptyBody">Minne answers from the wiki it keeps of what you have been working on.</p>
+              <ul class="chat__hints">
+                <li>What did I work on yesterday?</li>
+                <li>Who is Ada and what are we building?</li>
+                <li>Summarise the Oslo trip planning so far</li>
+              </ul>
+            </div>
+            <p class="chat__bubble">What did I work on yesterday?</p>
+            <p class="chat__tool"><span class="chat__spin"></span><span class="chat__toolText">Searching your memory…</span></p>
+            <div class="chat__answer">
+              <p class="chat__h">Yesterday</p>
+              <p>You spent the day on two things:</p>
+              <ul>
+                <li><b>Oslo trip</b> — booked the Thursday flights and started a packing list</li>
+                <li><b>Billing migration</b> — walked Ada through the retry logic</li>
+              </ul>
+              <p>Details live on <span class="chat__wl">[[Billing migration]]</span>.</p>
+            </div>
+          </div>
+          <div class="chat__composer">
+            <span class="chat__field">Ask your memory…</span>
+            <span class="chat__send">↑</span>
+          </div>
+        </div>
+        <figcaption>
+          The answer is assembled from wiki pages, and the line above it is the search
+          Minne ran to find them.
+        </figcaption>
       </figure>
     </div>
   </div>
@@ -311,13 +359,36 @@ came from.</code></pre>
           <p>Delete All Memory removes the wiki, every raw capture, the search index and your stored sign-in. Typed confirmation, no undo, no copy left behind.</p>
         </li>
       </ul>
-      <figure class="shot shot--window shot--settings" data-reveal>
-        <picture>
-          <source media="(max-width: 899px)" srcset="assets/privacy-blacklist-narrow.png" width="578" height="500">
-          <img src="assets/privacy-blacklist.png" width="1150" height="500" loading="lazy" decoding="async"
-               alt="Minne's Privacy settings, the 'Never capture these' panel: a list of blocked apps beginning with 1Password, Keychain Access and Bitwarden, and a list of blocked domains beginning with 1password.com, accounts.google.com and appleid.apple.com.">
-        </picture>
-        <figcaption>Settings → Privacy. The blacklist ships filled in — password managers, Apple ID, your bank.</figcaption>
+      <figure class="ui ui--settings" data-reveal>
+        <div class="pane" aria-hidden="true">
+          <p class="pane__title">Never capture these</p>
+          <p class="pane__note">Windows of these apps, and browser tabs on these domains, produce no snapshot at all.</p>
+          <div class="pane__cols">
+            <div>
+              <p class="pane__label">Apps</p>
+              <ul class="pane__list">
+                <li>com.1password.1password</li>
+                <li>com.agilebits.onepassword7</li>
+                <li>com.apple.keychainaccess</li>
+                <li>com.apple.passwords</li>
+                <li>com.bitwarden.desktop</li>
+              </ul>
+              <p class="pane__hint">Bundle identifier</p>
+            </div>
+            <div>
+              <p class="pane__label">Domains</p>
+              <ul class="pane__list">
+                <li>1password.com</li>
+                <li>accounts.google.com</li>
+                <li>appleid.apple.com</li>
+                <li>bitwarden.com</li>
+                <li>your-bank.example</li>
+              </ul>
+              <p class="pane__hint">Blocks subdomains too</p>
+            </div>
+          </div>
+        </div>
+        <figcaption>Settings → Privacy. The list ships filled in; anything you add joins it.</figcaption>
       </figure>
     </div>
   </div>
@@ -341,12 +412,19 @@ came from.</code></pre>
         the always-safe paths, and Minne treats all three the same.
       </p>
     </div>
-    <figure class="shot shot--window shot--fade" data-reveal>
-      <picture>
-        <source media="(max-width: 899px)" srcset="assets/settings-account-narrow.png" width="800" height="520">
-        <img src="assets/settings-account.png" width="1220" height="700" loading="lazy" decoding="async"
-             alt="Minne's Account settings, headed 'Which AI Minne thinks with': Claude (Pro/Max) selected, then ChatGPT (Plus/Pro), Local (Ollama) and API key.">
-      </picture>
+    <figure class="ui ui--settings" data-reveal>
+      <div class="pane" aria-hidden="true">
+        <p class="pane__title">Which AI Minne thinks with</p>
+        <p class="pane__note">Chat and the memory sync pass both use this account and model.</p>
+        <ul class="pane__choices">
+          <li class="is-on"><span class="pane__radio"></span><b>Claude (Pro/Max)</b><span>Sign in with your Claude subscription. Nothing extra to pay for.</span></li>
+          <li><span class="pane__radio"></span><b>ChatGPT (Plus/Pro)</b><span>Sign in with your ChatGPT subscription.</span></li>
+          <li><span class="pane__radio"></span><b>Local (Ollama)</b><span>Talk to a model on this Mac. Nothing leaves the machine.</span></li>
+          <li><span class="pane__radio"></span><b>API key</b><span>Pay per token with a key from Anthropic or OpenAI.</span></li>
+        </ul>
+        <p class="pane__row"><span class="pane__rowLabel">Model</span><span class="pane__select">Claude Sonnet 5</span></p>
+      </div>
+      <figcaption>Settings → Account.</figcaption>
     </figure>
   </div>
 </section>
@@ -387,6 +465,7 @@ came from.</code></pre>
 </footer>
 
 <script src="assets/site.js" defer></script>
+<script src="assets/ui.js" defer></script>
 <script type="module" src="assets/hero.js"></script>
 </body>
 </html>

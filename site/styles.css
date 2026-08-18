@@ -391,7 +391,8 @@ code.path {
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(78% 62% at 16% 48%, rgba(6, 7, 10, 0.95) 0%, rgba(6, 7, 10, 0.6) 46%, transparent 78%),
+    radial-gradient(46% 42% at 24% 46%, rgba(6, 7, 10, 0.97) 0%, rgba(6, 7, 10, 0.86) 55%, transparent 100%),
+    radial-gradient(80% 66% at 16% 48%, rgba(6, 7, 10, 0.86) 0%, rgba(6, 7, 10, 0.5) 50%, transparent 80%),
     linear-gradient(to bottom, rgba(6, 7, 10, 0.85) 0%, transparent 22%, transparent 62%, var(--void) 97%);
   pointer-events: none;
 }
@@ -608,51 +609,13 @@ code.path {
   pointer-events: none;
 }
 
-.shot {
-  margin: 0;
-}
-.shot img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.shot figcaption {
-  font-family: var(--mono);
-  font-size: 0.74rem;
-  color: var(--mute);
-  margin-top: 0.85rem;
-  line-height: 1.6;
-}
-
-.shot--key img {
-  filter: drop-shadow(0 34px 46px rgba(0, 0, 0, 0.62));
-}
-/* The dark panel sits on a dark page: a hairline of light gives it an edge. */
-.shot--keysmall img {
-  filter: drop-shadow(0 22px 34px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 1px rgba(255, 255, 255, 0.4));
-}
-
-.shot--window img {
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow:
-    0 50px 90px -44px rgba(0, 0, 0, 0.95),
-    0 8px 24px -12px rgba(0, 0, 0, 0.6);
-}
-
-.shot--fade img {
-  -webkit-mask-image: linear-gradient(to bottom, #000 76%, transparent 99%);
-  mask-image: linear-gradient(to bottom, #000 76%, transparent 99%);
-}
-
 .modes {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 1.8rem 0 0;
   display: grid;
-  gap: 1.6rem;
+  gap: 1.5rem;
   border-top: 1px solid var(--line-soft);
-  padding-top: 2rem;
 }
 .modes li p {
   margin: 0;
@@ -678,6 +641,605 @@ code.path {
   max-width: 42rem;
 }
 
+/* ── app replicas ─────────────────────────────────────────────────
+   Minne's own surfaces, rebuilt in the DOM rather than screenshotted:
+   they stay true as the app moves, and they can act out what they do.
+   Everything inside a replica is aria-hidden — the figcaption is what a
+   screen reader gets — and every animation is driven by assets/ui.js,
+   which runs one only while it is on screen.                          */
+
+.ui {
+  --ui-face: #eaeaec;
+  --ui-sheet: #ffffff;
+  --ui-ink: #16171a;
+  --ui-dim: #7c7d85;
+  --ui-line: rgba(0, 0, 0, 0.12);
+  --ui-fill: rgba(0, 0, 0, 0.07);
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+}
+
+.ui figcaption {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1.65;
+  color: var(--mute);
+  margin-top: 1rem;
+  max-width: 30rem;
+}
+
+/* the minne key overlay */
+
+.key {
+  width: 100%;
+  max-width: 25.5rem;
+  background: rgba(236, 236, 238, 0.97);
+  border-radius: 16px;
+  padding: 15px 15px 14px;
+  color: var(--ui-ink);
+  box-shadow:
+    0 40px 70px -28px rgba(0, 0, 0, 0.85),
+    0 2px 10px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+
+.key__head {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-size: 15px;
+}
+.key__head .spark {
+  width: 15px;
+  height: 15px;
+}
+.key__name {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.key__ctx {
+  color: var(--ui-dim);
+}
+.key__dots {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.3s var(--ease);
+}
+.key__dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--spark);
+  animation: blink 1.1s var(--ease) infinite;
+}
+.key__dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.key__dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+.ui--key[data-state="thinking"] .key__dots {
+  opacity: 1;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+
+.key__status {
+  margin: 0.65rem 0 0.5rem;
+  font-size: 13.5px;
+  color: #4c4d55;
+}
+
+.key__draft {
+  position: relative;
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 11px;
+  padding: 12px 13px;
+  min-height: 88px;
+}
+.key__skeleton {
+  display: grid;
+  gap: 9px;
+  padding-top: 2px;
+  transition: opacity 0.25s var(--ease);
+}
+.key__skeleton span {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(
+    100deg,
+    rgba(0, 0, 0, 0.07) 20%,
+    rgba(0, 0, 0, 0.15) 42%,
+    rgba(0, 0, 0, 0.07) 66%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+.key__skeleton span:nth-child(2) {
+  width: 88%;
+  animation-delay: 0.12s;
+}
+.key__skeleton span:nth-child(3) {
+  width: 54%;
+  animation-delay: 0.24s;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+.key__text {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--ui-ink);
+}
+.key__text::after {
+  content: "";
+  display: inline-block;
+  width: 1.5px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.16em;
+  background: var(--spark);
+  opacity: 0;
+}
+.ui--key[data-state="writing"] .key__text::after {
+  opacity: 1;
+  animation: caret 1s steps(1) infinite;
+}
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.ui--key[data-state="thinking"] .key__text {
+  display: none;
+}
+.ui--key:not([data-state="thinking"]) .key__skeleton {
+  display: none;
+}
+
+.key__buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.key__btn {
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--ui-fill);
+  color: var(--ui-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition:
+    opacity 0.3s var(--ease),
+    transform 0.3s var(--ease);
+}
+.key__btn b {
+  font-weight: 500;
+  opacity: 0.45;
+}
+.key__btn--primary {
+  background: var(--spark);
+  color: #fff;
+}
+.key__btn--primary b {
+  opacity: 0.72;
+}
+/* Until the draft is whole, the only thing you can do is walk away — so the
+   other two buttons are not there yet, and Dismiss keeps the leading edge. */
+.key__btn:not(:last-child) {
+  transition:
+    opacity 0.3s var(--ease),
+    max-width 0.35s var(--ease),
+    padding 0.35s var(--ease),
+    margin 0.35s var(--ease);
+  max-width: 9rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ui--key[data-state="thinking"] .key__btn:not(:last-child),
+.ui--key[data-state="writing"] .key__btn:not(:last-child),
+.ui--key[data-state="inserted"] .key__btn:not(:last-child) {
+  opacity: 0;
+  max-width: 0;
+  padding-inline: 0;
+  margin-right: -8px;
+}
+.ui--key[data-state="inserted"] .key__draft {
+  opacity: 0.55;
+}
+
+/* the chat panel */
+
+.chat {
+  width: 100%;
+  max-width: 27rem;
+  background: var(--ui-sheet);
+  border-radius: 13px;
+  overflow: hidden;
+  color: var(--ui-ink);
+  box-shadow:
+    0 50px 90px -34px rgba(0, 0, 0, 0.92),
+    0 2px 10px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.chat__bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 38px;
+  background: linear-gradient(#f7f7f8, #ececee);
+  border-bottom: 1px solid var(--ui-line);
+}
+.chat__lights {
+  display: flex;
+  gap: 6px;
+}
+.chat__lights i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #febc2e;
+}
+.chat__lights i:first-child {
+  background: #ff5f57;
+}
+.chat__lights i:last-child {
+  background: #28c840;
+}
+.chat__title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4c4d55;
+}
+
+.chat__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 11px 15px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.chat__new {
+  width: 17px;
+  height: 17px;
+  fill: #9a9aa2;
+  flex: none;
+}
+
+.chat__log {
+  padding: 15px;
+  min-height: 19rem;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chat__empty {
+  padding-top: 0.4rem;
+}
+.chat__emptyTitle {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.chat__emptyBody {
+  margin: 0.4rem 0 0.9rem;
+  color: #4c4d55;
+}
+.chat__hints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.42rem;
+  color: #a2a2aa;
+}
+.chat__hints li::before {
+  content: "✦";
+  color: #c3c3cb;
+  margin-right: 0.5rem;
+}
+
+.chat__bubble {
+  justify-self: end;
+  max-width: 84%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 16px;
+  background: #edeff2;
+}
+.chat__tool {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0.2rem 0 0;
+  font-size: 13px;
+  color: #8b8c94;
+}
+.chat__spin {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.6px solid rgba(0, 0, 0, 0.16);
+  border-top-color: var(--spark);
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+.ui--chat[data-state="answer"] .chat__spin,
+.ui--chat[data-state="hold"] .chat__spin {
+  border: 0;
+  animation: none;
+  background: none;
+  color: #8b8c94;
+}
+.ui--chat[data-state="answer"] .chat__spin::before,
+.ui--chat[data-state="hold"] .chat__spin::before {
+  content: "✓";
+  font-size: 12px;
+  line-height: 1;
+}
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.chat__answer {
+  margin: 0;
+}
+.chat__answer p {
+  margin: 0 0 0.35rem;
+}
+.chat__h {
+  font-size: 15.5px;
+  font-weight: 700;
+  margin-bottom: 0.3rem !important;
+}
+.chat__answer ul {
+  list-style: none;
+  margin: 0 0 0.45rem;
+  padding: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+.chat__answer li {
+  padding-left: 0.85rem;
+  position: relative;
+}
+.chat__answer li::before {
+  content: "·";
+  position: absolute;
+  left: 0.15rem;
+  color: #8b8c94;
+}
+.chat__wl {
+  color: #3f6fd0;
+}
+
+.chat__composer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+.chat__field {
+  flex: 1;
+  background: #f1f1f4;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 14px;
+  color: #a3a3ab;
+}
+.chat__send {
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #c8c9d0;
+  color: #fff;
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+/* Only the part of the transcript the story has reached is present. */
+.ui--chat .chat__bubble,
+.ui--chat .chat__tool,
+.ui--chat .chat__answer {
+  display: none;
+}
+.ui--chat:not([data-state="empty"]) .chat__empty {
+  display: none;
+}
+.ui--chat[data-state="asked"] .chat__bubble,
+.ui--chat[data-state="searching"] .chat__bubble,
+.ui--chat[data-state="answer"] .chat__bubble,
+.ui--chat[data-state="hold"] .chat__bubble {
+  display: block;
+  animation: riseIn 0.4s var(--ease) both;
+}
+.ui--chat[data-state="searching"] .chat__tool,
+.ui--chat[data-state="answer"] .chat__tool,
+.ui--chat[data-state="hold"] .chat__tool {
+  display: flex;
+  animation: riseIn 0.4s var(--ease) both;
+}
+.ui--chat[data-state="answer"] .chat__answer,
+.ui--chat[data-state="hold"] .chat__answer {
+  display: block;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* settings panes */
+
+.pane {
+  background: #ececee;
+  border-radius: 11px;
+  padding: 20px 22px 22px;
+  color: var(--ui-ink);
+  box-shadow:
+    0 40px 70px -32px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+.pane__title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.pane__note {
+  margin: 0.45rem 0 1.1rem;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #5c5d66;
+}
+.pane__cols {
+  display: grid;
+  gap: 1.3rem;
+}
+.pane__label {
+  margin: 0 0 0.45rem;
+  font-size: 13px;
+  font-weight: 700;
+}
+.pane__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: #fbfbfc;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.pane__list li {
+  padding: 5px 9px;
+}
+.pane__list li:nth-child(even) {
+  background: rgba(0, 0, 0, 0.035);
+}
+.pane__hint {
+  margin: 0.5rem 0 0;
+  font-size: 12px;
+  color: #7c7d85;
+}
+
+.pane__choices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+.pane__choices li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.6rem;
+  align-items: center;
+  font-size: 14.5px;
+}
+.pane__choices b {
+  font-weight: 600;
+}
+.pane__choices span:last-child {
+  grid-column: 2;
+  font-size: 13px;
+  color: #5c5d66;
+}
+.pane__radio {
+  grid-row: span 2;
+  align-self: start;
+  margin-top: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+.pane__choices .is-on .pane__radio {
+  background: radial-gradient(circle, #fff 0 26%, var(--spark) 30%);
+  box-shadow: none;
+}
+.pane__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1.3rem 0 0;
+  font-size: 14px;
+}
+.pane__rowLabel {
+  font-weight: 600;
+}
+.pane__select {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  background: #fbfbfc;
+  padding: 4px 26px 4px 9px;
+  position: relative;
+}
+.pane__select::after {
+  content: "⌄";
+  position: absolute;
+  right: 8px;
+  top: 1px;
+  color: #6f7079;
+}
+
+@media (min-width: 520px) {
+  .pane__cols {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 /* ── ask your memory ─────────────────────────────────────────────── */
 
 .ask {
@@ -694,11 +1256,6 @@ code.path {
 }
 .ask__shots {
   position: relative;
-}
-.shot--detail img {
-  border: 10px solid #fff;
-  border-radius: 12px;
-  box-shadow: 0 40px 70px -34px rgba(0, 0, 0, 0.95);
 }
 
 /* ── privacy ─────────────────────────────────────────────────────── */
@@ -741,9 +1298,6 @@ code.path {
   line-height: 1.62;
 }
 
-.shot--settings figcaption {
-  text-align: left;
-}
 
 /* ── your model ──────────────────────────────────────────────────── */
 
@@ -884,7 +1438,7 @@ code.path {
 
 /* ── layout at width ─────────────────────────────────────────────── */
 
-@media (min-width: 760px) {
+@media (min-width: 760px) and (max-width: 899px) {
   .modes {
     grid-template-columns: repeat(3, 1fr);
     gap: 2.2rem;
@@ -941,92 +1495,54 @@ code.path {
 
   .ask {
     grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr);
-    align-items: start;
+    align-items: center;
   }
-  .ask__text {
-    padding-top: 1rem;
-  }
-  .ask__shots {
-    padding-bottom: 2rem;
-  }
-  .shot--chat {
-    width: min(66%, 21rem);
-    margin-left: auto;
-  }
-  .shot--detail {
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    width: min(86%, 28rem);
+  .ui--chat {
+    justify-self: end;
   }
 
   .privacy {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
   }
-  .shot--settings {
+  .privacy .ui--settings {
     position: sticky;
     top: 96px;
+  }
+
+  /* The panel acts on the left; what it does with a field is read on the right. */
+  .keyshow {
+    grid-template-columns: minmax(0, 25.5rem) minmax(0, 1fr);
+    gap: clamp(2.5rem, 6vw, 5rem);
+    align-items: center;
+  }
+  .modes {
+    border-top: 0;
+    padding-top: 0;
+    padding-left: 2rem;
+    border-left: 1px solid var(--line-soft);
   }
 
   .model {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  /* The two states of one panel, staged as one object: the finished draft in
-     front, the moment before it behind and to the right. */
-  .keyshow {
-    grid-template-columns: minmax(0, 1fr);
-    min-height: 25rem;
-  }
-  .shot--key {
-    position: relative;
-    z-index: 2;
-    width: min(64%, 35rem);
-    margin-top: 4.5rem;
-  }
-  .shot--keysmall {
-    position: absolute;
-    z-index: 1;
-    right: 0;
-    top: 0;
-    width: min(48%, 27rem);
-  }
-  .shot--keysmall figcaption {
-    text-align: right;
-  }
 }
 
 @media (max-width: 899px) {
   .ask__shots {
     display: grid;
     gap: 1.6rem;
-    justify-items: center;
   }
-  .shot--window img {
-    max-width: 420px;
-  }
-  .shot--chat img {
-    max-width: 320px;
-  }
-  .shot--settings img,
-  .shot--fade img {
+  .key,
+  .chat {
     max-width: 100%;
-  }
-  /* The narrow crops end at their last line — no fade to eat it. */
-  .shot--fade img {
-    -webkit-mask-image: none;
-    mask-image: none;
-  }
-  .shot--detail figcaption,
-  .shot--chat figcaption {
-    text-align: center;
   }
 }
 
 @media (max-width: 760px) {
-  /* Text first: the field is atmosphere behind a narrow column. */
+  /* Text first, but the graph still has to be there. */
   .hero__field {
-    opacity: 0.6;
+    opacity: 0.72;
   }
 }
 

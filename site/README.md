@@ -27,9 +27,16 @@ open `/src/og.html` at that viewport size and capture it.
 | --- | --- |
 | `index.html`, `styles.css` | The page. Hand-written, no framework. |
 | `assets/site.js` | Sticky-nav state and the scroll reveals. Not built. |
+| `assets/ui.js` | Drives the app replicas: the Minne key drafting a reply, the chat answering. |
 | `assets/hero.js` | Bundled three.js scene, built from `src/hero.js`. |
-| `assets/*.png` | Real screenshots of Minne, cropped and quantised. |
 | `assets/fonts/` | Familjen Grotesk, Source Serif 4, IBM Plex Mono — all OFL, licences alongside. |
+
+Minne's own surfaces — the key overlay, the chat window, the two settings
+panes — are **DOM replicas**, not screenshots: markup in `index.html`, styling
+under "app replicas" in `styles.css`, timelines in `assets/ui.js`. They mimic
+the app rather than clone it, so keep them simple; when the app's look moves,
+move these by hand. Each one animates only while it is on screen, and holds a
+finished state under `prefers-reduced-motion`.
 
 The hero degrades in two steps: `prefers-reduced-motion` renders a single
 still frame, and a machine without WebGL gets `assets/hero-static.svg`, which
