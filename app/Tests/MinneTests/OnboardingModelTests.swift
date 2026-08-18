@@ -139,4 +139,144 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertTrue(CapturePermissionState.granted.isGranted)
         XCTAssertFalse(CapturePermissionState.missing.isGranted)
     }
+
+    // MARK: - Stale-grant escalation (first-run hardening)
+
+    private let t0 = Date(timeIntervalSinceReferenceDate: 1_000_000)
+
+    private func stuckState() -> OnboardingState {
+        var state = OnboardingState(permission: .missing, step: .requestPermission)
+        state.sentToSettings(now: t0)
+        return state
+    }
+
+    func testNoEscalationBeforeSystemSettingsWasOpened() {
+        var state = OnboardingState(permission: .missing, step: .requestPermission)
+        XCTAssertFalse(state.tick(now: t0.addingTimeInterval(3600)))
+        XCTAssertEqual(state.repair, .idle)
+    }
+
+    func testPatienceClockEscalatesAStuckGrant() {
+        var state = stuckState()
+        XCTAssertEqual(state.repair, .waiting(since: t0))
+        XCTAssertFalse(state.tick(now: t0.addingTimeInterval(5)), "5s is just slow")
+        XCTAssertTrue(state.tick(now: t0.addingTimeInterval(OnboardingState.repairPatience)))
+        XCTAssertEqual(state.repair, .escalated)
+        XCTAssertFalse(
+            state.tick(now: t0.addingTimeInterval(60)), "already escalated — no re-render")
+    }
+
+    func testReturningFromSettingsWithoutTheGrantEscalatesEarly() {
+        var state = stuckState()
+        XCTAssertFalse(
+            state.returnedFromSettings(now: t0.addingTimeInterval(1)),
+            "an immediate bounce back is not a failed attempt")
+        XCTAssertTrue(state.returnedFromSettings(now: t0.addingTimeInterval(6)))
+        XCTAssertEqual(state.repair, .escalated)
+    }
+
+    func testTheGrantResolvesTheEscalation() {
+        var state = stuckState()
+        state.tick(now: t0.addingTimeInterval(20))
+        XCTAssertEqual(state.repair, .escalated)
+        XCTAssertTrue(state.permissionObserved(.granted))
+        XCTAssertEqual(state.step, .granted)
+        XCTAssertEqual(state.repair, .idle)
+    }
+
+    func testRepairRoundTripReturnsToWaitingAndCanEscalateAgain() {
+        var state = stuckState()
+        state.tick(now: t0.addingTimeInterval(20))
+        state.repairStarted()
+        XCTAssertEqual(state.repair, .repairing)
+        XCTAssertFalse(state.tick(now: t0.addingTimeInterval(120)), "no clock while repairing")
+        let t1 = t0.addingTimeInterval(30)
+        state.repairFinished(now: t1)
+        XCTAssertEqual(state.repair, .waiting(since: t1))
+        // Still stuck after the repair: the escalation comes back on its own.
+        XCTAssertTrue(state.tick(now: t1.addingTimeInterval(OnboardingState.repairPatience)))
+        XCTAssertEqual(state.repair, .escalated)
+    }
+
+    func testReopeningSettingsWhileEscalatedKeepsTheRepairOffer() {
+        var state = stuckState()
+        state.tick(now: t0.addingTimeInterval(20))
+        state.sentToSettings(now: t0.addingTimeInterval(25))
+        XCTAssertEqual(
+            state.repair, .escalated,
+            "pressing the grant button again is not evidence the stale entry healed")
+    }
+
+    func testGrantDuringRepairResolves() {
+        var state = stuckState()
+        state.tick(now: t0.addingTimeInterval(20))
+        state.repairStarted()
+        XCTAssertTrue(state.permissionObserved(.granted))
+        XCTAssertEqual(state.repair, .idle)
+        state.repairFinished(now: t0.addingTimeInterval(40))
+        XCTAssertEqual(state.repair, .idle, "a finished repair must not revive the watchdog")
+    }
+
+    func testEscalationIsConfinedToThePermissionStep() {
+        var state = OnboardingState(permission: .missing, step: .welcome)
+        state.sentToSettings(now: t0)
+        XCTAssertEqual(state.repair, .idle)
+        XCTAssertFalse(state.tick(now: t0.addingTimeInterval(3600)))
+        XCTAssertFalse(state.returnedFromSettings(now: t0.addingTimeInterval(3600)))
+    }
+
+    func testDebugForceEscalationOnlyOnThePermissionStep() {
+        var state = OnboardingState(permission: .missing, step: .requestPermission)
+        state.debugForceEscalation()
+        XCTAssertEqual(state.repair, .escalated)
+        var welcome = OnboardingState(permission: .missing, step: .welcome)
+        welcome.debugForceEscalation()
+        XCTAssertEqual(welcome.repair, .idle)
+    }
+
+    // MARK: - What the escalation and the dialog guidance render
+
+    func testEscalatedPageOffersTheRepairInUserWords() throws {
+        var state = stuckState()
+        state.tick(now: t0.addingTimeInterval(20))
+        let repair = try XCTUnwrap(state.page?.repair)
+        XCTAssertTrue(repair.body.contains("look on"), "names the stale-switch symptom")
+        XCTAssertTrue(repair.body.contains("old copy"), "blames the old copy, not the user")
+        XCTAssertEqual(repair.buttonTitle, "Repair Permission")
+        XCTAssertFalse(repair.inProgress)
+    }
+
+    func testRepairingPageDisablesTheButton() throws {
+        var state = stuckState()
+        state.tick(now: t0.addingTimeInterval(20))
+        state.repairStarted()
+        let repair = try XCTUnwrap(state.page?.repair)
+        XCTAssertTrue(repair.inProgress)
+        XCTAssertEqual(repair.buttonTitle, "Repairing…")
+    }
+
+    func testWaitingPageShowsNoRepairSection() {
+        XCTAssertNil(stuckState().page?.repair)
+        XCTAssertNil(OnboardingModel.page(for: .requestPermission)?.repair)
+    }
+
+    func testPermissionStepFootnoteExplainsTheLingeringDialog() throws {
+        let page = try XCTUnwrap(OnboardingModel.page(for: .requestPermission))
+        let footnote = try XCTUnwrap(page.footnote)
+        XCTAssertTrue(footnote.contains("does not close by itself"))
+        XCTAssertTrue(footnote.contains("safe to close"))
+    }
+
+    func testGrantedPageSaysThePermissionLandedAndTheDialogCanGo() throws {
+        let page = try XCTUnwrap(OnboardingModel.page(for: .granted))
+        XCTAssertTrue(page.body.contains("permission landed"))
+        XCTAssertTrue(page.body.contains("close"))
+        XCTAssertNil(page.footnote, "the footnote belongs to the request step only")
+    }
+
+    func testOnlyThePermissionStepCarriesAFootnote() {
+        for step in [OnboardingStep.welcome, .granted, .chooseProvider, .ready] {
+            XCTAssertNil(OnboardingModel.page(for: step)?.footnote, "\(step)")
+        }
+    }
 }

@@ -40,6 +40,10 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         let settingsModel = makeSettingsModel()
         self.settingsModel = settingsModel
 
+        // Before the status item exists: a fresh install on a notched MacBook
+        // needs its menu-bar slot seeded or macOS may silently not render it.
+        StatusItemPlacement.applyDefaultIfNeeded()
+
         let controller = StatusItemController(
             permission: permission.state,
             debugActions: [
@@ -387,6 +391,8 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         switch UserDefaults.standard.string(forKey: "onboardingStep") {
         case "provider": return .chooseProvider
         case "welcome": return .welcome
+        case "permission": return .requestPermission
+        case "granted": return .granted
         default: return nil
         }
     }
@@ -438,6 +444,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         // Coming back from System Settings should feel instant.
         permission.poll()
+        // And a return with the grant still missing is the stale-switch
+        // signal the permission step escalates on.
+        onboarding?.applicationBecameActive()
     }
 
     private func connectBrain() {

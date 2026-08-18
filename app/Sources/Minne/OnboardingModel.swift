@@ -37,6 +37,27 @@ struct OnboardingBullet: Equatable, Sendable {
     let text: String
 }
 
+/// Where the stale-grant escalation on the permission step is (see
+/// `PermissionRepair` for what "stale" means and why Settings cannot fix it).
+enum PermissionRepairPhase: Equatable, Sendable {
+    /// System Settings not opened yet, or the grant landed.
+    case idle
+    /// The user was sent to System Settings; the patience clock is running.
+    case waiting(since: Date)
+    /// Still missing after the patience window — offer the repair.
+    case escalated
+    /// tccutil is running.
+    case repairing
+}
+
+/// The escalation section the permission step renders when the grant refuses
+/// to land: an explanation in user words and a repair button.
+struct RepairPresentation: Equatable, Sendable {
+    let body: String
+    let buttonTitle: String
+    let inProgress: Bool
+}
+
 /// Everything one onboarding screen renders, derived purely from the step.
 struct OnboardingPage: Equatable, Sendable {
     let title: String
@@ -50,11 +71,17 @@ struct OnboardingPage: Equatable, Sendable {
     let isWaiting: Bool
     /// What the body of the step is: static text, or the provider picker.
     let kind: OnboardingPageKind
+    /// The stale-grant escalation, on the permission step only.
+    let repair: RepairPresentation?
+    /// Quiet small print under the buttons; the permission step uses it to
+    /// say that Apple's own dialog never closes itself.
+    let footnote: String?
 
     init(
         title: String, body: String, bullets: [OnboardingBullet], primaryTitle: String,
         primaryAction: OnboardingAction, secondaryTitle: String?, isWaiting: Bool,
-        kind: OnboardingPageKind = .info
+        kind: OnboardingPageKind = .info, repair: RepairPresentation? = nil,
+        footnote: String? = nil
     ) {
         self.title = title
         self.body = body
@@ -64,14 +91,21 @@ struct OnboardingPage: Equatable, Sendable {
         self.secondaryTitle = secondaryTitle
         self.isWaiting = isWaiting
         self.kind = kind
+        self.repair = repair
+        self.footnote = footnote
     }
 }
 
 /// First-run state machine. Pure and unit-tested; `OnboardingWindowController`
 /// renders `page` and feeds user actions and AX-permission polls back in.
 struct OnboardingState: Equatable, Sendable {
+    /// How long the permission step waits after sending the user to System
+    /// Settings before concluding the grant is stuck and offering the repair.
+    static let repairPatience: TimeInterval = 15
+
     private(set) var step: OnboardingStep
     private(set) var permission: CapturePermissionState
+    private(set) var repair: PermissionRepairPhase = .idle
     /// Account line of the last successful sign-in, for the closing screen.
     private(set) var signInSummary: String?
 
@@ -113,11 +147,73 @@ struct OnboardingState: Equatable, Sendable {
         step = .finished
     }
 
+    // MARK: - Stale-grant escalation
+
+    /// The user was just sent to System Settings: start (or keep) the
+    /// patience clock. Once escalated, stays escalated — clicking the grant
+    /// button again is not evidence the stale entry healed.
+    mutating func sentToSettings(now: Date) {
+        guard step == .requestPermission, repair == .idle else { return }
+        repair = .waiting(since: now)
+    }
+
+    /// Clock tick (or the app becoming active after a Settings round trip).
+    /// Returns true when the escalation just appeared, so the controller only
+    /// re-renders on the transition.
+    @discardableResult
+    mutating func tick(now: Date) -> Bool {
+        guard step == .requestPermission, permission == .missing,
+            case .waiting(let since) = repair,
+            now.timeIntervalSince(since) >= Self.repairPatience
+        else { return false }
+        repair = .escalated
+        return true
+    }
+
+    /// How long the user must have been away before their return with the
+    /// grant still missing counts as a failed attempt in Settings rather than
+    /// an accidental switch back.
+    static let returnGrace: TimeInterval = 4
+
+    /// The app became active again — the user came back from System Settings.
+    /// A return after a real visit with the grant still missing is the
+    /// clearest sign of the stale switch, so it escalates ahead of the
+    /// patience clock. Returns true when the escalation just appeared.
+    @discardableResult
+    mutating func returnedFromSettings(now: Date) -> Bool {
+        guard step == .requestPermission, permission == .missing,
+            case .waiting(let since) = repair,
+            now.timeIntervalSince(since) >= Self.returnGrace
+        else { return false }
+        repair = .escalated
+        return true
+    }
+
+    mutating func repairStarted() {
+        guard repair == .escalated else { return }
+        repair = .repairing
+    }
+
+    /// tccutil finished (either way): re-prompted, back to watching the
+    /// clock — if the grant stays stuck the escalation returns.
+    mutating func repairFinished(now: Date) {
+        guard repair == .repairing else { return }
+        repair = .waiting(since: now)
+    }
+
+    /// Debug hook (`-simulatePermissionDeadlock YES`): jump straight to the
+    /// escalated state so the UI can be verified without real TCC damage.
+    mutating func debugForceEscalation() {
+        guard step == .requestPermission else { return }
+        repair = .escalated
+    }
+
     /// Feed from the AX poller. Returns true when the step changed, so the
     /// controller only re-renders on real transitions.
     @discardableResult
     mutating func permissionObserved(_ observed: CapturePermissionState) -> Bool {
         permission = observed
+        if observed == .granted { repair = .idle }
         switch (step, observed) {
         case (.requestPermission, .granted):
             step = .granted
@@ -133,12 +229,15 @@ struct OnboardingState: Equatable, Sendable {
 
     /// `nil` once the flow is over: the window should close.
     var page: OnboardingPage? {
-        OnboardingModel.page(for: step, signInSummary: signInSummary)
+        OnboardingModel.page(for: step, signInSummary: signInSummary, repair: repair)
     }
 }
 
 enum OnboardingModel {
-    static func page(for step: OnboardingStep, signInSummary: String? = nil) -> OnboardingPage? {
+    static func page(
+        for step: OnboardingStep, signInSummary: String? = nil,
+        repair: PermissionRepairPhase = .idle
+    ) -> OnboardingPage? {
         switch step {
         case .welcome:
             return OnboardingPage(
@@ -198,14 +297,20 @@ enum OnboardingModel {
                 primaryTitle: "Open System Settings",
                 primaryAction: .openSystemSettings,
                 secondaryTitle: "Set Up Later",
-                isWaiting: true)
+                isWaiting: true,
+                repair: repairPresentation(for: repair),
+                footnote: """
+                    Apple's permission dialog does not close by itself — once the \
+                    switch is on, it is safe to close.
+                    """)
 
         case .granted:
             return OnboardingPage(
                 title: "Accessibility granted",
                 body: """
-                    Minne can read your foreground window now. One thing left: \
-                    choose which AI you want it to think with.
+                    The permission landed — Minne can read your foreground window \
+                    now. If Apple's permission dialog is still open, you can close \
+                    it. One thing left: choose which AI you want it to think with.
                     """,
                 bullets: [],
                 primaryTitle: "Continue",
@@ -246,6 +351,35 @@ enum OnboardingModel {
 
         case .finished:
             return nil
+        }
+    }
+
+    /// The escalation the permission step shows once the grant looks stuck.
+    /// Calm on purpose: the user has just spent real time on a switch that
+    /// did nothing, and the way out is one button.
+    static func repairPresentation(for phase: PermissionRepairPhase) -> RepairPresentation? {
+        switch phase {
+        case .idle, .waiting:
+            return nil
+        case .escalated:
+            return RepairPresentation(
+                body: """
+                    Flipped the switch and nothing happened? macOS may be holding \
+                    on to a stale entry from an older copy of Minne — the switch \
+                    can already look on, but it belongs to that old copy. Repair \
+                    clears the stale entry, then asks for the permission again so \
+                    a fresh switch can land.
+                    """,
+                buttonTitle: "Repair Permission",
+                inProgress: false)
+        case .repairing:
+            return RepairPresentation(
+                body: """
+                    Clearing the stale entry. macOS will ask for the permission \
+                    again in a moment.
+                    """,
+                buttonTitle: "Repairing…",
+                inProgress: true)
         }
     }
 }

@@ -42,12 +42,19 @@ final class AccessibilityPermission {
     /// the Accessibility list — without it the user opens the pane to a list
     /// that has no Minne row to switch on.
     static func requestAndOpenSystemSettings() {
+        requestPrompt()
+        NSWorkspace.shared.open(systemSettingsURL)
+    }
+
+    /// The prompt alone (no deep link): used after a permission repair, when
+    /// the pane is already open in front of the user and the reset has just
+    /// unregistered Minne from it.
+    static func requestPrompt() {
         // Spelled out rather than using `kAXTrustedCheckOptionPrompt`: that
         // constant imports as a mutable global, which Swift 6 rejects as
         // shared mutable state.
         let options = ["AXTrustedCheckOptionPrompt": true]
         _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        NSWorkspace.shared.open(systemSettingsURL)
     }
 
     private(set) var state: CapturePermissionState

@@ -15,6 +15,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private var state: OnboardingState
     private let window: NSWindow
     private let auth: AuthModel
+    private let repair: AccessibilityRepair
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
@@ -22,13 +23,24 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private let waitingSpinner = NSProgressIndicator()
     private let waitingLabel = NSTextField(labelWithString: "Waiting for permission…")
     private let waitingRow = NSStackView()
+    private let repairLabel = NSTextField(wrappingLabelWithString: "")
+    private let repairButton = NSButton(title: "", target: nil, action: nil)
+    private let repairStack = NSStackView()
+    private let footnoteLabel = NSTextField(wrappingLabelWithString: "")
     private let secondaryButton = NSButton(title: "", target: nil, action: nil)
     private let primaryButton = NSButton(title: "", target: nil, action: nil)
     private var providerSetup: ProviderSetupView?
+    /// Feeds the stale-grant patience clock while the window is up.
+    private var repairClock: Timer?
 
-    init(permission: CapturePermissionState, auth: AuthModel, step: OnboardingStep = .welcome) {
+    init(
+        permission: CapturePermissionState, auth: AuthModel, step: OnboardingStep = .welcome,
+        repair: AccessibilityRepair = AccessibilityRepair(
+            runner: SystemProcessRunner(), bundleIdentifier: Bundle.main.bundleIdentifier)
+    ) {
         state = OnboardingState(permission: permission, step: step)
         self.auth = auth
+        self.repair = repair
         window = NSWindow(
             contentRect: NSRect(
                 x: 0, y: 0, width: OnboardingWindowController.contentWidth, height: 420),
@@ -49,6 +61,12 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         }
         // The setup view redraws itself; the window has to follow its height.
         auth.observe(self) { [weak self] _ in self?.resizeToFit() }
+        // Debug hook: `-simulatePermissionDeadlock YES` (with `-onboardingStep
+        // permission`) shows the escalation without waiting out the patience
+        // window — the only way to screenshot it without real TCC damage.
+        if UserDefaults.standard.bool(forKey: "simulatePermissionDeadlock") {
+            state.debugForceEscalation()
+        }
         render()
     }
 
@@ -66,6 +84,33 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         guard state.permissionObserved(permission) else { return }
         render()
         finishIfDone()
+    }
+
+    /// Fed by the app delegate when Minne becomes active again: the user came
+    /// back from System Settings, and if the grant still has not landed they
+    /// most likely flipped a switch that did nothing.
+    func applicationBecameActive() {
+        if state.returnedFromSettings(now: Date()) { render() }
+    }
+
+    /// One-second patience clock, alive only between "Open System Settings"
+    /// and the grant (or the end of the flow). The state machine decides;
+    /// this only feeds it the time.
+    private func startRepairClock() {
+        guard repairClock == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.state.tick(now: Date()) { self.render() }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        repairClock = timer
+    }
+
+    private func stopRepairClock() {
+        repairClock?.invalidate()
+        repairClock = nil
     }
 
     // MARK: - Layout
@@ -94,6 +139,22 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         waitingRow.spacing = 8
         waitingRow.setViews([waitingSpinner, waitingLabel], in: .leading)
 
+        // The stale-grant escalation: an explanation and its one-button fix.
+        repairLabel.font = .systemFont(ofSize: 12)
+        repairLabel.textColor = .secondaryLabelColor
+        repairLabel.preferredMaxLayoutWidth = textWidth
+        repairButton.bezelStyle = .rounded
+        repairButton.target = self
+        repairButton.action = #selector(repairClicked)
+        repairStack.orientation = .vertical
+        repairStack.alignment = .leading
+        repairStack.spacing = 8
+        repairStack.setViews([repairLabel, repairButton], in: .leading)
+
+        footnoteLabel.font = .systemFont(ofSize: 11)
+        footnoteLabel.textColor = .tertiaryLabelColor
+        footnoteLabel.preferredMaxLayoutWidth = textWidth
+
         secondaryButton.bezelStyle = .rounded
         secondaryButton.target = self
         secondaryButton.action = #selector(secondaryClicked)
@@ -121,12 +182,15 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         providerSetup = setup
 
         let stack = NSStackView(views: [
-            titleLabel, bodyLabel, bulletStack, setup, waitingRow, buttonContainer,
+            titleLabel, bodyLabel, bulletStack, setup, waitingRow, repairStack, buttonContainer,
+            footnoteLabel,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
         stack.setCustomSpacing(10, after: titleLabel)
+        // The footnote is small print to the buttons above it, not a section.
+        stack.setCustomSpacing(10, after: buttonContainer)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
@@ -182,6 +246,18 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         waitingRow.isHidden = !page.isWaiting
         providerSetup?.isHidden = page.kind != .providers
 
+        if let repair = page.repair {
+            repairLabel.stringValue = repair.body
+            repairButton.title = repair.buttonTitle
+            repairButton.isEnabled = !repair.inProgress
+            repairStack.isHidden = false
+        } else {
+            repairStack.isHidden = true
+        }
+
+        footnoteLabel.stringValue = page.footnote ?? ""
+        footnoteLabel.isHidden = page.footnote == nil
+
         primaryButton.title = page.primaryTitle
         secondaryButton.title = page.secondaryTitle ?? ""
         secondaryButton.isHidden = page.secondaryTitle == nil
@@ -206,6 +282,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
     private func finishIfDone() {
         guard state.step == .finished else { return }
+        stopRepairClock()
         window.orderOut(nil)
         onFinished?()
     }
@@ -220,7 +297,28 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             render()
             finishIfDone()
         case .openSystemSettings:
+            state.sentToSettings(now: Date())
+            startRepairClock()
             AccessibilityPermission.requestAndOpenSystemSettings()
+        }
+    }
+
+    /// Clears the stale TCC entry, re-fires Apple's prompt so a fresh row
+    /// appears, and goes back to watching for the grant.
+    @objc private func repairClicked() {
+        state.repairStarted()
+        render()
+        let repair = self.repair
+        Task { [weak self] in
+            _ = await repair.reset()
+            guard let self else { return }
+            // Re-prompt either way: if the reset failed the prompt is a no-op
+            // (Minne is still registered), and if it worked this is what puts
+            // the fresh row in the pane the user is looking at.
+            AccessibilityPermission.requestPrompt()
+            self.state.repairFinished(now: Date())
+            self.startRepairClock()
+            self.render()
         }
     }
 
@@ -231,6 +329,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
     /// Closing the window counts as "later": the menu-bar hint takes over.
     func windowWillClose(_ notification: Notification) {
+        stopRepairClock()
         guard state.step != .finished else { return }
         state.skip()
         onFinished?()
