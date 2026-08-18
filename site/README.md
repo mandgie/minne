@@ -1,43 +1,51 @@
 # minne.site
 
-The product page. Plain static files — no server, no CDN, no runtime network
-calls of any kind. Serve the directory and it works:
+The product page. Plain static files — no build, no framework, no CDN, no
+runtime network calls of any kind. Serve the directory and it works:
 
 ```sh
 cd site && python3 -m http.server 8765   # or: bun run serve
 ```
 
-## What is generated
+## The page is the demo
 
-Everything under `site/` is committed, including the two generated assets, so
-the site needs no build to deploy. Regenerate them only when their source
-changes (requires `bun install` in this directory):
+Everything is arranged around one thing: the stage in `#demo`, which plays the
+same story in four moments — a message to answer, an email that needs a time, a
+blank note with an instruction in it, and a question put straight to your
+memory. The caret waits, right-Option goes down, Minne's panel opens and
+thinks, the draft streams in, Insert lands it in the field.
 
-```sh
-bun run build      # src/hero.js  -> assets/hero.js  (three.js hero field)
-bun run build:svg  # src/*.mjs    -> assets/hero-static.svg (its no-WebGL twin)
-```
-
-`assets/og.png` is a screenshot of `src/og.html` at 1200×630 — serve the site,
-open `/src/og.html` at that viewport size and capture it.
+- **Scenes** are markup in `index.html` (`.scene`), one per moment, each
+  carrying its *finished* text. `assets/demo.js` takes a copy of that text,
+  empties the field and plays it back.
+- **The overlay** (`#overlay`) is shared by every scene, so Minne's panel is
+  built once.
+- **Adding a moment** means adding a `.scene` and a `.tab` next to it, plus a
+  line in `SAYS` in `assets/demo.js`. No other wiring.
+- Without JavaScript the four scenes simply stack, each already finished, and
+  the page still reads. Under `prefers-reduced-motion` nothing animates: the
+  tabs switch between the same finished states.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `index.html`, `styles.css` | The page. Hand-written, no framework. |
-| `assets/site.js` | Sticky-nav state and the scroll reveals. Not built. |
-| `assets/ui.js` | Drives the app replicas: the Minne key drafting a reply, the chat answering. |
-| `assets/hero.js` | Bundled three.js scene, built from `src/hero.js`. |
+| `index.html`, `styles.css` | The whole page. Hand-written. |
+| `assets/demo.js` | The stage: scene switching, the timeline, the typing. |
+| `assets/site.js` | Sticky-nav state and the scroll reveals. |
+| `assets/hero-static.svg` | The memory graph behind the hero, generated. |
 | `assets/fonts/` | Familjen Grotesk, Source Serif 4, IBM Plex Mono — all OFL, licences alongside. |
 
-Minne's own surfaces — the key overlay, the chat window, the two settings
-panes — are **DOM replicas**, not screenshots: markup in `index.html`, styling
-under "app replicas" in `styles.css`, timelines in `assets/ui.js`. They mimic
-the app rather than clone it, so keep them simple; when the app's look moves,
-move these by hand. Each one animates only while it is on screen, and holds a
-finished state under `prefers-reduced-motion`.
+Two assets are generated and committed, so nothing has to be built to deploy:
 
-The hero degrades in two steps: `prefers-reduced-motion` renders a single
-still frame, and a machine without WebGL gets `assets/hero-static.svg`, which
-is the same graph projected once by `src/make-static-svg.mjs`.
+```sh
+bun run build:svg   # src/make-static-svg.mjs -> assets/hero-static.svg
+```
+
+`assets/og.png` is a screenshot of `src/og.html` at 1200×630 — serve the site,
+open `/src/og.html` at that viewport size and capture it.
+
+The app surfaces on this page (the overlay, the windows, the file list) are
+hand-built DOM, not screenshots: they stay true as the app moves and they can
+act. They mimic Minne rather than clone it — keep them simple, and move them by
+hand when the app's look changes.
