@@ -70,11 +70,40 @@ fi
 # --- dmg -------------------------------------------------------------------
 echo "==> Packaging $DMG"
 rm -rf "$STAGING" "$DMG"
-mkdir -p "$STAGING"
+mkdir -p "$STAGING/.background"
 cp -R "$APP" "$STAGING/Minne.app"
 ln -s /Applications "$STAGING/Applications"
+cp "$(dirname "$0")/dmg-background.tiff" "$STAGING/.background/background.tiff"
+# Build read-write first: the drag-to-Applications window (background, icon
+# positions, view options) is a .DS_Store Finder has to write into the
+# mounted volume before it is frozen into the compressed image.
+RW_DMG="$BUILD/Minne-rw.dmg"
+rm -f "$RW_DMG"
 hdiutil create -quiet -volname "Minne $VERSION" -srcfolder "$STAGING" \
-    -fs HFS+ -format UDZO -ov "$DMG"
+    -fs HFS+ -format UDRW -ov "$RW_DMG"
+MOUNT=$(hdiutil attach -readwrite -noverify -nobrowse "$RW_DMG" | awk -F'\t' 'END {print $NF}')
+osascript <<OSA
+tell application "Finder"
+    tell disk "Minne $VERSION"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 140, 860, 570}
+        set opts to the icon view options of container window
+        set arrangement of opts to not arranged
+        set icon size of opts to 112
+        set background picture of opts to file ".background:background.tiff"
+        set position of item "Minne.app" of container window to {165, 190}
+        set position of item "Applications" of container window to {495, 190}
+        close
+    end tell
+end tell
+OSA
+sync
+hdiutil detach "$MOUNT" -quiet
+hdiutil convert -quiet "$RW_DMG" -format UDZO -o "$DMG"
+rm -f "$RW_DMG"
 rm -rf "$STAGING"
 
 # The dmg is downloaded and Gatekeeper checks it too, so it gets its own
