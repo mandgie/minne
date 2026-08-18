@@ -49,3 +49,8 @@ The app surfaces on this page (the overlay, the windows, the file list) are
 hand-built DOM, not screenshots: they stay true as the app moves and they can
 act. They mimic Minne rather than clone it — keep them simple, and move them by
 hand when the app's look changes.
+
+## Deploy
+
+`cd site && mkdir -p dist && cp index.html styles.css dist/ && cp -R assets dist/assets && npx -y wrangler@3 deploy`
+→ https://minne.magnus-uno-friberg.workers.dev
