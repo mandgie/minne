@@ -1,6 +1,9 @@
-// minne-brain entrypoint: JSON-lines protocol server over stdio.
-// stdout is reserved for protocol events; ALL logging goes to stderr.
+// minne-brain entrypoint: JSON-lines protocol server over stdio — or, with
+// --mcp, a read-only MCP server over the same memory (US-110). The modes are
+// mutually exclusive; either way stdout carries protocol only and ALL logging
+// goes to stderr.
 import { readLines, stdinChunks } from "./jsonlines";
+import { Memory } from "./memory";
 import { appSupportDir, memoryRoot } from "./paths";
 import { PROTOCOL_VERSION, decodeRequest, encodeEvent, errorEvent, type BrainEvent } from "./protocol";
 import { MinneBrain } from "./service";
@@ -17,6 +20,21 @@ function log(...args: unknown[]): void {
 
 function send(event: BrainEvent): void {
   process.stdout.write(encodeEvent(event) + "\n");
+}
+
+if (process.argv.includes("--mcp")) {
+  // MCP mode: no MinneBrain, no scheduler, no JSON-lines loop — the SDK's
+  // stdio transport owns stdout for JSON-RPC. Imported lazily so protocol
+  // mode never loads the SDK.
+  const { runMcpServer } = await import("./mcp");
+  log(`starting mcp server (brain ${BRAIN_VERSION})`);
+  await runMcpServer({
+    memory: new Memory({ root: memoryRoot(), dataDir: appSupportDir() }),
+    brainVersion: BRAIN_VERSION,
+    log,
+  });
+  log("mcp session over, exiting");
+  process.exit(0);
 }
 
 log(`starting (protocol ${PROTOCOL_VERSION}, brain ${BRAIN_VERSION})`);
