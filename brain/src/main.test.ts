@@ -1,10 +1,11 @@
 // Round-trip integration test: run the brain as a real subprocess, speak the
 // protocol over its stdio, and assert stdout stays protocol-clean.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type BrainEvent } from "./protocol";
+import { BrainSession, hello } from "./test-support";
 
 const BRAIN_DIR = new URL("..", import.meta.url).pathname;
 
@@ -139,6 +140,44 @@ describe("brain subprocess", () => {
       await proc.exited;
     }
   }, 5000);
+
+  test("memory_recent lists wiki pages newest first over the protocol", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "minne-main-"));
+    dirs.push(dir);
+    // Seed a wiki under the memory root BrainSession points the brain at.
+    const wiki = join(dir, "memory", "wiki");
+    mkdirSync(wiki, { recursive: true });
+    const page = (title: string, lastUpdated: string) =>
+      `---\ntype: person\ntitle: ${title}\nsummary: Seeded.\nlast_updated: ${lastUpdated}\nsources: []\n---\n\nBody.\n`;
+    writeFileSync(join(wiki, "older.md"), page("Older", "2026-08-10"));
+    writeFileSync(join(wiki, "ingrid-berg.md"), page("Ingrid Berg", "2026-08-17"));
+
+    const session = new BrainSession(dir);
+    try {
+      await hello(session);
+      const events = await session.request({ type: "memory_recent", id: "m1" });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "done",
+        id: "m1",
+        result: {
+          pages: [
+            { path: "wiki/ingrid-berg.md", title: "Ingrid Berg", lastUpdated: "2026-08-17" },
+            { path: "wiki/older.md", title: "Older", lastUpdated: "2026-08-10" },
+          ],
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("memory_recent on an empty memory answers an empty list", async () => {
+    const { events, exitCode } = await runBrain([{ type: "memory_recent", id: "m0" }]);
+    expect(exitCode).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "done", id: "m0", result: { pages: [] } });
+  });
 
   test("logs go to stderr, never stdout", async () => {
     const { stderr } = await runBrain([{ type: "status", id: "s1" }]);

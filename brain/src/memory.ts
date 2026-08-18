@@ -132,6 +132,13 @@ export interface IndexListing {
   counts: Record<string, number>;
 }
 
+/** One row of `memory_recent`: a page as the status-bar menu lists it. */
+export interface RecentPage {
+  path: string;
+  title: string | null;
+  lastUpdated: string | null;
+}
+
 export interface WritePageInput {
   type: PageType;
   title: string;
@@ -176,6 +183,8 @@ export interface MemoryOptions {
 export const MAX_READ_CHARS = 40_000;
 export const DEFAULT_SEARCH_LIMIT = 10;
 export const MAX_SEARCH_LIMIT = 25;
+/** How many pages `recentPages` returns at most — the menu shows eight. */
+export const RECENT_PAGES_LIMIT = 8;
 
 /** Where a page of each type is listed in `index.md`. */
 const INDEX_SECTIONS: Readonly<Record<PageType, string>> = {
@@ -348,6 +357,23 @@ export class Memory {
     }
     pages.sort((a, b) => a.path.localeCompare(b.path));
     return { index: tree.files[INDEX_FILE] ?? null, pages, counts };
+  }
+
+  /**
+   * The pages touched most recently, newest first, for the status-bar menu's
+   * "Recently remembered" list. Pages without a `last_updated` sort last —
+   * still reachable, just not datable — and ties break on path so the order
+   * is deterministic.
+   */
+  recentPages(limit = RECENT_PAGES_LIMIT): RecentPage[] {
+    return this.listIndex()
+      .pages.sort(
+        (a, b) =>
+          (b.lastUpdated ?? "").localeCompare(a.lastUpdated ?? "") ||
+          a.path.localeCompare(b.path),
+      )
+      .slice(0, limit)
+      .map(({ path, title, lastUpdated }) => ({ path, title, lastUpdated }));
   }
 
   // ---- write ----

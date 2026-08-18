@@ -1,9 +1,10 @@
 import AppKit
 
 /// Owns the NSStatusItem and its menu: brain status row, Open Chat,
-/// Pause Capture submenu, Settings, launch-at-login toggle, Debug submenu,
-/// Quit. All volatile display logic lives in MenuModel; this class only
-/// applies MenuAppearance to AppKit objects.
+/// Open Memory Folder, Recently remembered submenu, Pause Capture submenu,
+/// Settings, launch-at-login toggle, Debug submenu, Quit. All volatile display
+/// logic lives in MenuModel/RecentMemoryMenu; this class only applies it to
+/// AppKit objects.
 @MainActor
 final class StatusItemController: NSObject {
     struct DebugAction {
@@ -18,6 +19,16 @@ final class StatusItemController: NSObject {
     /// Fires whenever the pause state changes, including the automatic
     /// resume when a timed pause expires. The capture engine listens.
     var onPauseChange: (@MainActor (PauseState) -> Void)?
+    /// "Open Memory Folder": show the memory root in Finder.
+    var onOpenMemoryFolder: (@MainActor () -> Void)?
+    /// A "Recently remembered" page was picked; the argument is its path
+    /// relative to the memory root.
+    var onOpenRecentPage: (@MainActor (String) -> Void)?
+    /// The menu is about to open: ask the brain for a fresh recent list. The
+    /// call is async over stdio, so the menu shows the last-known list now and
+    /// the answer lands via `update(recentPages:)` — NSMenu re-renders a live
+    /// submenu, so usually while this open is still up, at worst for the next.
+    var onRefreshRecentPages: (@MainActor () -> Void)?
 
     /// Current pause state, with an expired timed pause already collapsed.
     var pauseState: PauseState { pause.resolved(now: Date()) }
@@ -30,12 +41,15 @@ final class StatusItemController: NSObject {
     private let pauseItem: NSMenuItem
     private let resumeItem: NSMenuItem
     private let launchAtLoginItem: NSMenuItem
+    private let recentMenu = NSMenu()
     private let debugActions: [DebugAction]
 
     private var connection: BrainConnectionState = .connecting
     private var permission: CapturePermissionState
     private var pause: PauseState = .active
     private var account: AuthState?
+    /// Last list the brain sent; the submenu renders this while a refresh flies.
+    private var recentPages: [RecentMemoryPage] = []
     private var resumeTimer: Timer?
 
     init(permission: CapturePermissionState, debugActions: [DebugAction]) {
@@ -70,6 +84,12 @@ final class StatusItemController: NSObject {
     func update(account: AuthState?) {
         self.account = account
         applyAppearance()
+    }
+
+    /// The brain answered `memory_recent` (fired when the menu opened).
+    func update(recentPages: [RecentMemoryPage]) {
+        self.recentPages = recentPages
+        renderRecentPages()
     }
 
     /// The one way pause changes, whoever asked: the menu's own items, or the
@@ -120,6 +140,20 @@ final class StatusItemController: NSObject {
         openChat.keyEquivalentModifierMask = [.option]
         openChat.target = self
         menu.addItem(openChat)
+
+        // The memory, inspectable: the folder itself, and the pages the brain
+        // touched most recently (US-108).
+        let openMemory = NSMenuItem(
+            title: "Open Memory Folder", action: #selector(openMemoryFolderAction),
+            keyEquivalent: "")
+        openMemory.target = self
+        menu.addItem(openMemory)
+
+        recentMenu.autoenablesItems = false
+        let recentItem = NSMenuItem(title: "Recently remembered", action: nil, keyEquivalent: "")
+        recentItem.submenu = recentMenu
+        menu.addItem(recentItem)
+        renderRecentPages()
 
         let pauseMenu = NSMenu()
         pauseMenu.autoenablesItems = false
@@ -201,6 +235,25 @@ final class StatusItemController: NSObject {
         launchAtLoginItem.state = LaunchAtLogin.isEnabled ? .on : .off
     }
 
+    /// Rebuilds the "Recently remembered" submenu from the last list the brain
+    /// sent. What each row says is RecentMemoryMenu's business; this only makes
+    /// NSMenuItems out of its entries.
+    private func renderRecentPages() {
+        recentMenu.removeAllItems()
+        let entries = RecentMemoryMenu.entries(pages: recentPages, today: RecentMemoryMenu.today())
+        for entry in entries {
+            let item = NSMenuItem(title: entry.title, action: nil, keyEquivalent: "")
+            if let path = entry.path {
+                item.action = #selector(openRecentPageAction(_:))
+                item.target = self
+                item.representedObject = path
+            } else {
+                item.isEnabled = false
+            }
+            recentMenu.addItem(item)
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func openChatAction() {
@@ -213,6 +266,15 @@ final class StatusItemController: NSObject {
 
     @objc private func openOnboardingAction() {
         onOpenOnboarding?()
+    }
+
+    @objc private func openMemoryFolderAction() {
+        onOpenMemoryFolder?()
+    }
+
+    @objc private func openRecentPageAction(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        onOpenRecentPage?(path)
     }
 
     @objc private func pauseFor15Minutes() {
@@ -247,9 +309,12 @@ final class StatusItemController: NSObject {
 }
 
 extension StatusItemController: NSMenuDelegate {
-    /// Refreshes countdowns (restart retry, pause time left) each time the
-    /// menu opens, since they drift while the menu is closed.
+    /// Refreshes countdowns (restart retry, pause time left) and the recent
+    /// list's relative times each time the menu opens, since they drift while
+    /// the menu is closed — and fires an async refresh of the recent pages.
     func menuNeedsUpdate(_ menu: NSMenu) {
         applyAppearance()
+        renderRecentPages()
+        onRefreshRecentPages?()
     }
 }

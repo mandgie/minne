@@ -150,6 +150,14 @@ final class BrainProtocolTests: XCTestCase {
         XCTAssertEqual(reply.memoryPages, [])
     }
 
+    /// The US-108 protocol addition: `memory_recent` carries nothing but its id.
+    func testMemoryRecentEncoding() throws {
+        let json = try encodeToJSON(.memoryRecent(id: "m1"))
+        XCTAssertEqual(json["type"] as? String, "memory_recent")
+        XCTAssertEqual(json["id"] as? String, "m1")
+        XCTAssertEqual(json.count, 2)
+    }
+
     func testAuthPromptSelectDecoding() throws {
         let json = """
             {"type":"auth_prompt","id":"l1","promptId":"l1:2","prompt":"Pick one",\

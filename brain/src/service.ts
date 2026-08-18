@@ -207,6 +207,8 @@ export class MinneBrain {
         return this.handleConfigure(request);
       case "search_sources":
         return this.handleSearchSources(request);
+      case "memory_recent":
+        return this.handleMemoryRecent(request.id);
       case "draft":
         return this.handleDraft(request);
       case "ingest":
@@ -654,6 +656,25 @@ export class MinneBrain {
       }
       this.log("search_sources failed:", err);
       this.send(errorEvent(request.id, "internal", message));
+    }
+  }
+
+  // ---- memory ----
+
+  /**
+   * The pages behind the menu bar's "Recently remembered": newest first,
+   * capped at eight. Synchronous and cheap (one wiki-tree scan); an empty
+   * memory is an empty list, not an error.
+   */
+  private handleMemoryRecent(id: string): void {
+    try {
+      const pages = this.memory.recentPages();
+      this.log(`memory_recent: ${pages.length} page(s)`);
+      this.send(doneEvent(id, { pages }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log("memory_recent failed:", err);
+      this.send(errorEvent(id, "internal", message));
     }
   }
 

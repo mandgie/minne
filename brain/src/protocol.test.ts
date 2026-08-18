@@ -30,6 +30,7 @@ describe("decodeRequest", () => {
       { type: "configure", id: "14" },
       { type: "search_sources", id: "15", query: "oslo trip" },
       { type: "search_sources", id: "16", query: "oslo", limit: 5 },
+      { type: "memory_recent", id: "17" },
     ];
     for (const message of valid) {
       const decoded = decodeRequest(JSON.stringify(message));

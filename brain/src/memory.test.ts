@@ -470,6 +470,56 @@ describe("list_index", () => {
   });
 });
 
+describe("recentPages", () => {
+  /** A page written straight to disk, so `last_updated` can differ per page. */
+  function plantPage(memory: Memory, slug: string, title: string, lastUpdated: string | null) {
+    writeFileSync(
+      join(memory.root, "wiki", `${slug}.md`),
+      [
+        "---",
+        "type: topic",
+        `title: ${title}`,
+        "summary: A page.",
+        ...(lastUpdated === null ? [] : [`last_updated: ${lastUpdated}`]),
+        "sources: []",
+        "---",
+        "",
+        "Body.",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  test("newest first, undated pages last, only path/title/lastUpdated", () => {
+    const memory = makeMemory();
+    plantPage(memory, "older", "Older", "2026-08-10");
+    plantPage(memory, "newest", "Newest", "2026-08-17");
+    plantPage(memory, "undated", "Undated", null);
+    expect(memory.recentPages()).toEqual([
+      { path: "wiki/newest.md", title: "Newest", lastUpdated: "2026-08-17" },
+      { path: "wiki/older.md", title: "Older", lastUpdated: "2026-08-10" },
+      { path: "wiki/undated.md", title: "Undated", lastUpdated: null },
+    ]);
+  });
+
+  test("caps at eight, ties broken by path", () => {
+    const memory = makeMemory();
+    for (let i = 0; i < 10; i++) {
+      plantPage(memory, `page-${String(i).padStart(2, "0")}`, `Page ${i}`, "2026-08-17");
+    }
+    const recent = memory.recentPages();
+    expect(recent).toHaveLength(8);
+    expect(recent.map((page) => page.path)).toEqual(
+      [...Array(8).keys()].map((i) => `wiki/page-0${i}.md`),
+    );
+  });
+
+  test("an empty memory answers an empty list", () => {
+    const memory = makeMemory({ seeded: false });
+    expect(memory.recentPages()).toEqual([]);
+  });
+});
+
 describe("search_memory", () => {
   test("finds wiki pages, ranked, with the title weighing most", () => {
     const memory = makeMemory();

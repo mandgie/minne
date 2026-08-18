@@ -53,6 +53,14 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         controller.onOpenChat = { [weak self] in self?.showChat() }
         controller.onOpenSettings = { [weak self] in self?.showSettings() }
         controller.onOpenOnboarding = { [weak self] in self?.showOnboarding() }
+        // Memory transparency (US-108): the folder opens in Finder, a recent
+        // page opens in whatever the user reads markdown with.
+        let memoryRoot = MemoryPaths.resolved().memoryRoot
+        controller.onOpenMemoryFolder = { NSWorkspace.shared.open(memoryRoot) }
+        controller.onOpenRecentPage = { path in
+            NSWorkspace.shared.open(memoryRoot.appendingPathComponent(path))
+        }
+        controller.onRefreshRecentPages = { [weak self] in self?.refreshRecentPages() }
         controller.onPauseChange = { [weak self] pause in
             self?.capture?.update(pause: pause)
             self?.settingsModel?.adopt(pause: pause)
@@ -517,6 +525,22 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 BrainClient.log("search results: \(String(describing: result))")
             } catch {
                 BrainClient.log("search failed: \(error)")
+            }
+        }
+    }
+
+    /// The status menu is opening: ask the brain which pages it touched most
+    /// recently. Async over stdio, so the submenu keeps its last-known rows
+    /// and updates when the answer lands, rather than blocking the open.
+    private func refreshRecentPages() {
+        guard let client = brainClient else { return }
+        Task { [weak self] in
+            do {
+                let result = try await client.request(.memoryRecent(id: UUID().uuidString))
+                self?.statusController?.update(recentPages: RecentMemoryPage.parse(result))
+            } catch {
+                // A down brain costs a stale submenu, nothing more.
+                BrainClient.log("memory_recent failed: \(error)")
             }
         }
     }

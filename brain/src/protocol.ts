@@ -167,6 +167,18 @@ export interface DraftRequest {
 }
 
 /**
+ * The last few wiki pages by `last_updated`, for the status-bar menu's
+ * "Recently remembered" submenu. Terminates with `done` whose result is
+ * `{ pages: [{ path, title, lastUpdated }] }` — newest first, at most 8,
+ * pages without a date last. An empty memory answers an empty list, not an
+ * error.
+ */
+export interface MemoryRecentRequest {
+  type: "memory_recent";
+  id: string;
+}
+
+/**
  * The brain's current state. Terminates with `done` whose result is
  * `{ state, provider, model, providers: [...], sync }`.
  *
@@ -195,6 +207,7 @@ export type BrainRequest =
   | IngestRequest
   | SearchSourcesRequest
   | DraftRequest
+  | MemoryRecentRequest
   | StatusRequest;
 
 // ---- Events (brain -> app) ----
@@ -501,6 +514,8 @@ export function decodeRequest(line: string): DecodeResult {
       }
       return ok(request);
     }
+    case "memory_recent":
+      return ok({ type: "memory_recent", id });
     case "status":
       return ok({ type: "status", id });
     default:

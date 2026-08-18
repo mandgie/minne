@@ -136,6 +136,11 @@ enum BrainRequest: Encodable, Sendable {
     /// whole, so half a draft has nowhere to go — but `toolCall` events do
     /// arrive, for the overlay's progress line.
     case draft(id: String, context: DraftRequestContext)
+    /// The last few wiki pages by `last_updated`, for the status-bar menu's
+    /// "Recently remembered" submenu. `done`'s result is
+    /// `{pages: [{path, title, lastUpdated}]}` — newest first, at most 8,
+    /// pages without a date last; an empty memory answers an empty list.
+    case memoryRecent(id: String)
     case status(id: String)
 
     var id: String {
@@ -150,6 +155,7 @@ enum BrainRequest: Encodable, Sendable {
         case .ingest(let id, _): return id
         case .searchSources(let id, _, _): return id
         case .draft(let id, _): return id
+        case .memoryRecent(let id): return id
         case .status(let id): return id
         }
     }
@@ -219,6 +225,8 @@ enum BrainRequest: Encodable, Sendable {
                 try container.encode(context.guidance, forKey: .guidance)
             }
             if context.regenerate { try container.encode(true, forKey: .regenerate) }
+        case .memoryRecent:
+            try container.encode("memory_recent", forKey: .type)
         case .status:
             try container.encode("status", forKey: .type)
         }
