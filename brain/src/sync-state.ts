@@ -9,6 +9,7 @@
 // anything unreadable.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { sanitizeRegisters, type RegisterState } from "./register";
 
 /** Outcome of one ingestion pass, as `status` reports it and Settings shows it. */
 export interface SyncPassSummary {
@@ -63,6 +64,14 @@ export interface SyncState {
   watermark: number;
   lastSync: SyncPassSummary | null;
   lastLint: LintPassSummary | null;
+  /**
+   * US-109's per-recipient voice registers, keyed by style-page title
+   * (`Style — Messages — Ingrid Berg`). Absent until the first sent message is
+   * observed; the counters live here rather than on the style page so an agent
+   * rewriting the page cannot erase what has been learned, and re-observation
+   * stays deduplicated across restarts.
+   */
+  registers?: Record<string, RegisterState>;
 }
 
 export const EMPTY_SYNC_STATE: SyncState = { watermark: 0, lastSync: null, lastLint: null };
@@ -88,6 +97,8 @@ export function loadSyncState(path: string): SyncState {
   }
   if (isRecord(raw["lastSync"])) state.lastSync = raw["lastSync"] as unknown as SyncPassSummary;
   if (isRecord(raw["lastLint"])) state.lastLint = raw["lastLint"] as unknown as LintPassSummary;
+  const registers = sanitizeRegisters(raw["registers"]);
+  if (registers !== null) state.registers = registers;
   return state;
 }
 

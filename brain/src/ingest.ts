@@ -28,6 +28,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
 import { isoLocal, type Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
+import { updateVoiceRegisters } from "./register";
 import { readSnapshotsAfter, snapshotBacklog, type SnapshotRow } from "./sources";
 import {
   loadSyncState,
@@ -176,7 +177,10 @@ How to work:
    typical length, formality, language, phrases they reach for. Never guess, and
    never write a style page from text they only read. These pages are what
    Minne's drafting key writes in the user's voice, so a wrong observation is
-   worse than a missing one — most batches add nothing here.
+   worse than a missing one — most batches add nothing here. Some style pages
+   carry a "## Register" section that Minne maintains mechanically from the
+   user's sent messages; when you rewrite such a page, keep that section
+   exactly as it is.
 6. Finish with exactly one append_log entry, pass "sync": a sentence or two
    naming the pages you touched as [[links]], or saying that you found nothing
    worth keeping.
@@ -349,6 +353,28 @@ export class SyncEngine {
           this.settings.snapshotChars,
         );
         if (rows.length === 0) break;
+        // US-109: distill the user's own sent messages into per-recipient
+        // voice registers, deterministically, before the model reads the
+        // batch — the style page the agent then reads already carries the
+        // section. The hashes are persisted at once so a batch that fails and
+        // is re-read cannot double-count, and a register failure is logged,
+        // never allowed to fail the pass.
+        try {
+          this.state.registers ??= {};
+          const update = updateVoiceRegisters(
+            this.memory,
+            rows,
+            this.state.registers,
+            this.log,
+            this.clock,
+          );
+          if (update.folded > 0) {
+            for (const path of update.pages) touched.add(path);
+            saveSyncState(this.statePath, this.state);
+          }
+        } catch (err) {
+          this.log("voice register update failed:", err);
+        }
         await this.runAgent(SYNC_SYSTEM_PROMPT, renderBatch(rows), touched, resolution.model);
         // Advance only after the batch's writes have landed: a pass that dies
         // between two batches re-reads the batch it was in the middle of, which

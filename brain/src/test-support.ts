@@ -96,6 +96,7 @@ export class BrainSession {
 export interface TestSnapshot {
   capturedAt: Date;
   app?: string;
+  bundleId?: string;
   title?: string;
   url?: string | null;
   sourcePath: string;
@@ -144,7 +145,7 @@ export function seedSnapshotIndex(dataDir: string, snapshots: TestSnapshot[]): v
     insert.run(
       Math.floor(snapshot.capturedAt.getTime() / 1000),
       app,
-      `com.example.${app.toLowerCase()}`,
+      snapshot.bundleId ?? `com.example.${app.toLowerCase()}`,
       snapshot.title ?? "Untitled",
       snapshot.url ?? null,
       snapshot.sourcePath,

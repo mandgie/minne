@@ -209,6 +209,25 @@ screen.
 
 (Parking area for implementing agents — append story, blocker, and what was tried.)
 
+- US-109 (partially parked, by design): the voice register is live end-to-end
+  for Messages, where delivery/read receipts ("Delivered"/"Read 14:05" and the
+  Swedish "Levererat"/"Läst …") render only under the user's own bubbles — the
+  one unambiguous authorship marker in flat captured AX text. Slack is parked:
+  a DM shows sender display names, but the brain never learns the user's own
+  name, so no line can be attributed safely (and Slack is AX-dark to capture
+  until something sets `AXManualAccessibility` anyway — see the [heal] gotcha).
+  Mail is parked: a compose window and a reading pane are indistinguishable in
+  flat text (both show To:/subject chrome), and harvesting a *received* mail
+  would be the exact pollution the story forbids. The missing signal, precisely:
+  either a per-surface marker of authorship in the captured text, or the user's
+  own identity on that surface (Slack display name, Mail account address) to
+  match sender lines against. The analysis layer (`analyzeMessage`/`foldMessage`
+  in brain/src/register.ts) is surface-agnostic and already tested on formal
+  email and Slack-style text, so wiring a new surface later is one extractor in
+  `extractSentMessages`, nothing more. One assumption to verify in daylight:
+  the receipt strings above match how Messages' AX tree actually renders them
+  (fixtures encode them; the running app was off-limits overnight).
+
 - US-107 (not a blocker, behavior finding): `cleanDraft` strips wrappings in a
   single pass, so a doubly-wrapped reply — quotes around a fence (`"``` … ```"`)
   or a fence around a fence — sheds only the outer layer and is not a fixed

@@ -375,6 +375,64 @@ describe("ingestion pass", () => {
     expect(engine.status()).toMatchObject({ pending: 1, lastSync: { status: "error" } });
   }, 15000);
 
+  test("a sync pass distills a voice register from sent Messages captures", async () => {
+    // The window text the app would capture from Messages: a delivery receipt
+    // under the user's own bubble is the authorship marker (US-109). The
+    // trailing TOOL: line scripts the mock agent, exactly like the other
+    // ingestion tests.
+    const windowText = [
+      "Ingrid Berg",
+      "iMessage",
+      "Yeah! I'll book the table for 7",
+      "Delivered",
+      'TOOL: append_log {"pass":"sync","message":"Nothing beyond the register."}',
+    ].join("\n");
+    const { engine, memoryRoot, dir } = makeEngine({
+      snapshots: [
+        snapshot(1, windowText, {
+          app: "Messages",
+          bundleId: "com.apple.MobileSMS",
+          title: "Ingrid Berg",
+          sourcePath: "sources/2026-08-17/1400-messages.md",
+        }),
+      ],
+    });
+
+    const summary = await engine.runSync();
+    expect(summary.status).toBe("ingested");
+    expect(summary.pagesTouched).toContain("wiki/style/style-messages-ingrid-berg.md");
+
+    const page = readFileSync(
+      join(memoryRoot, "wiki", "style", "style-messages-ingrid-berg.md"),
+      "utf8",
+    );
+    expect(page).toContain("## Register");
+    expect(page).toContain("1 sent message");
+    expect(page).toContain("sources/2026-08-17/1400-messages.md#1");
+    expect(lintWiki(loadWikiTree(memoryRoot)).errors).toEqual([]);
+
+    // The counters and dedup hashes persisted alongside the watermark.
+    const state = loadSyncState(syncStatePath(dir));
+    expect(state.registers?.["Style — Messages — Ingrid Berg"]?.messages).toBe(1);
+
+    // The same window captured again (a later snapshot of the same thread)
+    // folds nothing and leaves the style page alone — the idempotency the
+    // story demands.
+    seedSnapshotIndex(dir, [
+      snapshot(2, windowText, {
+        app: "Messages",
+        bundleId: "com.apple.MobileSMS",
+        title: "Ingrid Berg",
+        sourcePath: "sources/2026-08-17/1415-messages.md",
+        capturedAt: new Date("2026-08-17T14:15:00Z"),
+      }),
+    ]);
+    const second = await engine.runSync();
+    expect(second.status).toBe("ingested");
+    expect(second.pagesTouched).not.toContain("wiki/style/style-messages-ingrid-berg.md");
+    expect(loadSyncState(syncStatePath(dir)).registers?.["Style — Messages — Ingrid Berg"]?.messages).toBe(1);
+  }, 20000);
+
   test("a scheduled tick with nothing captured runs and costs no model call", async () => {
     const { engine } = makeEngine({ settings: { intervalMs: 20 } });
     engine.startTimers();
