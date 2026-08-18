@@ -182,6 +182,73 @@ describe("buildDraftPrompt", () => {
     expect(prompt).toContain("Writing to: Ingrid Berg");
   });
 
+  /**
+   * Regenerate's whole job. The context that produced the first draft has not
+   * changed, so without the draft itself in front of it the model writes the
+   * same sentences again.
+   */
+  test("a regenerate hands the previous draft over as the thing to avoid", () => {
+    const prompt = buildDraftPrompt(
+      context({
+        previousDraft: "Torsdag passer fint for meg.",
+        regenerate: true,
+      }),
+      null,
+    );
+    expect(prompt).toContain("another take");
+    expect(prompt).toContain("meaningfully different");
+    expect(prompt).toContain("do not repeat it");
+    expect(prompt).toContain("Torsdag passer fint for meg.");
+    expect(prompt).not.toContain("How the user wants it changed");
+  });
+
+  /** Guidance revises; it does not restart. */
+  test("guidance asks for a revision of the previous draft, not a new one", () => {
+    const prompt = buildDraftPrompt(
+      context({
+        previousDraft: "Torsdag passer fint for meg.",
+        guidance: ["warmer"],
+      }),
+      null,
+    );
+    expect(prompt).toContain("Revise");
+    expect(prompt).toContain("keep everything it did not object to");
+    expect(prompt).toContain("Torsdag passer fint for meg.");
+    expect(prompt).toContain("- warmer");
+    expect(prompt).not.toContain("meaningfully different");
+  });
+
+  test("every steer so far is still in force, oldest first", () => {
+    const prompt = buildDraftPrompt(
+      context({
+        previousDraft: "Torsdag passer fint.",
+        guidance: ["shorter", "mention the Friday deadline"],
+      }),
+      null,
+    );
+    expect(prompt).toContain("the last line is the new one");
+    expect(prompt.indexOf("- shorter")).toBeLessThan(
+      prompt.indexOf("- mention the Friday deadline"),
+    );
+  });
+
+  /** A user who steered and then asked for another take wants both. */
+  test("a regenerate keeps the steers the user already gave", () => {
+    const prompt = buildDraftPrompt(
+      context({ previousDraft: "Torsdag passer fint.", guidance: ["warmer"], regenerate: true }),
+      null,
+    );
+    expect(prompt).toContain("still apply");
+    expect(prompt).toContain("- warmer");
+  });
+
+  /** Empty steers are the user pressing Return on an empty field. */
+  test("blank guidance and no previous draft leave the prompt as it was", () => {
+    const plain = buildDraftPrompt(context(), null);
+    expect(buildDraftPrompt(context({ guidance: ["  ", ""] }), null)).toBe(plain);
+    expect(buildDraftPrompt(context({ previousDraft: "" }), null)).toBe(plain);
+  });
+
   /** A window can hold an entire inbox; one press must not send all of it. */
   test("an enormous window is clipped", () => {
     const prompt = buildDraftPrompt(
@@ -246,6 +313,34 @@ describe("draft requests are validated", () => {
       ok: true,
       request: { type: "draft", mode: "rewrite", selection: "hi", app: "Mail" },
     });
+  });
+
+  test("the rework fields are an optional string, string array and boolean", () => {
+    expect(
+      decodeRequest(
+        JSON.stringify({
+          type: "draft",
+          id: "d1",
+          mode: "infer",
+          previousDraft: "Torsdag passer fint.",
+          guidance: ["warmer", "shorter"],
+          regenerate: false,
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      request: { guidance: ["warmer", "shorter"], previousDraft: "Torsdag passer fint." },
+    });
+    for (const bad of [
+      { guidance: "warmer" },
+      { guidance: [1] },
+      { previousDraft: 3 },
+      { regenerate: "yes" },
+    ]) {
+      expect(
+        decodeRequest(JSON.stringify({ type: "draft", id: "d1", mode: "infer", ...bad })),
+      ).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    }
   });
 });
 
@@ -337,6 +432,90 @@ describe("draft over the protocol", () => {
     expect(echoed.text).toContain("Opens with 'Hei', signs off 'M.'");
     expect(echoed.text).toContain("`wiki/style/style-mail.md`");
     expect(echoed.text).toContain("From: Ingrid Berg");
+  });
+
+  /**
+   * The echoing mock again: this is what proves the steer and the draft being
+   * revised really travelled over the wire and into the prompt, rather than
+   * being dropped somewhere between the panel and the model.
+   */
+  test("a guided draft carries the steer and the draft it is revising", async () => {
+    const { session } = makeSession();
+    await hello(session);
+    await signIn(session);
+
+    const events = await session.request({
+      type: "draft",
+      id: "d1",
+      mode: "rewrite",
+      selection: "i cant make it",
+      fieldText: "hi — i cant make it",
+      app: "Slack",
+      previousDraft: "I can't make it, sorry.",
+      guidance: ["warmer", "mention the Friday deadline"],
+    });
+    const done = events.at(-1);
+    expect(done).toMatchObject({ type: "done", id: "d1", result: { mode: "rewrite" } });
+    const echoed = (done as Extract<BrainEvent, { type: "done" }>).result as { text: string };
+    expect(echoed.text).toContain("I can't make it, sorry.");
+    expect(echoed.text).toContain("- warmer");
+    expect(echoed.text).toContain("- mention the Friday deadline");
+    expect(echoed.text).toContain("Revise");
+    // The mode and the context the first press established are untouched.
+    expect(echoed.text).toContain("Rewrite the selected passage");
+    expect(echoed.text).toContain("i cant make it");
+    expect(echoed.text).toContain("Application: Slack");
+  });
+
+  test("another take is told what not to repeat", async () => {
+    const { session } = makeSession();
+    await hello(session);
+    await signIn(session);
+
+    const events = await session.request({
+      type: "draft",
+      id: "d1",
+      mode: "infer",
+      app: "Mail",
+      previousDraft: "Torsdag passer fint for meg.",
+      regenerate: true,
+    });
+    const echoed = (events.at(-1) as Extract<BrainEvent, { type: "done" }>).result as {
+      text: string;
+    };
+    expect(echoed.text).toContain("meaningfully different");
+    expect(echoed.text).toContain("Torsdag passer fint for meg.");
+  });
+
+  /** The whole round trip the overlay makes: draft, steer, revised draft. */
+  test("a draft can be steered and comes back revised", async () => {
+    const { session } = makeSession({ MINNE_MOCK_REPLY: "Torsdag passer supert — gleder meg!" });
+    await hello(session);
+    await signIn(session);
+
+    const first = await session.request({
+      type: "draft",
+      id: "d1",
+      mode: "infer",
+      windowText: "From: Ingrid\nThursday?",
+      app: "Mail",
+    });
+    expect(first.at(-1)).toMatchObject({ type: "done", result: { mode: "infer" } });
+
+    const second = await session.request({
+      type: "draft",
+      id: "d2",
+      mode: "infer",
+      windowText: "From: Ingrid\nThursday?",
+      app: "Mail",
+      previousDraft: "Torsdag passer fint.",
+      guidance: ["warmer"],
+    });
+    expect(second.at(-1)).toMatchObject({
+      type: "done",
+      id: "d2",
+      result: { mode: "infer", text: "Torsdag passer supert — gleder meg!" },
+    });
   });
 
   test("a draft may read memory, and says so as it goes", async () => {

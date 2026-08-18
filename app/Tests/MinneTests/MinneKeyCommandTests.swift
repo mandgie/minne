@@ -36,6 +36,24 @@ final class MinneKeyCommandTests: XCTestCase {
         XCTAssertNil(command(MinneKeyTap.zKeyCode, [.maskCommand, .maskShift]))
     }
 
+    /// ⌘R is another take while a draft is on screen — and Reload every other
+    /// moment of the day, which is why the modifiers are exact.
+    func testCommandRIsAnotherTake() {
+        XCTAssertEqual(command(MinneKeyTap.rKeyCode, .maskCommand), .regenerate)
+        XCTAssertNil(command(MinneKeyTap.rKeyCode))
+        XCTAssertNil(command(MinneKeyTap.rKeyCode, [.maskCommand, .maskShift]))
+        XCTAssertNil(command(MinneKeyTap.rKeyCode, [.maskCommand, .maskAlternate]))
+    }
+
+    /// Tab moves into the guidance field. ⌘Tab is the app switcher and ⌥Tab is
+    /// the system's; neither is ever ours.
+    func testTabIsGuidanceAndOnlyBare() {
+        XCTAssertEqual(command(MinneKeyTap.tabKeyCode), .guide)
+        XCTAssertNil(command(MinneKeyTap.tabKeyCode, .maskCommand))
+        XCTAssertNil(command(MinneKeyTap.tabKeyCode, .maskAlternate))
+        XCTAssertNil(command(MinneKeyTap.tabKeyCode, .maskShift))
+    }
+
     func testEverythingElseIsIgnored() {
         for keyCode: Int64 in [0, 1, 9, 49, 122] {
             XCTAssertNil(command(keyCode), "key \(keyCode)")

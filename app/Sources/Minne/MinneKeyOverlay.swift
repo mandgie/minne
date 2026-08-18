@@ -1,6 +1,27 @@
 import AppKit
 import QuartzCore
 
+/// Why a draft is being written a second time.
+///
+/// The two are not the same request and must not read as one: another take is
+/// the model told to *differ* from what it wrote, a revision is the model told
+/// to *keep* it apart from one thing. The overlay says which is happening,
+/// because a user who asked for "warmer" and got a completely different draft
+/// would think Minne had thrown their sentence away — which is exactly what the
+/// other button is for.
+enum ReworkKind: Equatable, Sendable {
+    case another
+    case guided
+
+    /// What the overlay says while it runs.
+    var progressLabel: String {
+        switch self {
+        case .another: return "Another take…"
+        case .guided: return "Reworking it…"
+        }
+    }
+}
+
 /// What the overlay is showing. One value for the whole life of a press:
 /// drafting, what the draft says, that it went in, or why it did not.
 enum MinneKeyOverlayState: Equatable, Sendable {
@@ -11,6 +32,11 @@ enum MinneKeyOverlayState: Equatable, Sendable {
     case consulting(DraftMode, tool: String)
     /// The finished draft, waiting for the user to accept it.
     case result(String)
+    /// The draft is being written again — another take, or a revision. Carries
+    /// the draft being reworked, which stays on screen under the sweep: the
+    /// panel keeps its size and the user keeps their place, instead of the
+    /// prose vanishing and a placeholder taking its seat.
+    case reworking(ReworkKind, previous: String)
     /// It is in the field.
     case inserted(InsertionMethod)
     /// It is back out of the field.
@@ -21,7 +47,16 @@ enum MinneKeyOverlayState: Equatable, Sendable {
     /// indicator animates for.
     var isThinking: Bool {
         switch self {
-        case .working, .consulting: return true
+        case .working, .consulting, .reworking: return true
+        default: return false
+        }
+    }
+
+    /// Whether this state has a draft the user can still steer — which is the
+    /// only time the guidance field and the "another take" capsule exist.
+    var isDraftOnScreen: Bool {
+        switch self {
+        case .result, .reworking: return true
         default: return false
         }
     }
@@ -33,6 +68,8 @@ enum MinneKeyAction: Equatable, Sendable {
     case insert
     case copy
     case undo
+    /// Write it again, differently.
+    case regenerate
     /// Try the thing that just failed again — the insertion when there is a
     /// draft to put in, the draft itself when there is not.
     case retry
@@ -48,8 +85,23 @@ protocol MinneKeyPresenting: AnyObject {
     var state: MinneKeyOverlayState? { get }
     /// Pressed buttons arrive here.
     var onAction: (@MainActor (MinneKeyAction) -> Void)? { get set }
+    /// A steer the user typed into the guidance field and submitted.
+    var onGuidance: (@MainActor (String) -> Void)? { get set }
+    /// Whether the guidance field is being edited — which is also the only
+    /// moment the panel holds key status, and therefore the moment at which the
+    /// event tap must claim no keys at all.
+    var isGuiding: Bool { get }
     func present(_ target: CaretTarget, state: MinneKeyOverlayState)
     func update(_ state: MinneKeyOverlayState)
+    /// The steers in force, shown above the guidance field.
+    func update(guidance: [String])
+    /// Borrows key status from the app being written into and puts the caret in
+    /// the guidance field.
+    func beginGuiding()
+    /// Hands key status back. Returns true when the panel actually had it,
+    /// which is the caller's signal that focus has to travel back across
+    /// processes before anything may be typed into that app.
+    @discardableResult func endGuiding() -> Bool
     func dismiss()
     /// Whether a screen point (Quartz coordinates, as event taps report them)
     /// falls inside the overlay.
@@ -59,13 +111,25 @@ protocol MinneKeyPresenting: AnyObject {
 /// Borderless panel that appears at the caret.
 ///
 /// Two properties matter more than anything it draws. It is
-/// `.nonactivatingPanel` and refuses to become key, so the app the user is
-/// typing in **keeps focus** — the whole feature is about drafting into that
-/// field, and a panel that stole focus would lose the caret it is anchored to.
-/// And it is `.canJoinAllSpaces`, so it appears wherever the user is, including
-/// over a fullscreen app, without the ordering dance the chat window needs.
+/// `.nonactivatingPanel`, so the app the user is typing in **keeps focus** —
+/// the whole feature is about drafting into that field, and a panel that stole
+/// focus would lose the caret it is anchored to. And it is `.canJoinAllSpaces`,
+/// so it appears wherever the user is, including over a fullscreen app, without
+/// the ordering dance the chat window needs.
+///
+/// `canBecomeKey` is a variable rather than `false` because of one thing the
+/// panel has to do: hold a text field the user types a steer into. A text field
+/// needs a field editor and a field editor needs a key window, so for exactly
+/// as long as that field is being edited the panel says yes — and because the
+/// panel is non-activating, saying yes borrows the *keyboard* without making
+/// Minne the active app or disturbing the target's own first responder. The
+/// moment editing ends the answer goes back to no and the panel is ordered out
+/// and straight back in, which is the only way AppKit offers of handing key
+/// status back to whoever had it.
 private final class MinneKeyOverlayPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    /// True only while the guidance field is being edited.
+    var wantsKey = false
+    override var canBecomeKey: Bool { wantsKey }
     override var canBecomeMain: Bool { false }
 }
 
@@ -108,9 +172,9 @@ private final class OverlayChromeView: NSView {
     }
 }
 
-/// The one rule in the panel: a single hairline under the header, at exactly the
-/// content inset every other child starts at.
-private final class OverlayRule: NSView {
+/// A hairline the width of the content column — under the header, and above the
+/// guidance field. Both sit at exactly the inset every other child starts at.
+final class OverlayRule: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -309,6 +373,81 @@ private final class ShimmerLines: NSView {
     }
 }
 
+/// The draft itself, with one trick: it can shimmer.
+///
+/// When the user asks for another take, the draft they are looking at is not
+/// replaced by placeholder bars — it stays where it is, dimmed, with a
+/// highlight sweeping across it. Nothing moves, the panel keeps its height, and
+/// the state reads as *this text, being rewritten* rather than as a fresh press.
+/// The sweep is a gradient mask animated on the render server, like
+/// `ShimmerLines`: nothing is drawn on the thread carrying the user's typing.
+private final class DraftLabel: NSTextField {
+    private static let sweepDuration: CFTimeInterval = 1.4
+    /// How much of the previous draft is left showing under the sweep. Enough
+    /// to read the shape of it; too faint to mistake for the new one.
+    private static let reworkingAlpha: CGFloat = 0.5
+
+    private let sweepMask = CAGradientLayer()
+
+    init() {
+        super.init(frame: .zero)
+        // What `NSTextField(wrappingLabelWithString:)` sets up, by hand,
+        // because that is a factory method and this is a subclass.
+        isEditable = false
+        isBordered = false
+        isBezeled = false
+        drawsBackground = false
+        isSelectable = true
+        lineBreakMode = .byWordWrapping
+        cell?.usesSingleLineMode = false
+        cell?.wraps = true
+        cell?.isScrollable = false
+        wantsLayer = true
+
+        sweepMask.startPoint = CGPoint(x: 0, y: 0.5)
+        sweepMask.endPoint = CGPoint(x: 1, y: 0.5)
+        sweepMask.colors = [
+            NSColor.black.withAlphaComponent(0.45).cgColor,
+            NSColor.black.cgColor,
+            NSColor.black.withAlphaComponent(0.45).cgColor,
+        ]
+        sweepMask.locations = [0, 0.2, 0.4]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func layout() {
+        super.layout()
+        guard layer?.mask != nil else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        sweepMask.frame = bounds
+        CATransaction.commit()
+    }
+
+    func startSweep() {
+        alphaValue = Self.reworkingAlpha
+        guard layer?.mask == nil else { return }
+        sweepMask.frame = bounds
+        layer?.mask = sweepMask
+        let sweep = CABasicAnimation(keyPath: "locations")
+        sweep.fromValue = [-0.4, -0.2, 0]
+        sweep.toValue = [1.0, 1.2, 1.4]
+        sweep.duration = Self.sweepDuration
+        sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        sweepMask.add(sweep, forKey: "sweep")
+    }
+
+    func stopSweep() {
+        alphaValue = 1
+        guard layer?.mask != nil else { return }
+        sweepMask.removeAnimation(forKey: "sweep")
+        layer?.mask = nil
+    }
+}
+
 /// A button in a window that is never key, drawn rather than bezelled.
 ///
 /// Two reasons it paints itself. `acceptsFirstMouse` is the first: without it
@@ -333,15 +472,25 @@ private final class OverlayButton: NSButton {
     /// whole rendered string — building the next title from `title` would
     /// append the key hint again, and again.
     private let label: String
+    /// An SF Symbol before the label, for the one capsule that says what it
+    /// does better as a shape than as a word.
+    private let symbol: String?
     private let isPrimary: Bool
     private var isHovered = false
 
     private static let height: CGFloat = 24
     private static let horizontalPadding: CGFloat = 13
+    /// A glyph-only capsule is padded a little tighter: a symbol has no side
+    /// bearing, so the same padding around one looks wider than around a word.
+    private static let glyphPadding: CGFloat = 10
 
-    init(label: String, hint: String?, isPrimary: Bool, target: AnyObject, action: Selector) {
+    init(
+        label: String, hint: String?, symbol: String? = nil, isPrimary: Bool,
+        target: AnyObject, action: Selector
+    ) {
         self.hint = hint
         self.label = label
+        self.symbol = symbol
         self.isPrimary = isPrimary
         super.init(frame: .zero)
         self.target = target
@@ -359,9 +508,8 @@ private final class OverlayButton: NSButton {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: ceil(attributedTitle.size().width) + Self.horizontalPadding * 2,
-            height: Self.height)
+        let padding = label.isEmpty ? Self.glyphPadding : Self.horizontalPadding
+        return NSSize(width: ceil(attributedTitle.size().width) + padding * 2, height: Self.height)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -394,13 +542,29 @@ private final class OverlayButton: NSButton {
         applyColors()
     }
 
+    /// The glyph is tinted with a colour resolved *now* — it is pixels in an
+    /// image, not a dynamic colour a label can re-read — so building the title
+    /// has to happen under this view's own appearance.
     private func titleText() -> NSAttributedString {
-        let text = NSMutableAttributedString(
-            string: label,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11.5, weight: isPrimary ? .semibold : .medium),
-                .foregroundColor: isPrimary ? OverlayPalette.onBlue : OverlayPalette.inkSecondary,
-            ])
+        var text = NSAttributedString()
+        effectiveAppearance.performAsCurrentDrawingAppearance { text = buildTitle() }
+        return text
+    }
+
+    private func buildTitle() -> NSAttributedString {
+        let ink = isPrimary ? OverlayPalette.onBlue : OverlayPalette.inkSecondary
+        let text = NSMutableAttributedString()
+        if let symbol, let glyph = Self.glyph(symbol, color: ink) {
+            text.append(glyph)
+            if !label.isEmpty { text.append(NSAttributedString(string: " ")) }
+        }
+        text.append(
+            NSAttributedString(
+                string: label,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11.5, weight: isPrimary ? .semibold : .medium),
+                    .foregroundColor: ink,
+                ]))
         if let hint {
             text.append(
                 NSAttributedString(
@@ -438,6 +602,36 @@ private final class OverlayButton: NSButton {
         }
     }
 
+    /// An SF Symbol as one character of the title.
+    ///
+    /// Tinted by hand rather than left as a template image: a template
+    /// attachment inside an attributed string is drawn black whatever the
+    /// title's foreground colour says, which on the dark panel is a hole.
+    private static func glyph(_ symbol: String, color: NSColor) -> NSAttributedString? {
+        guard
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                // A shade heavier than the label beside it: a stroked glyph at
+                // the same weight as a letterform reads lighter than it is,
+                // and in the dark it nearly disappears.
+                .withSymbolConfiguration(
+                    NSImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)),
+            let tinted = image.copy() as? NSImage
+        else { return nil }
+        tinted.lockFocus()
+        color.set()
+        NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
+        tinted.unlockFocus()
+        tinted.isTemplate = false
+
+        let attachment = NSTextAttachment()
+        attachment.image = tinted
+        // Sat down onto the text's baseline: an attachment's origin is the
+        // baseline, so without this the glyph floats a couple of points high.
+        attachment.bounds = CGRect(
+            x: 0, y: -2, width: tinted.size.width, height: tinted.size.height)
+        return NSAttributedString(attachment: attachment)
+    }
+
     /// Hover lightens the accent capsule and a press darkens it, by the same
     /// small amount either way.
     private static func adjusted(_ color: NSColor, by amount: CGFloat) -> NSColor {
@@ -469,6 +663,20 @@ final class MinneKeyOverlayView: NSView {
     static let inset = NSSize(width: 14, height: 14)
 
     var onAction: (@MainActor (MinneKeyAction) -> Void)?
+    /// The guidance field's three moments, forwarded to the panel's controller
+    /// because two of them need key status, which is the panel's to lend.
+    var onRequestGuiding: (@MainActor () -> Void)? {
+        get { guidance.onRequestEditing }
+        set { guidance.onRequestEditing = newValue }
+    }
+    var onGuidanceSubmitted: (@MainActor (String) -> Void)? {
+        get { guidance.onSubmit }
+        set { guidance.onSubmit = newValue }
+    }
+    var onGuidanceCancelled: (@MainActor () -> Void)? {
+        get { guidance.onCancel }
+        set { guidance.onCancel = newValue }
+    }
 
     private let spark = NSImageView()
     private let title = NSTextField(labelWithString: "Minne")
@@ -479,11 +687,17 @@ final class MinneKeyOverlayView: NSView {
     /// a blue tick when the draft landed, a warm mark when it did not.
     private let outcome = NSImageView()
     private let status = NSTextField(labelWithString: "")
-    private let draft = NSTextField(wrappingLabelWithString: "")
+    private let draft = DraftLabel()
     private let shimmer = ShimmerLines(frame: .zero)
     private let rule = OverlayRule(frame: .zero)
+    private let guidance = GuidanceRow(frame: .zero)
     private let buttons = NSStackView()
     private let column = NSStackView()
+
+    /// Whether the guidance field is being edited.
+    var isGuiding: Bool { guidance.isEditing }
+    /// Whether the caret really landed in it.
+    var guidanceHasCaret: Bool { guidance.hasCaret }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -571,7 +785,7 @@ final class MinneKeyOverlayView: NSView {
         statusRow.alignment = .firstBaseline
         statusRow.spacing = 5
 
-        column.setViews([header, rule, statusRow, shimmer, draft, buttons], in: .top)
+        column.setViews([header, rule, statusRow, shimmer, draft, guidance, buttons], in: .top)
         // Air, in three sizes: tight around the rule, a line's worth before the
         // draft, and a little more before the row of capsules.
         column.setCustomSpacing(9, after: header)
@@ -579,10 +793,12 @@ final class MinneKeyOverlayView: NSView {
         column.setCustomSpacing(11, after: statusRow)
         column.setCustomSpacing(13, after: shimmer)
         column.setCustomSpacing(13, after: draft)
+        column.setCustomSpacing(12, after: guidance)
         NSLayoutConstraint.activate([
             header.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             rule.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             shimmer.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            guidance.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             draft.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
             statusRow.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
         ])
@@ -607,7 +823,11 @@ final class MinneKeyOverlayView: NSView {
         case .result(let text):
             show(
                 status: "Draft ready", state: state, draft: text,
-                actions: [.insert, .copy, .dismiss])
+                actions: [.insert, .copy, .regenerate, .dismiss])
+        case .reworking(let kind, let previous):
+            show(
+                status: kind.progressLabel, state: state, draft: previous,
+                actions: [.dismiss])
         case .inserted(let method):
             show(
                 status: "Inserted with \(method.label)", state: state, draft: nil,
@@ -667,17 +887,52 @@ final class MinneKeyOverlayView: NSView {
         dots.isHidden = !state.isThinking
         // The draft's lines are there from the first moment, shimmering on the
         // same grid the prose will use — rather than the panel doubling in
-        // height when the model answers.
-        if state.isThinking { shimmer.start() } else { shimmer.stop() }
-        shimmer.isHidden = !state.isThinking
+        // height when the model answers. A *rework* needs none of that: it
+        // already has prose on screen, and shimmers that instead.
+        let placeholder = state.isThinking && body == nil
+        if placeholder { shimmer.start() } else { shimmer.stop() }
+        shimmer.isHidden = !placeholder
 
         draft.attributedStringValue =
             body.map { Self.body(Self.preview($0), elided: $0.count > Self.maxPreviewCharacters) }
             ?? NSAttributedString()
         draft.isHidden = body == nil
+        if case .reworking = state { draft.startSweep() } else { draft.stopSweep() }
+
+        // The field is offered whenever there is a draft to steer, and keeps
+        // its place — with its chips — while a rework runs, so the panel does
+        // not shuffle every time the user asks for something. It stops taking
+        // text for those few seconds: a second steer typed into a draft that
+        // is already being rewritten would be a steer for a draft that no
+        // longer exists.
+        guidance.isHidden = !state.isDraftOnScreen
+        guidance.setEditable(!state.isThinking)
 
         buttons.setViews(actions.map(button(for:)), in: .leading)
         buttons.isHidden = actions.isEmpty
+    }
+
+    /// The steers in force, above the field.
+    func render(guidance steers: [String]) {
+        guidance.guidance = steers
+    }
+
+    func beginGuiding() {
+        guidance.beginEditing()
+    }
+
+    func endGuiding() {
+        guidance.endEditing()
+    }
+
+    /// The guidance field's focused *look*, with no field editor behind it.
+    func showGuidingLook() {
+        guidance.showEditingLook()
+    }
+
+    /// Repaints the field from where the caret actually is.
+    func refreshGuidingLook() {
+        guidance.refreshLook()
     }
 
     /// The draft, set with a little air between its lines — it is the one
@@ -730,9 +985,10 @@ final class MinneKeyOverlayView: NSView {
         // stay quiet, which is what makes it read as the primary at all.
         let button = OverlayButton(
             label: Self.buttonTitle(action), hint: Self.buttonHint(action),
-            isPrimary: Self.isPrimary(action), target: self,
+            symbol: Self.buttonSymbol(action), isPrimary: Self.isPrimary(action), target: self,
             action: #selector(buttonPressed(_:)))
         button.tag = Self.tag(action)
+        button.toolTip = Self.buttonTooltip(action)
         return button
     }
 
@@ -747,6 +1003,9 @@ final class MinneKeyOverlayView: NSView {
         case .undo: return "Undo"
         case .retry: return "Retry"
         case .dismiss: return "Dismiss"
+        // Said as a shape. Four capsules is already a crowded row, and the one
+        // that means "go round again" is the one word a glyph replaces cleanly.
+        case .regenerate: return ""
         }
     }
 
@@ -756,8 +1015,19 @@ final class MinneKeyOverlayView: NSView {
         case .insert: return "↩"
         case .undo: return "⌘Z"
         case .dismiss: return "esc"
+        case .regenerate: return "⌘R"
         case .copy, .retry: return nil
         }
+    }
+
+    private static func buttonSymbol(_ action: MinneKeyAction) -> String? {
+        action == .regenerate ? "arrow.triangle.2.circlepath" : nil
+    }
+
+    /// The glyph capsule is the one control whose label does not say what it
+    /// does, so it is the one that gets a tooltip.
+    private static func buttonTooltip(_ action: MinneKeyAction) -> String? {
+        action == .regenerate ? "Another take (⌘R)" : nil
     }
 
     private static func tag(_ action: MinneKeyAction) -> Int {
@@ -767,6 +1037,7 @@ final class MinneKeyOverlayView: NSView {
         case .undo: return 3
         case .dismiss: return 4
         case .retry: return 5
+        case .regenerate: return 6
         }
     }
 
@@ -777,6 +1048,7 @@ final class MinneKeyOverlayView: NSView {
         case 3: return .undo
         case 4: return .dismiss
         case 5: return .retry
+        case 6: return .regenerate
         default: return nil
         }
     }
@@ -796,6 +1068,10 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     private static let resizeDuration: TimeInterval = 0.13
     /// How far the panel rises as it appears.
     private static let rise: CGFloat = 6
+    /// How long key status is given to arrive before the guidance field is
+    /// judged to have failed. It is granted by the window server, so it is not
+    /// necessarily in hand when `makeKeyAndOrderFront` returns.
+    private static let keyArrivalGrace: TimeInterval = 0.12
 
     private let panel: MinneKeyOverlayPanel
     private let content: MinneKeyOverlayView
@@ -813,6 +1089,10 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         get { content.onAction }
         set { content.onAction = newValue }
     }
+
+    var onGuidance: (@MainActor (String) -> Void)?
+
+    var isGuiding: Bool { content.isGuiding }
 
     init() {
         panel = MinneKeyOverlayPanel(
@@ -848,6 +1128,21 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         // Nothing here is a drag target and the panel never activates; without
         // this a click at its edge could still start a window drag.
         panel.isMovable = false
+        // Belt and braces around the borrowed key status: even while the panel
+        // is allowed to become key, it only does so when something in it
+        // actually needs the keyboard.
+        panel.becomesKeyOnlyIfNeeded = true
+
+        content.onRequestGuiding = { [weak self] in self?.beginGuiding() }
+        content.onGuidanceCancelled = { [weak self] in self?.endGuiding() }
+        content.onGuidanceSubmitted = { [weak self] steer in
+            guard let self else { return }
+            // Key goes back to the app being written into *before* the steer is
+            // acted on: what follows is a request, and what follows that may be
+            // an insertion that types into whoever holds the keyboard.
+            endGuiding()
+            onGuidance?(steer)
+        }
     }
 
     var isPresenting: Bool { presenting }
@@ -855,6 +1150,11 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     func present(_ target: CaretTarget, state: MinneKeyOverlayState) {
         self.state = state
         presenting = true
+        // A fresh press inherits nothing from the last one — no steers, and
+        // certainly not the keyboard.
+        panel.wantsKey = false
+        content.render(guidance: [])
+        content.endGuiding()
         content.render(target, state: state)
         caret = OverlayPlacement.flipped(
             target.anchor.rect, primaryHeight: Self.primaryScreenHeight())
@@ -880,13 +1180,98 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         guard presenting else { return }
         self.state = state
         content.render(state)
+        // A state with no draft on screen has no field to type into either, so
+        // whatever the user had started typing is abandoned along with it —
+        // and the keyboard goes back where it came from.
+        if !state.isDraftOnScreen { endGuiding() }
         place(animated: true)
+    }
+
+    func update(guidance: [String]) {
+        content.render(guidance: guidance)
+        guard presenting else { return }
+        place(animated: true)
+    }
+
+    /// Borrows the keyboard for the guidance field.
+    ///
+    /// `makeKeyAndOrderFront` on a non-activating panel gives it key status
+    /// **without** activating Minne: the target app stays the active app and
+    /// keeps its own first responder, it simply stops receiving keystrokes for
+    /// as long as the field has them. That is the whole trick, and the reason
+    /// `canBecomeKey` is a variable — a panel that could always become key
+    /// would take the caret every time it appeared.
+    func beginGuiding() {
+        guard presenting, state?.isDraftOnScreen == true, !content.isGuiding else { return }
+        panel.wantsKey = true
+        // First responder *before* asking for key, not after: with
+        // `becomesKeyOnlyIfNeeded` the panel takes key only when something in
+        // it needs the keyboard, and asking first is a panel that needs
+        // nothing — which is exactly how this went wrong the first time (the
+        // field drew unfocused and never got a caret).
+        content.beginGuiding()
+        panel.makeKeyAndOrderFront(nil)
+        // Key status is granted by the window server and need not have arrived
+        // by the time that call returns. One re-assert on the next pass, so a
+        // field that did not take the caret first time still gets it rather
+        // than leaving a panel that looks focused and is not — and the log
+        // then says what actually happened, which is the only way to tell a
+        // borrowed keyboard from a panel that merely looks focused.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyArrivalGrace) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.wantsKey else { return }
+                if !self.content.guidanceHasCaret { self.content.beginGuiding() }
+                // The field editor is rebuilt on the way to key status, so the
+                // focus ring has to be repainted from where the caret ended up.
+                self.content.refreshGuidingLook()
+                // The failsafe. A field that looks focused but does not have
+                // the keyboard is worse than no field at all: the user would
+                // type their steer straight into the document they are writing.
+                // If key did not arrive, put the field back and say so.
+                guard self.panel.isKeyWindow else {
+                    BrainClient.log("minne key: the keyboard could not be borrowed — field closed")
+                    self.endGuiding()
+                    return
+                }
+                BrainClient.log(
+                    "minne key: guidance field has the keyboard "
+                        + "(caret \(self.content.guidanceHasCaret), Minne active \(NSApp.isActive))"
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func endGuiding() -> Bool {
+        let hadKey = panel.wantsKey
+        content.endGuiding()
+        guard hadKey else { return false }
+        panel.wantsKey = false
+        // AppKit has no "give key back" call. Ordering the panel out and
+        // straight back in is the one that works: the window server hands key
+        // status to the frontmost app's own window, which — because Minne was
+        // never activated — is the field this overlay is pointing at.
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
+        BrainClient.log("minne key: keyboard handed back to the app")
+        return true
+    }
+
+    /// Debug hook: paints the guidance field as focused without borrowing the
+    /// keyboard, so `-minneKeyPreview guiding` can be screenshotted on a
+    /// machine somebody else is typing on.
+    func previewGuiding() {
+        BrainClient.log(
+            "minne key: preview guiding, look only (caret \(content.guidanceHasCaret))")
+        content.showGuidingLook()
+        place(animated: false)
     }
 
     func dismiss() {
         state = nil
         guard presenting else { return }
         presenting = false
+        endGuiding()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.disappearDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)

@@ -76,11 +76,30 @@ final class MinneKeyController {
     /// arrives while the user is still looking at the overlay.
     static let pasteConfirmDelay: TimeInterval = 0.6
 
+    /// How long the panel waits, after giving the keyboard back, before it
+    /// types into the app it gave it to. Handing key status over happens
+    /// through the window server and across two processes, so it is not done
+    /// the instant `endGuiding()` returns — and a paste posted into the gap
+    /// would land nowhere at all.
+    static let focusReturnDelay: TimeInterval = 0.12
+
     /// One press, from the key going down to the overlay going away.
+    ///
+    /// A rework — another take, or a steer — starts a new request but stays the
+    /// same press: same caret, same mode, same undo bookkeeping. What it adds
+    /// is memory of what was written last time and of what the user has asked
+    /// for since, because the brain builds every draft with a fresh agent and
+    /// would otherwise have neither.
     private struct Session {
         let requestId: String
         let target: CaretTarget
         let mode: DraftMode
+        /// The draft this request is reworking, when it is a rework.
+        var previousDraft: String?
+        /// The steers the user has typed, oldest first.
+        var guidance: [String] = []
+        /// This request asked for another take rather than a revision.
+        var regenerate = false
         var draft: String?
         /// The edit that put the draft in, once it is in. Its `inverse` is undo.
         var applied: FieldEdit?
@@ -152,10 +171,18 @@ final class MinneKeyController {
         // leave it, it has nothing left to point at.
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            // Minne activating is not the user leaving: borrowing the keyboard
+            // for the guidance field must never look like an app switch, or the
+            // overlay would dismiss itself the moment it was typed into.
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+                return
+            }
             Task { @MainActor in self?.appSwitched() }
         }
         presenter.onAction = { [weak self] action in self?.perform(action) }
+        presenter.onGuidance = { [weak self] steer in self?.guide(steer) }
         refreshTap()
     }
 
@@ -228,24 +255,39 @@ final class MinneKeyController {
         BrainClient.log("minne key: \(target.logSummary)")
 
         let mode = target.mode
-        let requestId = makeRequestId()
-        session = Session(requestId: requestId, target: target, mode: mode)
+        let session = Session(requestId: makeRequestId(), target: target, mode: mode)
+        self.session = session
         overlayGeneration += 1
         presenter.present(target, state: .working(mode))
+        send(session)
+    }
 
+    /// Puts one session's request on the wire and shows nothing — the caller
+    /// has already put the right state on screen, because what a request looks
+    /// like while it runs is not the same question as what it asks for.
+    private func send(_ session: Session) {
         guard let backend else {
             fail("Minne's brain is not running")
             return
         }
-        backend.draft(id: requestId, context: Self.context(for: target, mode: mode)) {
-            [weak self] result in
+        let requestId = session.requestId
+        backend.draft(id: requestId, context: Self.context(for: session)) { [weak self] result in
             self?.drafted(requestId, result)
         }
     }
 
+    private static func context(for session: Session) -> DraftRequestContext {
+        context(
+            for: session.target, mode: session.mode, previousDraft: session.previousDraft,
+            guidance: session.guidance, regenerate: session.regenerate)
+    }
+
     /// The values the brain is given. Static and pure: what one press sends is
     /// worth being able to assert on without a window server.
-    static func context(for target: CaretTarget, mode: DraftMode) -> DraftRequestContext {
+    static func context(
+        for target: CaretTarget, mode: DraftMode, previousDraft: String? = nil,
+        guidance: [String] = [], regenerate: Bool = false
+    ) -> DraftRequestContext {
         DraftRequestContext(
             mode: mode.rawValue,
             fieldText: target.field.text,
@@ -256,7 +298,53 @@ final class MinneKeyController {
             app: target.appName,
             bundleId: target.bundleIdentifier,
             windowTitle: target.field.windowTitle,
-            recipient: target.recipient)
+            recipient: target.recipient,
+            previousDraft: previousDraft,
+            guidance: guidance,
+            regenerate: regenerate)
+    }
+
+    // MARK: - Asking again
+
+    /// Another take on the draft on screen.
+    ///
+    /// The same press, the same context, and the previous draft sent along as
+    /// the thing to differ from — without it the model has no idea it is being
+    /// asked a second time (each draft is a fresh agent) and writes the same
+    /// sentences back. Steers already given stay in force.
+    func regenerate() {
+        guard let session, let previous = session.draft, session.applied == nil else { return }
+        rework(.another, previous: previous, guidance: session.guidance, regenerate: true)
+    }
+
+    /// A steer: the draft on screen, changed in one respect.
+    ///
+    /// Guidance accumulates rather than replaces — a user who asked for
+    /// "shorter" and then "warmer" wants both — and it is the *previous draft*
+    /// that is revised, not the original press replayed with a note attached.
+    func guide(_ steer: String) {
+        let steer = steer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !steer.isEmpty, let session, let previous = session.draft, session.applied == nil
+        else { return }
+        rework(.guided, previous: previous, guidance: session.guidance + [steer], regenerate: false)
+    }
+
+    private func rework(
+        _ kind: ReworkKind, previous: String, guidance: [String], regenerate: Bool
+    ) {
+        guard let current = session else { return }
+        var next = Session(
+            requestId: makeRequestId(), target: current.target, mode: current.mode)
+        next.previousDraft = previous
+        next.guidance = guidance
+        next.regenerate = regenerate
+        session = next
+        BrainClient.log(
+            "minne key: \(regenerate ? "another take" : "reworking")"
+                + (guidance.isEmpty ? "" : " (\(guidance.count) steer(s))"))
+        presenter.update(guidance: guidance)
+        show(.reworking(kind, previous: previous))
+        send(next)
     }
 
     private func drafted(_ requestId: String, _ result: Result<DraftReply, any Error>) {
@@ -329,7 +417,23 @@ final class MinneKeyController {
     /// user asked for text in their field, they now have it, and a panel that
     /// stayed put would be one more thing to dismiss.
     func insert() {
-        guard var session, let draft = session.draft, session.applied == nil else { return }
+        guard let session, session.draft != nil, session.applied == nil else { return }
+        // If the guidance field has the keyboard, the app about to be typed
+        // into does not. Give it back first and let focus travel: the
+        // pasteboard path posts a real ⌘V, and a ⌘V posted while our own panel
+        // is key goes into our own panel.
+        let requestId = session.requestId
+        if presenter.endGuiding() {
+            schedule(Self.focusReturnDelay) { [weak self] in self?.performInsert(requestId) }
+            return
+        }
+        performInsert(requestId)
+    }
+
+    private func performInsert(_ requestId: String) {
+        guard var session, session.requestId == requestId, let draft = session.draft,
+            session.applied == nil, presenter.isPresenting
+        else { return }
         let edit = FieldEdit.forDraft(draft, mode: session.mode, field: session.target.field)
         guard let method = writer.apply(edit, in: insertionTarget(for: edit, in: session)) else {
             fail("Minne could not write into \(session.target.appName) — use Copy")
@@ -409,17 +513,20 @@ final class MinneKeyController {
             insert()
             return
         }
-        let requestId = makeRequestId()
-        self.session = Session(requestId: requestId, target: session.target, mode: session.mode)
-        show(.working(session.mode))
-        guard let backend else {
-            fail("Minne's brain is not running")
-            return
+        // The same request again, rework and all: a steer the user gave before
+        // the brain fell over is still what they asked for.
+        var next = Session(
+            requestId: makeRequestId(), target: session.target, mode: session.mode)
+        next.previousDraft = session.previousDraft
+        next.guidance = session.guidance
+        next.regenerate = session.regenerate
+        self.session = next
+        if let previous = next.previousDraft {
+            show(.reworking(next.regenerate ? .another : .guided, previous: previous))
+        } else {
+            show(.working(next.mode))
         }
-        backend.draft(id: requestId, context: Self.context(for: session.target, mode: session.mode))
-        { [weak self] result in
-            self?.drafted(requestId, result)
-        }
+        send(next)
     }
 
     func copyDraft() {
@@ -434,6 +541,7 @@ final class MinneKeyController {
         case .copy: copyDraft()
         case .retry: retry()
         case .undo: undo()
+        case .regenerate: regenerate()
         case .dismiss: dismiss()
         }
     }
@@ -444,14 +552,22 @@ final class MinneKeyController {
     ///
     /// Only ever while the overlay is up, and only for what the state on screen
     /// actually offers: Return is not ours while a draft is still being
-    /// written, and ⌘Z is not ours unless there is an insertion of ours to take
-    /// back — nor when the draft went in as a paste, because then the app's own
-    /// undo stack holds it and is the better answer. Everything else belongs to
-    /// the app the user is typing in, which is the whole reason this is a
-    /// question the tap asks rather than a rule it applies.
+    /// written, ⌘R is not ours unless there is a draft to write again, and ⌘Z
+    /// is not ours unless there is an insertion of ours to take back — nor when
+    /// the draft went in as a paste, because then the app's own undo stack
+    /// holds it and is the better answer. Everything else belongs to the app
+    /// the user is typing in, which is the whole reason this is a question the
+    /// tap asks rather than a rule it applies.
+    ///
+    /// And while the guidance field is being edited, **nothing** is ours. The
+    /// panel holds the keyboard in that state, so every key the user presses is
+    /// meant for the text they are typing into it: Return submits the steer,
+    /// Escape puts the field away, and ⌘Z is the field editor's own undo. All
+    /// four arrive at the field natively, which is only true because the tap
+    /// lets them past.
     @discardableResult
     func command(_ command: MinneKeyCommand) -> Bool {
-        guard presenter.isPresenting else { return false }
+        guard presenter.isPresenting, !presenter.isGuiding else { return false }
         switch command {
         case .escape:
             dismiss()
@@ -459,6 +575,14 @@ final class MinneKeyController {
         case .submit:
             guard case .result = presenter.state else { return false }
             insert()
+            return true
+        case .regenerate:
+            guard case .result = presenter.state, session?.draft != nil else { return false }
+            regenerate()
+            return true
+        case .guide:
+            guard case .result = presenter.state else { return false }
+            presenter.beginGuiding()
             return true
         case .undo:
             guard case .inserted(let method) = presenter.state, session?.applied != nil,
@@ -486,6 +610,9 @@ final class MinneKeyController {
     /// cancelled: nobody is waiting for it any more, and the brain should not
     /// spend the user's quota finishing it.
     func dismiss() {
+        // The keyboard goes back before the panel does: it is the app's, and
+        // the user is about to be typing in it again.
+        presenter.endGuiding()
         if let session, session.draft == nil {
             backend?.abortDraft(id: session.requestId)
         }

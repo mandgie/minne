@@ -153,6 +153,17 @@ export interface DraftRequest {
   windowTitle?: string;
   /** person or channel written to, when the window title gives one away */
   recipient?: string;
+  /**
+   * The draft already on screen, when this press is a rework of it rather than
+   * a first attempt — sent so the model can differ from it or revise it, which
+   * it cannot do from a transcript it does not have (every draft is a fresh
+   * Agent).
+   */
+  previousDraft?: string;
+  /** the user's steers so far, oldest first; the last one is the new one */
+  guidance?: string[];
+  /** true when the user asked for another take rather than a revision */
+  regenerate?: boolean;
 }
 
 /**
@@ -465,6 +476,7 @@ export function decodeRequest(line: string): DecodeResult {
         "bundleId",
         "windowTitle",
         "recipient",
+        "previousDraft",
       ] as const) {
         const value = parsed[field];
         if (value === undefined) continue;
@@ -472,6 +484,20 @@ export function decodeRequest(line: string): DecodeResult {
           return fail(id, "invalid_request", `draft \`${field}\` must be a string when present`);
         }
         request[field] = value;
+      }
+      const guidance = parsed["guidance"];
+      if (guidance !== undefined) {
+        if (!Array.isArray(guidance) || guidance.some((entry) => typeof entry !== "string")) {
+          return fail(id, "invalid_request", "draft `guidance` must be an array of strings");
+        }
+        request.guidance = guidance as string[];
+      }
+      const regenerate = parsed["regenerate"];
+      if (regenerate !== undefined) {
+        if (typeof regenerate !== "boolean") {
+          return fail(id, "invalid_request", "draft `regenerate` must be a boolean when present");
+        }
+        request.regenerate = regenerate;
       }
       return ok(request);
     }

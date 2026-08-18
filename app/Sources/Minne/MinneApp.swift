@@ -208,29 +208,71 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         }
         let overlay = MinneKeyOverlayController()
         minneKeyPreview = overlay
-        overlay.present(target, state: state)
+        overlay.present(target, state: state.state)
+        if !state.guidance.isEmpty { overlay.update(guidance: state.guidance) }
+        // The *look* of the focused field, never the keyboard itself: this hook
+        // exists to be run on a machine somebody is using. `-minneKeyPreviewGuiding
+        // key` asks for the real thing — the panel actually borrows key status —
+        // which is how the focus hand-off gets verified against a real target
+        // app, and must only be run when nobody is typing.
+        if state.guiding {
+            if UserDefaults.standard.string(forKey: "minneKeyPreviewGuiding") == "key" {
+                overlay.beginGuiding()
+            } else {
+                overlay.previewGuiding()
+            }
+        }
     }
 
-    private static func previewState(_ raw: String) -> MinneKeyOverlayState? {
+    /// One preview: what the panel shows, which steers are in force, and
+    /// whether the guidance field is drawn focused.
+    private struct MinneKeyPreview {
+        var state: MinneKeyOverlayState
+        var guidance: [String] = []
+        var guiding = false
+    }
+
+    private static let previewDraft = """
+        Hei Ingrid — torsdag passer fint for meg. Skal vi si 14:00 på \
+        kontoret? Da rekker vi å gå gjennom både budsjettet og \
+        Oslo-flyttingen før du reiser.
+        """
+
+    private static func previewState(_ raw: String) -> MinneKeyPreview? {
         switch raw {
-        case "working": return .working(.infer)
-        case "consulting": return .consulting(.infer, tool: "search_memory")
-        case "result":
-            return .result(
-                """
-                Hei Ingrid — torsdag passer fint for meg. Skal vi si 14:00 på \
-                kontoret? Da rekker vi å gå gjennom både budsjettet og \
-                Oslo-flyttingen før du reiser.
-                """)
+        case "working": return MinneKeyPreview(state: .working(.infer))
+        case "consulting":
+            return MinneKeyPreview(state: .consulting(.infer, tool: "search_memory"))
+        case "result": return MinneKeyPreview(state: .result(previewDraft))
         case "long":
             // The elision boundary, to see how tall the panel gets at its worst.
-            return .result(
-                String(
-                    repeating: "Takk for tålmodigheten — jeg rekker det før fredag. ",
-                    count: 12))
-        case "inserted": return .inserted(.pasteboard)
-        case "undone": return .undone
-        case "failed": return .failed("Google Chrome did not take the draft — use Copy")
+            return MinneKeyPreview(
+                state: .result(
+                    String(
+                        repeating: "Takk for tålmodigheten — jeg rekker det før fredag. ",
+                        count: 12)))
+        case "regenerating":
+            return MinneKeyPreview(state: .reworking(.another, previous: previewDraft))
+        case "guiding":
+            return MinneKeyPreview(state: .result(previewDraft), guiding: true)
+        case "guided":
+            return MinneKeyPreview(
+                state: .result(
+                    """
+                    Hei Ingrid! Torsdag passer veldig fint — 14:00 på kontoret? \
+                    Da rekker vi budsjettet og Oslo-flyttingen før du reiser, og \
+                    fristen på fredag er trygg.
+                    """),
+                guidance: ["warmer", "mention the Friday deadline"])
+        case "reworking":
+            return MinneKeyPreview(
+                state: .reworking(.guided, previous: previewDraft),
+                guidance: ["warmer", "mention the Friday deadline"])
+        case "inserted": return MinneKeyPreview(state: .inserted(.pasteboard))
+        case "undone": return MinneKeyPreview(state: .undone)
+        case "failed":
+            return MinneKeyPreview(
+                state: .failed("Google Chrome did not take the draft — use Copy"))
         default: return nil
         }
     }

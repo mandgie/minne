@@ -405,6 +405,11 @@ export class MinneBrain {
       ...(request.bundleId === undefined ? {} : { bundleId: request.bundleId }),
       ...(request.windowTitle === undefined ? {} : { windowTitle: request.windowTitle }),
       ...(request.recipient === undefined ? {} : { recipient: request.recipient }),
+      // The rework fields: absent on a first press, and absent rather than
+      // empty here so a plain draft's prompt is byte-for-byte what it was.
+      ...(request.previousDraft === undefined ? {} : { previousDraft: request.previousDraft }),
+      ...(request.guidance === undefined ? {} : { guidance: request.guidance }),
+      ...(request.regenerate === undefined ? {} : { regenerate: request.regenerate }),
     };
 
     const aborter = new AbortController();
@@ -421,7 +426,11 @@ export class MinneBrain {
       });
       this.log(
         `draft ${id}: ${result.mode} in ${context.app}, ${result.text.length} chars, ` +
-          `style ${result.stylePage ?? "(none)"}`,
+          `style ${result.stylePage ?? "(none)"}` +
+          (context.regenerate === true ? ", another take" : "") +
+          (context.guidance !== undefined && context.guidance.length > 0
+            ? `, guided by ${context.guidance.length}`
+            : ""),
       );
       this.send(doneEvent(id, result));
     } catch (err) {

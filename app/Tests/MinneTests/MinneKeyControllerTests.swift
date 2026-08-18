@@ -45,8 +45,14 @@ private final class FakeOverlay: MinneKeyPresenting {
     var isPresenting = false
     var state: MinneKeyOverlayState?
     var onAction: (@MainActor (MinneKeyAction) -> Void)?
+    var onGuidance: (@MainActor (String) -> Void)?
     /// Screen rectangle the overlay claims, in Quartz coordinates.
     var bounds = CGRect(x: 100, y: 200, width: 240, height: 44)
+    /// The steers the overlay has been told to show, latest last.
+    private(set) var guidanceShown: [[String]] = []
+    /// How often the keyboard was handed back to the app.
+    private(set) var keyReturns = 0
+    var isGuiding = false
 
     func present(_ target: CaretTarget, state: MinneKeyOverlayState) {
         presented.append(target)
@@ -61,10 +67,34 @@ private final class FakeOverlay: MinneKeyPresenting {
         self.state = state
     }
 
+    func update(guidance: [String]) {
+        guidanceShown.append(guidance)
+    }
+
+    func beginGuiding() {
+        guard isPresenting else { return }
+        isGuiding = true
+    }
+
+    @discardableResult
+    func endGuiding() -> Bool {
+        guard isGuiding else { return false }
+        isGuiding = false
+        keyReturns += 1
+        return true
+    }
+
+    /// The steer the user typed, as the real panel would report it.
+    func submitGuidance(_ steer: String) {
+        endGuiding()
+        onGuidance?(steer)
+    }
+
     func dismiss() {
         dismissals += 1
         isPresenting = false
         state = nil
+        isGuiding = false
     }
 
     func contains(quartzPoint: CGPoint) -> Bool {
@@ -160,6 +190,17 @@ private final class FakeDraftBackend: DraftBackend {
     }
 }
 
+/// Request ids, one per request, so a rework can be told from the press it
+/// grew out of. A class because `makeRequestId` is not actor-isolated.
+private final class IdSequence: @unchecked Sendable {
+    private var issued = 0
+
+    func next() -> String {
+        issued += 1
+        return "draft-\(issued)"
+    }
+}
+
 /// When the Minne key wakes up, what it asks for, what it does with the answer,
 /// and what puts it away again.
 @MainActor
@@ -170,6 +211,7 @@ final class MinneKeyControllerTests: XCTestCase {
     private var pasteboard: FakePasteboard!
     private var backend: FakeDraftBackend!
     private var taps: [FakeTap]!
+    private let ids = IdSequence()
     /// Work the controller has asked to happen later, and has not had run yet.
     private var scheduled: [(delay: TimeInterval, work: @MainActor () -> Void)] = []
     /// Set to false to simulate a tap that cannot be created.
@@ -207,7 +249,7 @@ final class MinneKeyControllerTests: XCTestCase {
                 self.taps.append(tap)
                 return tap
             },
-            makeRequestId: { "draft-1" },
+            makeRequestId: { [ids] in ids.next() },
             schedule: { [weak self] delay, work in self?.scheduled.append((delay, work)) })
         controller.backend = backend
         self.controller = controller
@@ -742,6 +784,216 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertEqual(writer.reverts.count, 1)
         overlay.onAction?(.dismiss)
         XCTAssertFalse(overlay.isPresenting)
+    }
+
+    // MARK: - Another take
+
+    /// The point of regenerate: the model is asked again *with the draft it
+    /// wrote*, because a fresh agent given the same context writes the same
+    /// sentences back.
+    func testAnotherTakeSendsThePreviousDraftAsTheThingToDifferFrom() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        controller.regenerate()
+
+        XCTAssertEqual(backend.requests.count, 2)
+        let second = backend.requests.last?.context
+        XCTAssertEqual(second?.previousDraft, "Torsdag passer fint.")
+        XCTAssertTrue(second?.regenerate == true)
+        // Same press: same caret, same mode, same context.
+        XCTAssertEqual(second?.mode, backend.requests.first?.context.mode)
+        XCTAssertEqual(second?.app, "TextEdit")
+    }
+
+    /// The draft on screen stays on screen while the new one is written — the
+    /// panel keeps its size and the user keeps their place.
+    func testTheOldDraftStaysUnderTheShimmerWhileAnotherTakeRuns() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        controller.regenerate()
+        XCTAssertEqual(overlay.states.last, .reworking(.another, previous: "Torsdag passer fint."))
+
+        backend.finish("draft-2", with: DraftReply(text: "Kan vi si torsdag 14:00?"))
+        XCTAssertEqual(overlay.states.last, .result("Kan vi si torsdag 14:00?"))
+        XCTAssertTrue(writer.edits.isEmpty, "a rework never touches the field")
+    }
+
+    func testAnotherTakeIsIgnoredUntilThereIsADraft() {
+        let controller = makeControllerAndTap()
+        controller.regenerate()
+        XCTAssertEqual(backend.requests.count, 1)
+        XCTAssertEqual(overlay.states.last, .working(.infer))
+    }
+
+    /// Once the draft is in the field it is the field's, not ours to rewrite.
+    func testAnotherTakeIsIgnoredAfterAnInsertion() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        controller.insert()
+        controller.regenerate()
+        XCTAssertEqual(backend.requests.count, 1)
+    }
+
+    // MARK: - Guidance
+
+    func testASteerRevisesThePreviousDraftRatherThanStartingOver() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginGuiding()
+        overlay.submitGuidance("warmer")
+
+        let second = backend.requests.last?.context
+        XCTAssertEqual(second?.previousDraft, "Torsdag passer fint.")
+        XCTAssertEqual(second?.guidance, ["warmer"])
+        XCTAssertEqual(second?.regenerate, false)
+        XCTAssertEqual(overlay.states.last, .reworking(.guided, previous: "Torsdag passer fint."))
+    }
+
+    /// Guidance stacks: a user who asked for "shorter" and then "warmer" wants
+    /// both, and the panel shows both.
+    func testSteersAccumulateAndAreShownAboveTheField() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.submitGuidance("shorter")
+        backend.finish("draft-2", with: DraftReply(text: "Torsdag går fint."))
+        overlay.submitGuidance("warmer")
+
+        XCTAssertEqual(backend.requests.last?.context.guidance, ["shorter", "warmer"])
+        // Each rework revises the draft that was actually on screen.
+        XCTAssertEqual(backend.requests.last?.context.previousDraft, "Torsdag går fint.")
+        XCTAssertEqual(overlay.guidanceShown.last, ["shorter", "warmer"])
+    }
+
+    /// And another take after a steer keeps the steer: it is a different
+    /// attempt at the same brief, not a reset.
+    func testAnotherTakeKeepsTheSteersAlreadyGiven() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.submitGuidance("warmer")
+        backend.finish("draft-2", with: DraftReply(text: "Hei! Torsdag passer fint."))
+        controller.regenerate()
+
+        XCTAssertEqual(backend.requests.last?.context.guidance, ["warmer"])
+        XCTAssertTrue(backend.requests.last?.context.regenerate == true)
+    }
+
+    func testAnEmptySteerIsNotARequest() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        controller.guide("   ")
+        XCTAssertEqual(backend.requests.count, 1)
+        XCTAssertEqual(overlay.states.last, .result("Torsdag passer fint."))
+    }
+
+    /// Guidance happens entirely before insertion, so the undo bookkeeping is
+    /// untouched by it: what goes in is the draft that was on screen when the
+    /// user pressed Insert, and undo puts back exactly what was there.
+    func testGuidanceLeavesInsertionAndUndoExactlyAsTheyWere() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        overlay.submitGuidance("warmer")
+        backend.finish("draft-2", with: DraftReply(text: "Sorry — Thursday is tricky for me!"))
+        XCTAssertTrue(writer.edits.isEmpty)
+
+        controller.insert()
+        XCTAssertEqual(writer.contents, "Sorry — Thursday is tricky for me!")
+        controller.undo()
+        XCTAssertEqual(writer.contents, "decline politely")
+    }
+
+    /// The keyboard is the app's, and the panel only borrows it. A ⌘V posted
+    /// while our own panel is key would paste into our own panel.
+    func testTheKeyboardGoesBackBeforeAnythingIsTypedIntoTheApp() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginGuiding()
+
+        controller.insert()
+        XCTAssertEqual(overlay.keyReturns, 1)
+        XCTAssertFalse(overlay.isGuiding)
+        XCTAssertTrue(writer.edits.isEmpty, "nothing is typed until focus has travelled back")
+
+        runScheduledWork()
+        XCTAssertEqual(writer.edits.count, 1)
+    }
+
+    func testDismissingGivesTheKeyboardBack() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginGuiding()
+        controller.dismiss()
+        XCTAssertEqual(overlay.keyReturns, 1)
+    }
+
+    /// The same request again, steers and all: a steer the user gave before the
+    /// brain fell over is still what they asked for.
+    func testRetryAfterAFailedSteerAsksForTheSameRevision() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.submitGuidance("warmer")
+        backend.fail("draft-2", with: BrainClientError.brain(code: "busy", message: "busy"))
+        XCTAssertEqual(overlay.states.last, .failed("Minne is already writing a draft"))
+
+        overlay.onAction?(.retry)
+        XCTAssertEqual(backend.requests.last?.context.guidance, ["warmer"])
+        XCTAssertEqual(backend.requests.last?.context.previousDraft, "Torsdag passer fint.")
+        XCTAssertEqual(overlay.states.last, .reworking(.guided, previous: "Torsdag passer fint."))
+    }
+
+    // MARK: - Keys, while the guidance field has them
+
+    /// The whole routing rule in one test: with the panel key, every one of
+    /// these belongs to the text field the user is typing into, and the tap
+    /// must hand all of them over.
+    func testTheTapClaimsNothingWhileTheGuidanceFieldIsBeingEdited() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginGuiding()
+
+        for key: MinneKeyCommand in [.escape, .submit, .undo, .regenerate, .guide] {
+            XCTAssertEqual(tap.onCommand?(key), false, "\(key) must reach the field")
+        }
+        XCTAssertTrue(overlay.isPresenting, "Escape belongs to the field, not to the overlay")
+        XCTAssertTrue(writer.edits.isEmpty)
+        XCTAssertEqual(backend.requests.count, 1)
+    }
+
+    /// And once editing ends, Escape is the overlay's again — which is what
+    /// makes a second Escape dismiss.
+    func testEscapeIsTheOverlaysAgainOnceEditingEnds() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginGuiding()
+        XCTAssertEqual(tap.onCommand?(.escape), false)
+
+        overlay.endGuiding()
+        XCTAssertEqual(tap.onCommand?(.escape), true)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    func testCommandRAsksForAnotherTakeOnlyWhileADraftIsOnScreen() {
+        makeControllerAndTap()
+        // Still drafting: ⌘R is the browser's reload, as it always is.
+        XCTAssertEqual(tap.onCommand?(.regenerate), false)
+
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        XCTAssertEqual(tap.onCommand?(.regenerate), true)
+        XCTAssertEqual(backend.requests.count, 2)
+
+        // And not while the rework it just started is running.
+        XCTAssertEqual(tap.onCommand?(.regenerate), false)
+        XCTAssertEqual(backend.requests.count, 2)
+    }
+
+    func testTabOpensTheGuidanceFieldOnlyOnAFinishedDraft() {
+        makeControllerAndTap()
+        XCTAssertEqual(tap.onCommand?(.guide), false)
+        XCTAssertFalse(overlay.isGuiding)
+
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        XCTAssertEqual(tap.onCommand?(.guide), true)
+        XCTAssertTrue(overlay.isGuiding)
     }
 
     @discardableResult

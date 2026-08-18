@@ -11,6 +11,10 @@ enum MinneKeyCommand: Equatable, Sendable {
     case submit
     /// ⌘Z: take back the insertion Minne just made.
     case undo
+    /// ⌘R: ask for another take on the draft on screen.
+    case regenerate
+    /// Tab: move into the guidance field, to steer the draft in words.
+    case guide
 }
 
 /// The `CGEventTap` behind the Minne key.
@@ -39,11 +43,14 @@ final class MinneKeyTap {
     /// `NX_DEVICERALTKEYMASK` — the bit that says *which* Option key. The event
     /// is a press when it is set and a release when it is not.
     nonisolated static let rightOptionDeviceMask: UInt64 = 0x0000_0040
-    /// `kVK_Escape`, `kVK_Return`, `kVK_ANSI_KeypadEnter`, `kVK_ANSI_Z`.
+    /// `kVK_Escape`, `kVK_Return`, `kVK_ANSI_KeypadEnter`, `kVK_ANSI_Z`,
+    /// `kVK_ANSI_R`, `kVK_Tab`.
     nonisolated static let escapeKeyCode: Int64 = 53
     nonisolated static let returnKeyCode: Int64 = 36
     nonisolated static let keypadEnterKeyCode: Int64 = 76
     nonisolated static let zKeyCode: Int64 = 6
+    nonisolated static let rKeyCode: Int64 = 15
+    nonisolated static let tabKeyCode: Int64 = 48
 
     /// A deliberate tap of right-Option.
     var onTap: (@MainActor () -> Void)?
@@ -225,6 +232,12 @@ final class MinneKeyTap {
     /// time: ⌘Return sends a message in half the apps on the machine, and ⇧⌘Z
     /// is redo, so neither is ours. Pure, and unit-tested, because a wrong
     /// answer here is a key that stops working system-wide.
+    ///
+    /// Recognising a key here is not claiming it — the controller decides, per
+    /// state, and it claims ⌘R and Tab only while a finished draft is on
+    /// screen. That matters most for ⌘R, which is Reload in every browser: for
+    /// the second or two the overlay is offering a draft it means "another
+    /// take", and the rest of the time it is the browser's as it always was.
     nonisolated static func command(keyCode: Int64, flags: UInt64) -> MinneKeyCommand? {
         let command = flags & CGEventFlags.maskCommand.rawValue != 0
         let shift = flags & CGEventFlags.maskShift.rawValue != 0
@@ -237,6 +250,10 @@ final class MinneKeyTap {
             return command || option || control || shift ? nil : .submit
         case zKeyCode:
             return command && !shift && !option && !control ? .undo : nil
+        case rKeyCode:
+            return command && !shift && !option && !control ? .regenerate : nil
+        case tabKeyCode:
+            return command || option || control || shift ? nil : .guide
         default:
             return nil
         }

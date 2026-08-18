@@ -84,6 +84,14 @@ struct DraftRequestContext: Encodable, Sendable, Equatable {
     var bundleId: String
     var windowTitle: String
     var recipient: String?
+    /// The draft already on screen, when this press reworks it rather than
+    /// starting one. Every draft is a fresh agent with no transcript, so a
+    /// rework only knows what it wrote last time because this carries it back.
+    var previousDraft: String?
+    /// The steers the user has typed, oldest first; the last is the new one.
+    var guidance: [String] = []
+    /// The user asked for another take rather than a revision.
+    var regenerate: Bool = false
 }
 
 /// Requests the app sends to the brain. `id` correlates the brain's events.
@@ -150,6 +158,7 @@ enum BrainRequest: Encodable, Sendable {
         case type, id, protocolVersion, client, message, newChat, targetId, provider
         case method, promptId, value, cancel, model, baseUrl, query, limit, mode
         case fieldText, selection, windowText, app, bundleId, windowTitle, recipient
+        case previousDraft, guidance, regenerate
     }
 
     func encode(to encoder: Encoder) throws {
@@ -202,6 +211,14 @@ enum BrainRequest: Encodable, Sendable {
             try container.encode(context.bundleId, forKey: .bundleId)
             try container.encode(context.windowTitle, forKey: .windowTitle)
             try container.encodeIfPresent(context.recipient, forKey: .recipient)
+            // Omitted rather than sent empty on a first press: the brain builds
+            // the plain prompt when they are absent, and a `guidance: []` would
+            // be one more thing on the wire saying nothing.
+            try container.encodeIfPresent(context.previousDraft, forKey: .previousDraft)
+            if !context.guidance.isEmpty {
+                try container.encode(context.guidance, forKey: .guidance)
+            }
+            if context.regenerate { try container.encode(true, forKey: .regenerate) }
         case .status:
             try container.encode("status", forKey: .type)
         }

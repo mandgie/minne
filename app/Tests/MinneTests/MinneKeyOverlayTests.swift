@@ -50,4 +50,35 @@ final class MinneKeyOverlayTests: XCTestCase {
         _ = body.attribute(.foregroundColor, at: 0, effectiveRange: &range)
         XCTAssertEqual(range.length, body.length)
     }
+
+    // MARK: - The steers in force
+
+    func testNoSteersMeansNoChipLine() {
+        XCTAssertEqual(GuidanceRow.chipLine([]), "")
+        XCTAssertEqual(GuidanceRow.chipLine(["  ", ""]), "")
+    }
+
+    func testEachSteerGetsADot() {
+        XCTAssertEqual(GuidanceRow.chipLine(["warmer"]), "· warmer")
+        XCTAssertEqual(GuidanceRow.chipLine(["warmer", "shorter"]), "· warmer  · shorter")
+    }
+
+    /// The panel is a HUD at someone's caret: after a few rounds it counts the
+    /// older steers rather than listing them.
+    func testOlderSteersBecomeACount() {
+        let line = GuidanceRow.chipLine(["a", "b", "c", "d", "e"])
+        XCTAssertTrue(line.hasPrefix("· +2"))
+        XCTAssertTrue(line.contains("· c"))
+        XCTAssertTrue(line.contains("· e"))
+        XCTAssertFalse(line.contains("· a"))
+    }
+
+    /// And one very long steer is elided rather than pushing the panel wider
+    /// than the draft it belongs to.
+    func testALongSteerIsElided() {
+        let steer = String(repeating: "very ", count: 20) + "warm"
+        let line = GuidanceRow.chipLine([steer])
+        XCTAssertTrue(line.hasSuffix("…"))
+        XCTAssertLessThan(line.count, GuidanceRow.maxChipCharacters + 4)
+    }
 }

@@ -44,6 +44,16 @@ export interface DraftContext {
   windowTitle?: string;
   /** person or channel being written to, when the app's title gives one away */
   recipient?: string;
+  /**
+   * The draft the user is looking at, when this press reworks it. Every draft
+   * is a fresh Agent with no transcript, so a rework only knows what it wrote
+   * last time because the app sends it back.
+   */
+  previousDraft?: string;
+  /** the user's steers so far, oldest first; the last one is the new one */
+  guidance?: string[];
+  /** the user asked for another take, not a revision */
+  regenerate?: boolean;
 }
 
 /** The style page a draft is written to sound like. */
@@ -140,6 +150,66 @@ function block(label: string, text: string): string[] {
 }
 
 /**
+ * The part of the prompt that exists because the user has seen a draft already
+ * and asked for something else.
+ *
+ * Two jobs, and keeping them apart is the whole point. **Regenerate** wants a
+ * genuinely different attempt, so the previous draft goes in as the thing to
+ * avoid; without it the model writes the same sentences again, because the
+ * context that produced them has not changed. **Guidance** wants the draft it
+ * already has, changed in one respect — so the previous draft goes in as the
+ * thing to keep, and the steer says what to move. Any earlier steers are still
+ * in force in both cases: a user who asked for "shorter" and then "warmer"
+ * wants both.
+ */
+function reworkLines(context: DraftContext): string[] {
+  const previous = clip(context.previousDraft ?? "", MAX_FIELD_CHARS).trim();
+  const steers = (context.guidance ?? []).map((line) => line.trim()).filter((line) => line !== "");
+  if (previous === "" && steers.length === 0) return [];
+
+  const lines: string[] = [];
+  if (previous === "") {
+    // No draft to work from — the steers are simply extra instructions.
+    lines.push("", "The user also asked for this, and it applies to what you write:");
+    lines.push(...steers.map((steer) => `- ${steer}`));
+    return lines;
+  }
+
+  if (context.regenerate === true) {
+    lines.push(
+      "",
+      "You already wrote the draft below and the user asked for another take. " +
+        "Write a meaningfully different one: a different angle, a different " +
+        "opening, a different shape. Do not repeat it or paraphrase it back. " +
+        "It must still do the same job for the same reader.",
+    );
+    lines.push(...block("The draft you already wrote — do not repeat it", previous));
+    if (steers.length > 0) {
+      lines.push("", "These instructions from the user still apply:");
+      lines.push(...steers.map((steer) => `- ${steer}`));
+    }
+    return lines;
+  }
+
+  lines.push(
+    "",
+    "You already wrote the draft below and the user has steered it. Revise " +
+      "that draft: change what the guidance asks for and keep everything it " +
+      "did not object to — the wording, the facts and the length that were " +
+      "not mentioned are fine as they are. Return the revised text only.",
+  );
+  lines.push(...block("The draft so far", previous));
+  lines.push(
+    "",
+    steers.length === 1
+      ? "How the user wants it changed:"
+      : "How the user wants it changed, oldest first — the last line is the new one:",
+  );
+  lines.push(...steers.map((steer) => `- ${steer}`));
+  return lines;
+}
+
+/**
  * The user turn for one press. What varies between the modes is not the tone
  * but the *job*, so each mode gets its own instruction and its own idea of what
  * the field text means — an instruction to follow, a passage to rewrite, or
@@ -186,6 +256,7 @@ export function buildDraftPrompt(context: DraftContext, style: StylePage | null)
       break;
   }
 
+  lines.push(...reworkLines(context));
   lines.push("", "Where this is being typed:", ...where.map((line) => `- ${line}`));
   if (window.trim() !== "") {
     lines.push(...block("What the rest of the window says", window));

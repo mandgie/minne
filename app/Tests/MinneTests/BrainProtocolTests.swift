@@ -37,11 +37,43 @@ final class BrainProtocolTests: XCTestCase {
 
     func testConfigureEncoding() throws {
         let configure = try encodeToJSON(
-            .configure(id: "c1", provider: "ollama", model: "qwen3", baseUrl: "http://localhost:9999/v1"))
+            .configure(
+                id: "c1", provider: "ollama", model: "qwen3", baseUrl: "http://localhost:9999/v1"))
         XCTAssertEqual(configure["type"] as? String, "configure")
         XCTAssertEqual(configure["provider"] as? String, "ollama")
         XCTAssertEqual(configure["model"] as? String, "qwen3")
         XCTAssertEqual(configure["baseUrl"] as? String, "http://localhost:9999/v1")
+    }
+
+    /// A first press sends nothing about reworking — the brain builds the plain
+    /// prompt from the absence of these fields, so an empty array on the wire
+    /// would be a different request.
+    @MainActor
+    func testAFirstDraftSendsNoReworkFields() throws {
+        let context = MinneKeyController.context(
+            for: CaretTarget(
+                bundleIdentifier: "com.apple.Mail", appName: "Mail",
+                anchor: CaretAnchor(rect: .zero, source: .caret)),
+            mode: .infer)
+        let json = try encodeToJSON(.draft(id: "d1", context: context))
+        XCTAssertEqual(json["type"] as? String, "draft")
+        XCTAssertNil(json["previousDraft"])
+        XCTAssertNil(json["guidance"])
+        XCTAssertNil(json["regenerate"])
+    }
+
+    @MainActor
+    func testAReworkedDraftCarriesThePreviousDraftAndTheSteers() throws {
+        let context = MinneKeyController.context(
+            for: CaretTarget(
+                bundleIdentifier: "com.apple.Mail", appName: "Mail",
+                anchor: CaretAnchor(rect: .zero, source: .caret)),
+            mode: .infer, previousDraft: "Torsdag passer fint.", guidance: ["warmer"],
+            regenerate: true)
+        let json = try encodeToJSON(.draft(id: "d2", context: context))
+        XCTAssertEqual(json["previousDraft"] as? String, "Torsdag passer fint.")
+        XCTAssertEqual(json["guidance"] as? [String], ["warmer"])
+        XCTAssertEqual(json["regenerate"] as? Bool, true)
     }
 
     func testAuthPromptDecoding() throws {
