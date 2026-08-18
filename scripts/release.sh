@@ -77,14 +77,24 @@ cp "$(dirname "$0")/dmg-background.tiff" "$STAGING/.background/background.tiff"
 # Build read-write first: the drag-to-Applications window (background, icon
 # positions, view options) is a .DS_Store Finder has to write into the
 # mounted volume before it is frozen into the compressed image.
+# A volume with this name left mounted (a user install, an earlier verify)
+# hijacks the Finder styling below — the AppleScript addresses the disk by
+# name and read-only volumes swallow view-option writes silently.
+for v in "/Volumes/Minne $VERSION"*; do
+    [ -e "$v" ] && hdiutil detach "$v" -force -quiet || true
+done
 RW_DMG="$BUILD/Minne-rw.dmg"
 rm -f "$RW_DMG"
 hdiutil create -quiet -volname "Minne $VERSION" -srcfolder "$STAGING" \
     -fs HFS+ -format UDRW -ov "$RW_DMG"
 MOUNT=$(hdiutil attach -readwrite -noverify -nobrowse "$RW_DMG" | awk -F'\t' 'END {print $NF}')
+VOLNAME=$(basename "$MOUNT")
+if [ "$VOLNAME" != "Minne $VERSION" ]; then
+    echo "==> WARNING: volume mounted as '$VOLNAME' (name collision?)" >&2
+fi
 osascript <<OSA
 tell application "Finder"
-    tell disk "Minne $VERSION"
+    tell disk "$VOLNAME"
         open
         set current view of container window to icon view
         set toolbar visible of container window to false
@@ -101,6 +111,12 @@ tell application "Finder"
 end tell
 OSA
 sync
+DSSTORE_SIZE=$(stat -f%z "$MOUNT/.DS_Store" 2>/dev/null || echo 0)
+if [ "$DSSTORE_SIZE" -lt 4096 ]; then
+    echo "==> ERROR: dmg window layout was not written (.DS_Store ${DSSTORE_SIZE}B)" >&2
+    hdiutil detach "$MOUNT" -quiet || true
+    exit 1
+fi
 hdiutil detach "$MOUNT" -quiet
 hdiutil convert -quiet "$RW_DMG" -format UDZO -o "$DMG"
 rm -f "$RW_DMG"
