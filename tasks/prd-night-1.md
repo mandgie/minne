@@ -208,3 +208,12 @@ screen.
 ## Open Questions
 
 (Parking area for implementing agents — append story, blocker, and what was tried.)
+
+- US-107 (not a blocker, behavior finding): `cleanDraft` strips wrappings in a
+  single pass, so a doubly-wrapped reply — quotes around a fence (`"``` … ```"`)
+  or a fence around a fence — sheds only the outer layer and is not a fixed
+  point (`cleanDraft(cleanDraft(x)) !== cleanDraft(x)` for those shapes). All
+  realistic single wrappings, including quotes *inside* a fence, are idempotent
+  and pinned by `brain/src/draft-evals.test.ts`. Left as-is per the story's
+  no-behavior-change rule; if double-wrapped model output ever shows up in the
+  wild, decide deliberately whether stripping should loop to a fixed point.
