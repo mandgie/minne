@@ -85,7 +85,7 @@ final class AccessibilityCaretLocator: CaretLocating {
         guard pid != ProcessInfo.processInfo.processIdentifier else { return nil }
 
         let app = appElement(for: pid)
-        guard let focused = element(app, kAXFocusedUIElementAttribute) else { return nil }
+        guard let focused = focusedElement(of: app, pid: pid) else { return nil }
 
         let role = string(focused, kAXRoleAttribute)
         let subrole = string(focused, kAXSubroleAttribute)
@@ -120,6 +120,36 @@ final class AccessibilityCaretLocator: CaretLocating {
 
     /// The role that means "this is a rendered web page".
     private static let webAreaRole = "AXWebArea"
+
+    // MARK: - Waking a Chromium accessibility tree
+
+    /// Chromium's switch for forcing its accessibility tree on.
+    private static let manualAccessibilityAttribute = "AXManualAccessibility"
+
+    /// Apps already asked to wake, so the set is tried once per app run.
+    private var wokenApps: Set<pid_t> = []
+
+    /// The app's focused element, waking a dark Chromium tree when it has none.
+    ///
+    /// Chromium keeps its accessibility tree switched off until it detects an
+    /// assistive client, and while it is off `AXFocusedUIElement` answers
+    /// nothing app-wide — a caret blinking in Slack, Chrome or any Electron
+    /// app is invisible to us (verified live in Slack; GOTCHAS records the
+    /// same for VS Code). `AXManualAccessibility` is Chromium's documented
+    /// switch for exactly this, and other apps ignore it harmlessly, so it is
+    /// set for whatever app will not name its focus rather than kept behind a
+    /// bundle-id list. The tree builds asynchronously, though: the immediate
+    /// retry sometimes lands, but a press that found the tree dark may still
+    /// come up empty — the wake is what makes the *next* one work.
+    private func focusedElement(of app: AXUIElement, pid: pid_t) -> AXUIElement? {
+        if let focused = element(app, kAXFocusedUIElementAttribute) { return focused }
+        guard wokenApps.insert(pid).inserted else { return nil }
+        AXUIElementSetAttributeValue(
+            app, Self.manualAccessibilityAttribute as CFString, kCFBooleanTrue)
+        BrainClient.log(
+            "minne key: no focused element — set \(Self.manualAccessibilityAttribute), retrying")
+        return element(app, kAXFocusedUIElementAttribute)
+    }
 
     /// Walks `AXParent` looking for a web area.
     ///
