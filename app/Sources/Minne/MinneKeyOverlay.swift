@@ -30,8 +30,11 @@ enum MinneKeyOverlayState: Equatable, Sendable {
     case working(DraftMode)
     /// The draft is reading memory; `tool` is the tool's name.
     case consulting(DraftMode, tool: String)
-    /// The finished draft, waiting for the user to accept it.
-    case result(String)
+    /// The finished draft, waiting for the user to accept it. `grounding` is
+    /// the one-line account of what shaped it — which memory pages, which
+    /// style page — or nil when it drew on neither, in which case the panel
+    /// says nothing rather than pointing at an empty list.
+    case result(String, grounding: String?)
     /// The draft is being written again — another take, or a revision. Carries
     /// the draft being reworked, which stays on screen under the sweep: the
     /// panel keeps its size and the user keeps their place, instead of the
@@ -720,6 +723,10 @@ final class MinneKeyOverlayView: NSView {
     private let outcome = NSImageView()
     private let status = NSTextField(labelWithString: "")
     private let draft = DraftLabel()
+    /// What grounded the draft, in the quiet ink under it. One line always:
+    /// it is a citation, not content, and a citation that wrapped would push
+    /// the draft around to say less than the tail truncation already does.
+    private let grounding = NSTextField(labelWithString: "")
     private let shimmer = ShimmerLines(frame: .zero)
     private let rule = OverlayRule(frame: .zero)
     private let guidance = GuidanceRow(frame: .zero)
@@ -792,6 +799,12 @@ final class MinneKeyOverlayView: NSView {
         // the grid's, since the draft now sits on the panel's own surface.
         draft.preferredMaxLayoutWidth = Self.contentWidth
 
+        grounding.font = .systemFont(ofSize: 11)
+        grounding.textColor = OverlayPalette.inkTertiary
+        grounding.maximumNumberOfLines = 1
+        grounding.lineBreakMode = .byTruncatingTail
+        grounding.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 7
@@ -817,14 +830,18 @@ final class MinneKeyOverlayView: NSView {
         statusRow.alignment = .firstBaseline
         statusRow.spacing = 5
 
-        column.setViews([header, rule, statusRow, shimmer, draft, guidance, buttons], in: .top)
+        column.setViews(
+            [header, rule, statusRow, shimmer, draft, grounding, guidance, buttons], in: .top)
         // Air, in three sizes: tight around the rule, a line's worth before the
-        // draft, and a little more before the row of capsules.
+        // draft, and a little more before the row of capsules. The grounding
+        // line hugs the draft it annotates — its spacing is set per state in
+        // `show`, because a hidden view collapses its custom spacing with it.
         column.setCustomSpacing(9, after: header)
         column.setCustomSpacing(9, after: rule)
         column.setCustomSpacing(11, after: statusRow)
         column.setCustomSpacing(13, after: shimmer)
         column.setCustomSpacing(13, after: draft)
+        column.setCustomSpacing(13, after: grounding)
         column.setCustomSpacing(12, after: guidance)
         NSLayoutConstraint.activate([
             header.widthAnchor.constraint(equalToConstant: Self.contentWidth),
@@ -832,6 +849,7 @@ final class MinneKeyOverlayView: NSView {
             shimmer.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             guidance.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             draft.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
+            grounding.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
             statusRow.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
         ])
     }
@@ -852,9 +870,9 @@ final class MinneKeyOverlayView: NSView {
             show(status: mode.progressLabel, state: state, draft: nil, actions: [.dismiss])
         case .consulting(_, let tool):
             show(status: Self.toolLabel(tool), state: state, draft: nil, actions: [.dismiss])
-        case .result(let text):
+        case .result(let text, let grounding):
             show(
-                status: "Draft ready", state: state, draft: text,
+                status: "Draft ready", state: state, draft: text, grounding: grounding,
                 actions: [.insert, .copy, .regenerate, .dismiss])
         case .reworking(let kind, let previous):
             show(
@@ -898,7 +916,7 @@ final class MinneKeyOverlayView: NSView {
 
     private func show(
         status text: String, state: MinneKeyOverlayState, draft body: String?,
-        actions: [MinneKeyAction]
+        grounding line: String? = nil, actions: [MinneKeyAction]
     ) {
         let failed: Bool
         if case .failed = state { failed = true } else { failed = false }
@@ -930,6 +948,14 @@ final class MinneKeyOverlayView: NSView {
             ?? NSAttributedString()
         draft.isHidden = body == nil
         if case .reworking = state { draft.startSweep() } else { draft.stopSweep() }
+
+        // Only under a finished draft — never while thinking, where it would
+        // be a claim about a draft that does not exist yet. Nil means silence.
+        grounding.stringValue = line ?? ""
+        grounding.isHidden = line == nil
+        // Tucked under the draft it annotates when it is there; the draft
+        // keeps its usual air before the capsules when it is not.
+        column.setCustomSpacing(grounding.isHidden ? 13 : 7, after: draft)
 
         // The field is offered whenever there is a draft to steer, and keeps
         // its place — with its chips — while a rework runs, so the panel does

@@ -31,19 +31,25 @@ struct DraftReply: Equatable, Sendable {
     var text: String
     /// The `style/` page it was written to sound like, when the user has one.
     var stylePage: String?
+    /// The wiki pages prefetched into the prompt for the correspondent.
+    var memoryPages: [String]
 
-    /// Reads the `done` result of a `draft` request.
+    /// Reads the `done` result of a `draft` request. Both grounding fields are
+    /// optional on the wire: an older brain sends neither, and a draft decoded
+    /// without them is a draft, not an error.
     init?(_ result: JSONValue?) {
         guard let object = result?.objectValue,
             let text = object["text"]?.stringValue, !text.isEmpty
         else { return nil }
         self.text = text
         self.stylePage = object["stylePage"]?.stringValue
+        self.memoryPages = object["memoryPages"]?.arrayValue?.compactMap(\.stringValue) ?? []
     }
 
-    init(text: String, stylePage: String? = nil) {
+    init(text: String, stylePage: String? = nil, memoryPages: [String] = []) {
         self.text = text
         self.stylePage = stylePage
+        self.memoryPages = memoryPages
     }
 }
 
@@ -356,8 +362,14 @@ final class MinneKeyController {
             session?.draft = reply.text
             BrainClient.log(
                 "minne key: draft ready (\(reply.text.count) chars"
-                    + (reply.stylePage.map { ", style \($0)" } ?? "") + ")")
-            show(.result(reply.text))
+                    + (reply.stylePage.map { ", style \($0)" } ?? "")
+                    + (reply.memoryPages.isEmpty
+                        ? "" : ", memory \(reply.memoryPages.joined(separator: " "))") + ")")
+            show(
+                .result(
+                    reply.text,
+                    grounding: MinneKeyGrounding.line(
+                        memoryPages: reply.memoryPages, stylePage: reply.stylePage)))
         case .failure(let error):
             fail(Self.message(for: error))
         }

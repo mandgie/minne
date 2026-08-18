@@ -242,28 +242,37 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         Oslo-flyttingen før du reiser.
         """
 
+    /// Built through the real formatter, so the preview drifts with the rule
+    /// rather than with somebody's memory of it.
+    private static let previewGrounding = MinneKeyGrounding.line(
+        memoryPages: ["wiki/ingrid-berg.md", "wiki/oslo-flytting.md"],
+        stylePage: "wiki/style/style-messages-ingrid-berg.md")
+
     private static func previewState(_ raw: String) -> MinneKeyPreview? {
         switch raw {
         case "working": return MinneKeyPreview(state: .working(.infer))
         case "consulting":
             return MinneKeyPreview(state: .consulting(.infer, tool: "search_memory"))
-        case "result": return MinneKeyPreview(state: .result(previewDraft))
+        case "result":
+            return MinneKeyPreview(state: .result(previewDraft, grounding: previewGrounding))
         case "long":
             // The elision boundary, to see how tall the panel gets at its worst.
             return MinneKeyPreview(
                 state: .result(
                     String(
                         repeating: "Takk for tålmodigheten — jeg rekker det før fredag. ",
-                        count: 12)))
+                        count: 12),
+                    grounding: previewGrounding))
         case "regenerating":
             return MinneKeyPreview(state: .reworking(.another, previous: previewDraft))
         case "guiding":
-            return MinneKeyPreview(state: .result(previewDraft), guiding: true)
+            return MinneKeyPreview(
+                state: .result(previewDraft, grounding: previewGrounding), guiding: true)
         case "guiding-steered":
             // The busiest the guidance line ever gets: the rule in the accent,
             // the steers already in force under it, and the field live.
             return MinneKeyPreview(
-                state: .result(previewDraft),
+                state: .result(previewDraft, grounding: previewGrounding),
                 guidance: ["warmer", "mention the Friday deadline"], guiding: true)
         case "guided":
             return MinneKeyPreview(
@@ -272,7 +281,8 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                     Hei Ingrid! Torsdag passer veldig fint — 14:00 på kontoret? \
                     Da rekker vi budsjettet og Oslo-flyttingen før du reiser, og \
                     fristen på fredag er trygg.
-                    """),
+                    """,
+                    grounding: previewGrounding),
                 guidance: ["warmer", "mention the Friday deadline"])
         case "reworking":
             return MinneKeyPreview(

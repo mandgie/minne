@@ -113,6 +113,43 @@ final class BrainProtocolTests: XCTestCase {
         XCTAssertEqual(usage["totalTokens"]?.intValue, 15)
     }
 
+    /// The draft done result as the brain sends it since 2026-08-18: the pages
+    /// that grounded the draft ride along with the text.
+    func testDraftDoneResultCarriesItsGrounding() throws {
+        let json = """
+            {"type":"done","id":"d1","result":{"mode":"infer","text":"Torsdag passer fint.",\
+            "model":"mock-model","stopReason":"stop","stylePage":"wiki/style/style-slack.md",\
+            "memoryPages":["wiki/ingrid-berg.md","wiki/oslo-trip.md"],\
+            "usage":{"input":3,"output":9,"totalTokens":12}}}
+            """
+        let event = try JSONDecoder().decode(BrainEvent.self, from: Data(json.utf8))
+        guard case let .done(_, result) = event else {
+            return XCTFail("expected done, got \(event)")
+        }
+        let reply = try XCTUnwrap(DraftReply(result))
+        XCTAssertEqual(reply.text, "Torsdag passer fint.")
+        XCTAssertEqual(reply.stylePage, "wiki/style/style-slack.md")
+        XCTAssertEqual(reply.memoryPages, ["wiki/ingrid-berg.md", "wiki/oslo-trip.md"])
+    }
+
+    /// An older brain sends neither grounding field, and a null stylePage is
+    /// what the current one sends when the user has no style page yet — both
+    /// must still decode as a draft.
+    func testDraftDoneWithoutGroundingFieldsStillDecodes() throws {
+        let json = """
+            {"type":"done","id":"d2","result":{"mode":"infer","text":"Torsdag passer fint.",\
+            "model":"mock-model","stopReason":"stop","stylePage":null}}
+            """
+        let event = try JSONDecoder().decode(BrainEvent.self, from: Data(json.utf8))
+        guard case let .done(_, result) = event else {
+            return XCTFail("expected done, got \(event)")
+        }
+        let reply = try XCTUnwrap(DraftReply(result))
+        XCTAssertEqual(reply.text, "Torsdag passer fint.")
+        XCTAssertNil(reply.stylePage)
+        XCTAssertEqual(reply.memoryPages, [])
+    }
+
     func testAuthPromptSelectDecoding() throws {
         let json = """
             {"type":"auth_prompt","id":"l1","promptId":"l1:2","prompt":"Pick one",\

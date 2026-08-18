@@ -408,8 +408,25 @@ final class MinneKeyControllerTests: XCTestCase {
     func testTheDraftIsPreviewedRatherThanInserted() {
         makeControllerAndTap()
         backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
-        XCTAssertEqual(overlay.states.last, .result("Thursday works."))
+        XCTAssertEqual(overlay.states.last, .result("Thursday works.", grounding: nil))
         XCTAssertTrue(writer.edits.isEmpty, "the field must not be touched before the user accepts")
+    }
+
+    /// A draft that drew on memory says so: the pages and the style page ride
+    /// the reply into the overlay's result state as one formatted line.
+    func testWhatGroundedTheDraftIsShownWithIt() {
+        makeControllerAndTap()
+        backend.finish(
+            "draft-1",
+            with: DraftReply(
+                text: "Thursday works.",
+                stylePage: "wiki/style/style-slack.md",
+                memoryPages: ["wiki/ingrid-berg.md", "wiki/oslo-trip.md"]))
+        XCTAssertEqual(
+            overlay.states.last,
+            .result(
+                "Thursday works.",
+                grounding: "from memory: ingrid-berg, oslo-trip · style: slack"))
     }
 
     /// An answer to a press the user has already walked away from must never
@@ -814,7 +831,7 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertEqual(overlay.states.last, .reworking(.another, previous: "Torsdag passer fint."))
 
         backend.finish("draft-2", with: DraftReply(text: "Kan vi si torsdag 14:00?"))
-        XCTAssertEqual(overlay.states.last, .result("Kan vi si torsdag 14:00?"))
+        XCTAssertEqual(overlay.states.last, .result("Kan vi si torsdag 14:00?", grounding: nil))
         XCTAssertTrue(writer.edits.isEmpty, "a rework never touches the field")
     }
 
@@ -882,7 +899,7 @@ final class MinneKeyControllerTests: XCTestCase {
         backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
         controller.guide("   ")
         XCTAssertEqual(backend.requests.count, 1)
-        XCTAssertEqual(overlay.states.last, .result("Torsdag passer fint."))
+        XCTAssertEqual(overlay.states.last, .result("Torsdag passer fint.", grounding: nil))
     }
 
     /// Guidance happens entirely before insertion, so the undo bookkeeping is
