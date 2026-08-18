@@ -175,6 +175,20 @@ private final class OverlayChromeView: NSView {
 /// A hairline the width of the content column — under the header, and above the
 /// guidance field. Both sit at exactly the inset every other child starts at.
 final class OverlayRule: NSView {
+    /// The guidance rule turns blue while the field below it holds the
+    /// keyboard. It is the whole focus indicator: the panel borrows key status
+    /// from the app the user is typing in, so *where my keystrokes are going*
+    /// has to be unmistakable — and the one shape already on the grid saying
+    /// "everything below here is the guidance line" is the honest place to say
+    /// it. A filled, bordered box would say it too, but by becoming the loudest
+    /// thing in a panel whose language is whitespace and hairlines.
+    var isAccented = false {
+        didSet {
+            guard isAccented != oldValue else { return }
+            applyColors()
+        }
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -194,8 +208,9 @@ final class OverlayRule: NSView {
     }
 
     private func applyColors() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = OverlayPalette.hairline.cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance { [isAccented] in
+            layer?.backgroundColor =
+                isAccented ? OverlayPalette.blue.cgColor : OverlayPalette.hairline.cgColor
         }
     }
 }
@@ -607,6 +622,12 @@ private final class OverlayButton: NSButton {
     /// Tinted by hand rather than left as a template image: a template
     /// attachment inside an attributed string is drawn black whatever the
     /// title's foreground colour says, which on the dark panel is a hole.
+    ///
+    /// The tint goes on at full strength and the *image* is then faded to the
+    /// colour's own alpha. Filling `.sourceAtop` with a translucent colour
+    /// instead leaves the template's black showing through the difference, so a
+    /// glyph asked for in the secondary ink came out very nearly black — a full
+    /// stop darker than the words in the capsules beside it.
     private static func glyph(_ symbol: String, color: NSColor) -> NSAttributedString? {
         guard
             let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
@@ -617,18 +638,29 @@ private final class OverlayButton: NSButton {
                     NSImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)),
             let tinted = image.copy() as? NSImage
         else { return nil }
+        // Resolved first: a dynamic colour has no components to read until it
+        // is matched against the appearance in force.
+        let resolved = color.usingColorSpace(.sRGB) ?? color
         tinted.lockFocus()
-        color.set()
+        resolved.withAlphaComponent(1).set()
         NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
         tinted.unlockFocus()
         tinted.isTemplate = false
+        let alpha = resolved.alphaComponent
+        let drawn =
+            alpha < 1
+            ? NSImage(size: tinted.size, flipped: false) { rect in
+                tinted.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha)
+                return true
+            }
+            : tinted
 
         let attachment = NSTextAttachment()
-        attachment.image = tinted
+        attachment.image = drawn
         // Sat down onto the text's baseline: an attachment's origin is the
         // baseline, so without this the glyph floats a couple of points high.
         attachment.bounds = CGRect(
-            x: 0, y: -2, width: tinted.size.width, height: tinted.size.height)
+            x: 0, y: -2, width: drawn.size.width, height: drawn.size.height)
         return NSAttributedString(attachment: attachment)
     }
 

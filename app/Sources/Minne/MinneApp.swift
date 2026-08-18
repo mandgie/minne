@@ -255,6 +255,12 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             return MinneKeyPreview(state: .reworking(.another, previous: previewDraft))
         case "guiding":
             return MinneKeyPreview(state: .result(previewDraft), guiding: true)
+        case "guiding-steered":
+            // The busiest the guidance line ever gets: the rule in the accent,
+            // the steers already in force under it, and the field live.
+            return MinneKeyPreview(
+                state: .result(previewDraft),
+                guidance: ["warmer", "mention the Friday deadline"], guiding: true)
         case "guided":
             return MinneKeyPreview(
                 state: .result(

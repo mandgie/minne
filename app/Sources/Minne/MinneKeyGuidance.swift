@@ -31,11 +31,18 @@ final class GuidanceRow: NSView {
     private let rule = OverlayRule(frame: .zero)
     private let chips = NSTextField(labelWithString: "")
     private let field = GuidanceTextField(frame: .zero)
+    /// The key that gets you in, and — once you are in — the key that sends
+    /// what you typed. One slot, two answers, so focus is legible from the
+    /// trailing edge as well as from the rule.
     private let hint = NSTextField(labelWithString: "⇥")
-    /// Draws the focus ring. Layer-backed and painted by hand, because a stock
-    /// focus ring in a panel that is only briefly key looks like a mistake.
-    private let box = NSView()
+    /// Holds the field and the hint apart. It paints nothing: the row's focus
+    /// is said by the rule above it and by the ink, never by a fill.
+    private let fieldRow = NSView()
     private let column = NSStackView()
+
+    /// False while a rework is in flight — there is nothing to steer yet, so
+    /// the row must not advertise a key that would do nothing.
+    private var isEditable = true
 
     /// Whether the row is drawn as focused.
     ///
@@ -52,19 +59,20 @@ final class GuidanceRow: NSView {
     /// The steers in force, oldest first.
     var guidance: [String] = [] {
         didSet {
-            chips.stringValue = Self.chipLine(guidance)
-            chips.isHidden = chips.stringValue.isEmpty
+            guard guidance != oldValue else { return }
+            applyColors()
         }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        // A caption rather than a second line of the field: a shade smaller
-        // than the placeholder under it, so the two grey lines read as what has
-        // been applied and where to say more, not as one grey paragraph.
+        // A caption, but not the same grey as the placeholder under it: these
+        // are facts about the draft on screen and that is an empty invitation,
+        // and two lines of identical tertiary ink read as one grey paragraph
+        // instead of as two different things. Darker ink and an accent marker
+        // per steer is what separates them.
         chips.font = .systemFont(ofSize: 10.5)
-        chips.textColor = OverlayPalette.inkTertiary
         chips.lineBreakMode = .byTruncatingTail
         chips.isHidden = true
 
@@ -80,29 +88,24 @@ final class GuidanceRow: NSView {
         field.onClickWhileInactive = { [weak self] in self?.onRequestEditing?() }
 
         hint.font = .systemFont(ofSize: 10.5)
-        hint.textColor = OverlayPalette.inkTertiary
         hint.setContentHuggingPriority(.required, for: .horizontal)
 
-        box.wantsLayer = true
-        box.layer?.cornerRadius = 7
-        box.layer?.cornerCurve = .continuous
-        box.layer?.borderWidth = 1
         // Constraints rather than a stack view: the hint belongs at the far
         // edge of the field whatever the field's intrinsic width says, and a
         // stack view packs both at its leading edge the moment the field stops
         // being the stretchy one.
         field.translatesAutoresizingMaskIntoConstraints = false
         hint.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(field)
-        box.addSubview(hint)
+        fieldRow.addSubview(field)
+        fieldRow.addSubview(hint)
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 7),
-            field.topAnchor.constraint(equalTo: box.topAnchor, constant: 4),
-            field.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -4),
+            field.leadingAnchor.constraint(equalTo: fieldRow.leadingAnchor),
+            field.topAnchor.constraint(equalTo: fieldRow.topAnchor, constant: 4),
+            field.bottomAnchor.constraint(equalTo: fieldRow.bottomAnchor, constant: -4),
             field.trailingAnchor.constraint(equalTo: hint.leadingAnchor, constant: -6),
-            hint.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -7),
+            hint.trailingAnchor.constraint(equalTo: fieldRow.trailingAnchor),
             hint.centerYAnchor.constraint(equalTo: field.centerYAnchor),
         ])
 
@@ -110,7 +113,7 @@ final class GuidanceRow: NSView {
         column.alignment = .leading
         column.spacing = 8
         column.translatesAutoresizingMaskIntoConstraints = false
-        column.setViews([rule, chips, box], in: .top)
+        column.setViews([rule, chips, fieldRow], in: .top)
         column.setCustomSpacing(9, after: rule)
         column.setCustomSpacing(7, after: chips)
         addSubview(column)
@@ -121,11 +124,11 @@ final class GuidanceRow: NSView {
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             rule.widthAnchor.constraint(equalTo: widthAnchor),
             chips.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor),
-            // The box is inset by its own padding rather than sitting at the
-            // grid line: the *text* inside it then lands where every other line
-            // of type in the panel does.
-            box.leadingAnchor.constraint(equalTo: leadingAnchor, constant: -7),
-            box.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 7),
+            // On the grid, like everything else: with no box to pad, the
+            // placeholder, the steers and the draft above them all begin on the
+            // one line the panel is built on.
+            fieldRow.leadingAnchor.constraint(equalTo: leadingAnchor),
+            fieldRow.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
         applyColors()
     }
@@ -194,8 +197,47 @@ final class GuidanceRow: NSView {
 
     /// While a rework is in flight there is nothing to steer yet.
     func setEditable(_ editable: Bool) {
+        isEditable = editable
         field.isEditable = editable
         field.isSelectable = editable
+        applyColors()
+    }
+
+    /// `chipLine`, inked: the words in the secondary ink and every marker in the
+    /// accent.
+    ///
+    /// The markers are what separates this line from the placeholder under it at
+    /// a glance. A steer is something the user asked for and it is still in
+    /// force, and on this panel that is said in blue.
+    private static func chipText(_ guidance: [String]) -> NSAttributedString {
+        let line = NSMutableAttributedString(
+            string: chipLine(guidance),
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 10.5),
+                .foregroundColor: OverlayPalette.inkSecondary,
+            ])
+        // Walked from the parts rather than found by searching the finished
+        // line for "·": a steer is the user's own words and may contain one.
+        var location = 0
+        for part in chipParts(guidance) {
+            line.addAttribute(
+                .foregroundColor, value: OverlayPalette.blue,
+                range: NSRange(location: location, length: 1))
+            location += ("· " + part + "  ").utf16.count
+        }
+        return line
+    }
+
+    /// The steers as they are shown, without their markers — the one place the
+    /// capping and eliding happens, so the line and its colouring cannot
+    /// disagree about where a chip starts.
+    nonisolated static func chipParts(_ guidance: [String]) -> [String] {
+        let steers = guidance.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !steers.isEmpty else { return [] }
+        let shown = steers.suffix(maxChipsShown).map(elide)
+        let hidden = steers.count - shown.count
+        return (hidden > 0 ? ["+\(hidden)"] : []) + shown
     }
 
     /// The steers in force, as one quiet line: `· warmer · shorter`.
@@ -205,13 +247,7 @@ final class GuidanceRow: NSView {
     /// three that are freshest, and one very long steer is elided rather than
     /// pushing the panel wider than the draft it belongs to.
     nonisolated static func chipLine(_ guidance: [String]) -> String {
-        let steers = guidance.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard !steers.isEmpty else { return "" }
-        let shown = steers.suffix(maxChipsShown).map(elide)
-        let hidden = steers.count - shown.count
-        let head = hidden > 0 ? ["+\(hidden)"] : []
-        return (head + shown).map { "· \($0)" }.joined(separator: "  ")
+        chipParts(guidance).map { "· \($0)" }.joined(separator: "  ")
     }
 
     private nonisolated static func elide(_ steer: String) -> String {
@@ -219,25 +255,33 @@ final class GuidanceRow: NSView {
         return steer.prefix(maxChipCharacters - 1).trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    /// Nothing is painted until the caret is in the field: at rest the row is a
-    /// hairline and a grey placeholder, which is what keeps a panel that is
-    /// mostly *draft* from turning into a form.
+    /// No shape is ever painted here: at rest the row is a hairline and a grey
+    /// placeholder, and focused it is the same hairline in blue and a darker
+    /// placeholder. That is what keeps a panel that is mostly *draft* from
+    /// turning into a form — and it keeps the row on the panel's one grid,
+    /// which a box drawn round the text cannot be at the same time as the text
+    /// inside it.
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
-            chips.textColor = OverlayPalette.inkTertiary
-            hint.textColor = OverlayPalette.inkTertiary
-            hint.isHidden = isEditing
+            let editing = isEditing
+            chips.attributedStringValue = Self.chipText(guidance)
+            chips.isHidden = Self.chipParts(guidance).isEmpty
+            // ⇥ is how you get in; ↩ is what sends it. Neither is offered while
+            // a rework is running, because neither would do anything.
+            hint.stringValue = editing ? "↩" : "⇥"
+            hint.textColor = editing ? OverlayPalette.blue : OverlayPalette.inkTertiary
+            hint.isHidden = !isEditable
             field.textColor = OverlayPalette.ink
             field.placeholderAttributedString = NSAttributedString(
                 string: "Guide it — shorter, warmer, mention…",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 11.5),
-                    .foregroundColor: OverlayPalette.inkTertiary,
+                    // The invitation steps forward when it is live and recedes
+                    // again when it is not.
+                    .foregroundColor: editing
+                        ? OverlayPalette.inkSecondary : OverlayPalette.inkTertiary,
                 ])
-            box.layer?.borderColor =
-                isEditing ? OverlayPalette.blue.cgColor : NSColor.clear.cgColor
-            box.layer?.backgroundColor =
-                isEditing ? OverlayPalette.blueWash.cgColor : NSColor.clear.cgColor
+            rule.isAccented = editing
         }
     }
 }

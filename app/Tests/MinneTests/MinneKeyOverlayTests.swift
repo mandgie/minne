@@ -81,4 +81,25 @@ final class MinneKeyOverlayTests: XCTestCase {
         XCTAssertTrue(line.hasSuffix("…"))
         XCTAssertLessThan(line.count, GuidanceRow.maxChipCharacters + 4)
     }
+
+    /// The markers are coloured by walking the parts and stepping over each
+    /// one's own length, which is the only thing that could silently drift: a
+    /// steer that is elided, counted or contains a `·` of its own would put the
+    /// accent on a letter instead. Walked here exactly as the row walks it.
+    func testTheChipWalkLandsOnEveryMarkerAndNothingElse() {
+        let steers = [
+            "warmer", "keep the · bullet", String(repeating: "very ", count: 20) + "warm",
+            "mention the Friday deadline", "sign it off",
+        ]
+        let units = Array(GuidanceRow.chipLine(steers).utf16)
+        let marker = Array("·".utf16)[0]
+        var location = 0
+        for part in GuidanceRow.chipParts(steers) {
+            XCTAssertLessThan(location, units.count)
+            XCTAssertEqual(units[location], marker, "part \(part) does not start at a marker")
+            location += ("· " + part + "  ").utf16.count
+        }
+        // The walk steps over a separator the last chip does not have.
+        XCTAssertEqual(location - 2, units.count)
+    }
 }
