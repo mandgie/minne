@@ -504,8 +504,12 @@ final class MinneKeyController {
         let current = edit.applied(to: session.target.field.text) ?? session.target.field.text
         var target = insertionTarget(for: inverse, in: session)
         target.fieldText = current
-        target.selection = .axRange(inverse.range)
-        guard writer.revert(inverse, method: method, in: target) else {
+        // The selection read at press time goes back with the text, so undo
+        // restores the user's place too, not just their words. Only the AX
+        // revert needs it — the app's own ⌘Z restores its selection itself.
+        let selection = session.target.field.selectedRange
+        guard writer.revert(inverse, method: method, in: target, restoringSelection: selection)
+        else {
             fail("Minne could not undo that — use \(session.target.appName)'s own undo")
             return
         }

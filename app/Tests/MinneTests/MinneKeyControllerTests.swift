@@ -122,7 +122,8 @@ private final class FakeFieldWriter: FieldWriting {
     /// The target each edit was applied to — which path it was allowed to take
     /// and how the span was to be selected.
     private(set) var targets: [InsertionTarget] = []
-    private(set) var reverts: [(edit: FieldEdit, method: InsertionMethod)] = []
+    private(set) var reverts:
+        [(edit: FieldEdit, method: InsertionMethod, selection: NSRange?)] = []
     /// Text the fake field holds, updated by every applied edit.
     private(set) var contents = ""
     var method: InsertionMethod? = .selectedText
@@ -139,9 +140,12 @@ private final class FakeFieldWriter: FieldWriting {
         return method
     }
 
-    func revert(_ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget) -> Bool {
+    func revert(
+        _ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget,
+        restoringSelection selection: NSRange?
+    ) -> Bool {
         guard revertSucceeds else { return false }
-        reverts.append((edit, method))
+        reverts.append((edit, method, selection))
         contents = edit.applied(to: target.fieldText) ?? target.fieldText
         return true
     }
@@ -687,6 +691,36 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertEqual(writer.contents, "hi — i cant make it")
     }
 
+    /// Undo restores the user's place, not just their words: the selection that
+    /// was read at press time rides the revert, so after a rewrite the original
+    /// selection is selected again.
+    func testUndoRestoresTheSelectionReadAtPressTime() {
+        locator.setField(
+            FieldSnapshot(
+                text: "hi — i cant make it", selection: "i cant make it",
+                selectedRange: NSRange(location: 5, length: 14)))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "I can't make it"))
+        controller.insert()
+        controller.undo()
+
+        XCTAssertEqual(writer.contents, "hi — i cant make it")
+        XCTAssertEqual(writer.reverts.last?.selection, NSRange(location: 5, length: 14))
+    }
+
+    /// And after an infer, the caret goes back where it was.
+    func testUndoOfAnInferPutsTheCaretBack() {
+        locator.setField(
+            FieldSnapshot(text: "\n\n", selectedRange: NSRange(location: 2, length: 0)))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        controller.undo()
+
+        XCTAssertEqual(writer.contents, "\n\n")
+        XCTAssertEqual(writer.reverts.last?.selection, NSRange(location: 2, length: 0))
+    }
+
     /// After a paste the app holds the edit on its own undo stack, and in a web
     /// editor an inverse AX write would be repainted away exactly as the
     /// insertion would have been. So Undo asks the app instead.
@@ -720,6 +754,47 @@ final class MinneKeyControllerTests: XCTestCase {
         backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
         controller.undo()
         XCTAssertTrue(writer.edits.isEmpty)
+    }
+
+    /// The dispatch follows the insertion that actually happened, not the one
+    /// that was planned: a native app that refused both AX writes took the
+    /// draft as a paste, so the paste rules apply — ⌘Z stays the app's, and
+    /// the Undo button asks the app rather than writing an inverse.
+    func testAnAXWriteThatFellBackToPasteGetsThePasteUndoRules() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        writer.method = .pasteboard
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+
+        XCTAssertEqual(writer.targets.last?.strategy, .accessibilityFirst)
+        XCTAssertEqual(overlay.states.last, .inserted(.pasteboard))
+        XCTAssertEqual(tap.onCommand?(.undo), false, "⌘Z belongs to the app after any paste")
+        XCTAssertTrue(writer.reverts.isEmpty)
+
+        overlay.onAction?(.undo)
+        XCTAssertEqual(writer.reverts.last?.method, .pasteboard)
+        XCTAssertEqual(overlay.states.last, .undone)
+    }
+
+    /// Undo leaves nothing stuck behind it: once the overlay has closed, the
+    /// next press is an ordinary fresh press that drafts and inserts again.
+    func testTheKeyWorksAgainAfterAnUndo() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        controller.insert()
+        controller.undo()
+        runScheduledWork()
+        XCTAssertFalse(overlay.isPresenting)
+
+        tap.onTap?()
+        XCTAssertTrue(overlay.isPresenting)
+        XCTAssertEqual(backend.requests.count, 2)
+        backend.finish("draft-2", with: DraftReply(text: "Sorry, not Thursday."))
+        controller.insert()
+        XCTAssertEqual(writer.edits.count, 2)
+        XCTAssertEqual(overlay.states.last, .inserted(.selectedText))
     }
 
     // MARK: - Keys

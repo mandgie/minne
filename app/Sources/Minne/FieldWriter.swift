@@ -36,6 +36,41 @@ struct InsertionTarget {
 /// edit each mode makes, which paths a target allows, how the span is selected,
 /// whether an attempt worked — are pure and live in `FieldEdit`,
 /// `InsertionPolicy`, `SelectionPlan` and `InsertionCheck`.
+///
+/// # The undo guarantee
+///
+/// **Exactly one undo gesture reverses any insertion**, and whose gesture it is
+/// follows from the `InsertionMethod` that `apply` actually returned — never
+/// from the strategy that was merely planned:
+///
+/// - **AX write (`.selectedText`, `.value`): the undo is Minne's own.** Writing
+///   `AXValue` usually flattens the app's undo stack, so the app's ⌘Z has
+///   nothing to give back — which is why the controller keeps the `FieldEdit`
+///   at all. Undo is `revert` with its `inverse`: the same path pointed
+///   backwards, restoring the exact prior text *and* the selection that was
+///   read at press time (`restoringSelection`). While the "Inserted" state is
+///   on screen the tap claims ⌘Z and routes it here; the overlay's Undo button
+///   is the same verb.
+///
+/// - **Paste (`.pasteboard`): the undo is the app's.** The synthetic ⌘V went
+///   through the app's own event pipeline, so the edit sits on the app's undo
+///   stack — and in web content an inverse AX write would be repainted away by
+///   the framework's next re-render, exactly like an AX insertion is (see
+///   `InsertionStrategy`). So the tap does NOT consume ⌘Z after a paste (the
+///   keystroke reaches the app, whose undo restores text, selection and caret
+///   itself), and the overlay's Undo button posts a ⌘Z instead of writing.
+///
+/// - **Fallback pastes follow the paste rules.** When an `accessibilityFirst`
+///   target refuses both AX writes and the draft goes in via ⌘V mid-flight,
+///   `.pasteboard` is what `apply` returned, and both the tap's claiming rule
+///   (`MinneKeyController.command`) and `revert`'s dispatch key off that.
+///
+/// Either way the user pays one gesture, and never two. The dispatch decision
+/// is `InsertionMethod.undoBelongsToTheApp` (pure, tested); posting the actual
+/// events is glue. And nothing is ever written into the field before the user
+/// accepts: progress text, placeholders and the draft preview all live in the
+/// overlay panel — `apply`/`revert` here are the only writes, and they carry
+/// only the finished draft or its inverse.
 @MainActor
 protocol FieldWriting: AnyObject {
     /// Applies `edit` to `target`'s element. Returns how it got there, or nil
@@ -44,7 +79,13 @@ protocol FieldWriting: AnyObject {
     /// Takes an insertion back. `edit` is the inverse edit and `method` is how
     /// the insertion got in, which decides whether the inverse is applied by us
     /// or asked of the app (see `InsertionMethod.undoBelongsToTheApp`).
-    func revert(_ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget) -> Bool
+    /// `selection` is the range that was selected when the key was pressed; an
+    /// AX revert puts it back after the text, so undo restores the field and
+    /// the user's place in it. A ⌘Z revert ignores it — the app's own undo
+    /// already restores the selection along with the text.
+    func revert(
+        _ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget,
+        restoringSelection selection: NSRange?) -> Bool
     /// The field's value now, or nil when the app will not say. Used to confirm
     /// a paste after the fact — a keystroke is delivered asynchronously, so
     /// there is nothing to read at the moment it is posted.
@@ -149,19 +190,33 @@ final class AccessibilityFieldWriter: FieldWriting {
             ? .pasteboard : nil
     }
 
-    func revert(_ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget) -> Bool {
+    func revert(
+        _ edit: FieldEdit, method: InsertionMethod, in target: InsertionTarget,
+        restoringSelection selection: NSRange?
+    ) -> Bool {
         guard !method.undoBelongsToTheApp else { return Self.postUndo() }
         guard let element = target.handle?.element else { return false }
         guard setSelectedRange(edit.range, of: element) else { return false }
         if setString(edit.replacement, kAXSelectedTextAttribute, of: element),
             landed(edit, fieldText: target.fieldText, in: element)
         {
+            restore(selection, of: element)
             return true
         }
         guard let expected = edit.applied(to: target.fieldText),
-            setString(expected, kAXValueAttribute, of: element)
+            setString(expected, kAXValueAttribute, of: element),
+            landed(edit, fieldText: target.fieldText, in: element)
         else { return false }
-        return landed(edit, fieldText: target.fieldText, in: element)
+        restore(selection, of: element)
+        return true
+    }
+
+    /// Puts the press-time selection back after a revert. Best effort: the text
+    /// is already restored, which is the guarantee — an app that refuses to
+    /// move its selection does not turn a successful undo into a failure.
+    private func restore(_ selection: NSRange?, of element: AXUIElement) {
+        guard let selection else { return }
+        _ = setSelectedRange(selection, of: element)
     }
 
     func currentText(of handle: FocusedFieldHandle?) -> String? {
