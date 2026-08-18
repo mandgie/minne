@@ -22,6 +22,48 @@ Minne.app (Swift)              minne-brain (TypeScript, Bun binary)
         ~/Minne/  sources/  wiki/  SCHEMA.md
 ```
 
+## What leaves your Mac
+
+An audited claim, not an aspiration: the Swift app links no networking API at
+all, and the brain's only network I/O is [pi](https://github.com/badlogic/pi-mono)'s
+provider layer for the one provider you configured. There are no Minne servers,
+no telemetry and no analytics — in the app, the brain, or their dependency tree
+as configured.
+
+What travels, per feature, always to *your* AI provider under your own account
+or key:
+
+- **Draft (the Minne key):** the focused field's text, your selection, the
+  window's visible text, and the wiki pages Minne recalls for grounding —
+  clipped, inside one model request.
+- **Chat:** your messages, plus whatever memory excerpts the assistant reads
+  through its search/read tools while answering.
+- **Memory sync:** recent raw captures, in batches, so the agent can distill
+  them into wiki pages. Card and ID numbers are masked before a capture ever
+  touches disk, so what is sent is the masked text.
+- **Sign-in:** an OAuth exchange with that provider's own auth endpoints
+  (Anthropic: `claude.ai` / `platform.claude.com`; OpenAI: `auth.openai.com`),
+  or nothing at all for an API key, which is stored locally.
+
+Model requests go to the provider's public API host — `api.anthropic.com`,
+`chatgpt.com/backend-api`, `api.openai.com` — or, for the local provider, to
+the base URL you set (default `http://localhost:11434/v1`).
+
+What never leaves: the `~/Minne` folder itself. There is no backup, no cloud
+sync, and no code path that uploads your memory anywhere — pages are read into
+model prompts as excerpts when a feature needs them, and that is the only way
+any of it travels.
+
+`minne-brain --mcp` serves your memory read-only over local stdio to an MCP
+client you configure (Claude Desktop, for instance). Nothing listens on the
+network; what that client sends to its own model is governed by the client,
+not by Minne.
+
+To switch providers: Settings → Account ("Which AI Minne thinks with") offers
+Anthropic (Claude Pro/Max or API key), OpenAI (ChatGPT Plus/Pro or API key),
+and Local (Ollama or any OpenAI-compatible server). Point Minne at Ollama on
+localhost and model traffic never leaves the machine.
+
 ## Status
 
 Early development. The plan lives in [`tasks/prd-minne.md`](tasks/prd-minne.md).

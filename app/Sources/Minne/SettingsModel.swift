@@ -222,6 +222,24 @@ final class SettingsModel {
             : "Accessibility access missing — Minne captures nothing."
     }
 
+    // MARK: - Privacy: egress
+
+    /// The egress story (US-111), stated where the user looks for it. Every
+    /// sentence is audited against the code: the app links no networking APIs
+    /// at all, and the brain's only network I/O is the pi provider layer for
+    /// the provider the user configured — model requests and sign-in. Keep
+    /// this text true before keeping it short.
+    var egressLine: String {
+        "Your memory is a folder of plain files on this Mac, in ~/Minne — "
+            + "there is no cloud copy, no backup, and no Minne server anywhere. "
+            + "The only network connections Minne makes are to the AI provider you chose, "
+            + "using your own account or key: drafts, chat and the sync pass send it "
+            + "excerpts of your captures and notes to think about, and sign-in exchanges "
+            + "credentials with that same provider. Nothing else is sent to anyone — "
+            + "no telemetry, no analytics. Choose the local provider (Ollama) and "
+            + "requests stay on your Mac."
+    }
+
     // MARK: - General: the chat hotkey
 
     /// Whether ⌥Space should be registered at all.

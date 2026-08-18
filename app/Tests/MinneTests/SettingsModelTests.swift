@@ -181,6 +181,21 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(PrivacySectionView.pauseIndex(for: .paused(until: nil)), 3)
     }
 
+    /// The egress statement (US-111) must keep the claims the audit verified:
+    /// memory in ~/Minne, provider-only network traffic under the user's own
+    /// credentials, no Minne servers, no telemetry, and the local escape hatch.
+    /// If the product grows a network path, this copy — and this test — must
+    /// change with it.
+    func testTheEgressCopyKeepsItsAuditedClaims() {
+        let line = makeModel().egressLine
+        XCTAssertTrue(line.contains("~/Minne"))
+        XCTAssertTrue(line.contains("provider you chose"))
+        XCTAssertTrue(line.contains("your own account or key"))
+        XCTAssertTrue(line.contains("no Minne server"))
+        XCTAssertTrue(line.contains("no telemetry"))
+        XCTAssertTrue(line.contains("Ollama"))
+    }
+
     // MARK: - Shortcuts
 
     func testHotKeyToggleIsAppliedLiveAndRemembered() {

@@ -208,6 +208,9 @@ final class PrivacySectionView: NSView {
                 editors,
                 resetButton,
                 separator(width: width),
+                SettingsStyle.heading("What leaves this Mac"),
+                SettingsStyle.caption(model.egressLine, width: width),
+                separator(width: width),
                 SettingsStyle.heading("Delete all memory"),
                 SettingsStyle.caption(
                     "Removes the wiki, every raw capture, the search index and your stored sign-in. There is no undo.",
