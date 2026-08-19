@@ -126,14 +126,26 @@ final class AccessibilityCaretLocator: CaretLocating {
         else { return nil }
 
         let webArea = webArea(from: focused, role: role)
+        let bundleIdentifier = running.bundleIdentifier ?? "unknown"
+        // The web area is the honest URL source, but deep editors (X's
+        // compose box) can bury the focus beyond any sane ancestor walk. In a
+        // known browser the focused *window* carries the address too — and
+        // only there is the fallback safe, because a random app's window URL
+        // (a document path) is not a page.
+        var pageURL = webArea.flatMap(pageURL(of:))
+        if pageURL == nil, InsertionPolicy.webBundleIdentifiers.contains(bundleIdentifier),
+            let window = element(app, kAXFocusedWindowAttribute)
+        {
+            pageURL = self.pageURL(of: window)
+        }
         return CaretTarget(
-            bundleIdentifier: running.bundleIdentifier ?? "unknown",
+            bundleIdentifier: bundleIdentifier,
             appName: running.localizedName ?? "Unknown",
             anchor: anchor,
             field: snapshot(of: focused),
             handle: FocusedFieldHandle(element: focused),
             isWebContent: webArea != nil,
-            pageURL: webArea.flatMap(pageURL(of:)))
+            pageURL: pageURL)
     }
 
     /// The role that means "this is a rendered web page".
@@ -194,15 +206,21 @@ final class AccessibilityCaretLocator: CaretLocating {
         return nil
     }
 
-    /// The web area's `AXURL` (a CFURL, same read capture makes), sanitized.
-    /// One extra AX call on an element the walk already visited.
-    private func pageURL(of webArea: AXUIElement) -> String? {
-        guard let value = copyValue(webArea, kAXURLAttribute) else { return nil }
+    /// The element's address — `AXURL` (a CFURL, same read capture makes),
+    /// else `AXDocument` (Chrome's window puts the tab's URL there) —
+    /// sanitized down to scheme + host + path.
+    private func pageURL(of element: AXUIElement) -> String? {
+        let value = copyValue(element, kAXURLAttribute) ?? copyValue(element, "AXDocument")
+        guard let value else { return nil }
         let raw = (value as? URL)?.absoluteString ?? (value as? String)
         return raw.flatMap(PageURL.sanitize)
     }
 
-    private static let ancestorDepthLimit = 16
+    /// A plain Chrome tab is ~12 levels; X's compose editor overshoots 16
+    /// (measured live 2026-08-19: the walk missed and the press read as
+    /// native). The cap is for a tree with a cycle in it, not for cost —
+    /// 48 parent hops is still well under a millisecond.
+    private static let ancestorDepthLimit = 48
 
     // MARK: - The field, as it stands
 
