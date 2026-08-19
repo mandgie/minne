@@ -492,6 +492,101 @@ private final class DraftLabel: NSTextField {
     }
 }
 
+/// The read-only draft, disciplined (US-203): at most twelve lines of it, and
+/// past that the prose scrolls inside its own area rather than growing the
+/// panel — the same cap and the same line slot the draft editor lives under,
+/// so opening the editor on a long draft moves nothing.
+///
+/// It is the `DraftLabel` inside a field-like scroll view, not a second text
+/// view: the label already knows how to render the elision note and how to
+/// shimmer under a rework, and a wrapping label measures honestly where an
+/// `NSTextView` handed to a stack view renders nothing (US-018). The scroll
+/// view's clip is the line-resting one, so a scrolled draft is always cut
+/// between lines, never through one.
+private final class DraftArea: NSView {
+    private final class FlippedView: NSView {
+        override var isFlipped: Bool { true }
+    }
+
+    let label = DraftLabel()
+    private let scroll = NSScrollView()
+    private let clip = LineRestingClipView()
+    private let document = FlippedView()
+    private let heightConstraint: NSLayoutConstraint
+    private let pitch: CGFloat
+
+    override init(frame frameRect: NSRect) {
+        pitch = DraftEditor.linePitch()
+        heightConstraint = scroll.heightAnchor.constraint(equalToConstant: pitch)
+        super.init(frame: frameRect)
+
+        label.isSelectable = true
+        label.textColor = OverlayPalette.ink
+        // A wrapping label with no width yet lays out on one endless line, and
+        // the panel then reports a fitting size wider than the screen. Telling
+        // it the width up front is what makes the draft wrap — and the width is
+        // the grid's, since the draft sits on the panel's own surface.
+        label.preferredMaxLayoutWidth = MinneKeyOverlayView.contentWidth
+
+        clip.drawsBackground = false
+        clip.pitch = pitch
+        scroll.contentView = clip
+        scroll.documentView = document
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.verticalScrollElasticity = .none
+        scroll.horizontalScrollElasticity = .none
+
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        document.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scroll)
+        document.addSubview(label)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightConstraint,
+            // The document rides the clip's width and takes its height from
+            // the label, which is what lets the clip scroll it vertically.
+            document.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            document.topAnchor.constraint(equalTo: clip.topAnchor),
+            document.widthAnchor.constraint(equalTo: clip.widthAnchor),
+            label.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            label.topAnchor.constraint(equalTo: document.topAnchor),
+            label.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Sets the draft and re-clamps: the area is exactly as tall as the prose
+    /// up to twelve lines, then scrolls — opened at the top, where reading
+    /// starts.
+    func setBody(_ text: NSAttributedString) {
+        label.attributedStringValue = text
+        let bounds = NSRect(
+            x: 0, y: 0,
+            width: MinneKeyOverlayView.contentWidth, height: CGFloat.greatestFiniteMagnitude)
+        let content = label.cell?.cellSize(forBounds: bounds).height ?? 0
+        heightConstraint.constant = GuidanceRow.fieldHeight(
+            content: content, line: pitch, spacing: DraftEditor.lineSpacing,
+            maxLines: DraftEditor.maxLines)
+        clip.scroll(to: .zero)
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    func startSweep() { label.startSweep() }
+    func stopSweep() { label.stopSweep() }
+}
+
 /// A button in a window that is never key, drawn rather than bezelled.
 ///
 /// Two reasons it paints itself. `acceptsFirstMouse` is the first: without it
@@ -512,6 +607,17 @@ private final class OverlayButton: NSButton {
     /// Text at the end of a title, dimmer than the label: the key that does the
     /// same thing.
     let hint: String?
+    /// Whether the hint is telling the truth right now. While a borrowed field
+    /// holds the keyboard, most of these keys belong to the field — a capsule
+    /// still advertising one would claim a key that does something else. The
+    /// hint is drawn in clear rather than removed: the capsule keeps its exact
+    /// width, so the row never shuffles when the keyboard is borrowed.
+    var hintShown = true {
+        didSet {
+            guard hintShown != oldValue else { return }
+            attributedTitle = titleText()
+        }
+    }
     /// Kept because assigning `attributedTitle` overwrites `title` with the
     /// whole rendered string — building the next title from `title` would
     /// append the key hint again, and again.
@@ -610,14 +716,19 @@ private final class OverlayButton: NSButton {
                     .foregroundColor: ink,
                 ]))
         if let hint {
+            let hintInk =
+                isPrimary
+                ? OverlayPalette.onBlue.withAlphaComponent(0.7)
+                : OverlayPalette.inkTertiary
             text.append(
                 NSAttributedString(
                     string: "  \(hint)",
                     attributes: [
                         .font: NSFont.systemFont(ofSize: 11),
-                        .foregroundColor: isPrimary
-                            ? OverlayPalette.onBlue.withAlphaComponent(0.7)
-                            : OverlayPalette.inkTertiary,
+                        // Clear, not gone, when the hint is not in force: the
+                        // glyphs keep their metrics, so the capsule keeps its
+                        // width.
+                        .foregroundColor: hintShown ? hintInk : NSColor.clear,
                     ]))
         }
         return text
@@ -769,7 +880,7 @@ final class MinneKeyOverlayView: NSView {
     /// a blue tick when the draft landed, a warm mark when it did not.
     private let outcome = NSImageView()
     private let status = NSTextField(labelWithString: "")
-    private let draft = DraftLabel()
+    private let draft = DraftArea(frame: .zero)
     /// The draft made touchable: swapped in for the label while the user edits
     /// (US-202), hidden the rest of the time.
     private let draftEditor = DraftEditor(frame: .zero)
@@ -851,14 +962,6 @@ final class MinneKeyOverlayView: NSView {
         status.maximumNumberOfLines = 3
         status.preferredMaxLayoutWidth = Self.contentWidth - Self.outcomeColumn
 
-        draft.isSelectable = true
-        draft.textColor = OverlayPalette.ink
-        // A wrapping label with no width yet lays out on one endless line, and
-        // the panel then reports a fitting size wider than the screen. Telling
-        // it the width up front is what makes the draft wrap — and the width is
-        // the grid's, since the draft now sits on the panel's own surface.
-        draft.preferredMaxLayoutWidth = Self.contentWidth
-
         grounding.font = .systemFont(ofSize: 11)
         grounding.textColor = OverlayPalette.inkTertiary
         grounding.maximumNumberOfLines = 1
@@ -881,7 +984,10 @@ final class MinneKeyOverlayView: NSView {
         // controller ends the borrow, waits for focus to travel, and inserts
         // what is on screen.
         draftEditor.onSubmit = { [weak self] in self?.onAction?(.insert) }
-        draftEditor.onFocusChange = { [weak self] in self?.refreshEditHint() }
+        draftEditor.onFocusChange = { [weak self] in self?.refreshKeyHints() }
+        // Guiding claims Return and Escape for the field, so the capsules'
+        // hints have to follow the keyboard, not just the state.
+        guidance.onFocusChange = { [weak self] in self?.refreshKeyHints() }
 
         let name = NSStackView(views: [spark, title, separator, app])
         name.orientation = .horizontal
@@ -927,7 +1033,7 @@ final class MinneKeyOverlayView: NSView {
             shimmer.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             guidance.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             draftEditor.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            draft.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
+            draft.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             grounding.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
             // Full width, not ≤: the edit hint sits at the row's trailing edge.
             statusRow.widthAnchor.constraint(equalToConstant: Self.contentWidth),
@@ -1023,9 +1129,9 @@ final class MinneKeyOverlayView: NSView {
         if placeholder { shimmer.start() } else { shimmer.stop() }
         shimmer.isHidden = !placeholder
 
-        draft.attributedStringValue =
+        draft.setBody(
             body.map { Self.body(Self.preview($0), elided: $0.count > Self.maxPreviewCharacters) }
-            ?? NSAttributedString()
+                ?? NSAttributedString())
         draft.isHidden = body == nil
         // No state renders the editor — it only ever swaps in through
         // `beginDraftEditing`, and every path that renders a state has ended
@@ -1056,16 +1162,41 @@ final class MinneKeyOverlayView: NSView {
         // draft, waiting. Everywhere else it would be a claim about a gesture
         // that does nothing.
         if case .result = state { editHint.isHidden = false } else { editHint.isHidden = true }
-        refreshEditHint()
+        refreshKeyHints()
     }
 
-    /// One slot, two answers: ⌘E is how you get in, esc is how you get back
-    /// out — said in the accent while the editor is live, the way the guidance
-    /// hint flips ⇥ → ↩.
-    private func refreshEditHint() {
+    /// Whether a capsule's key hint tells the truth right now. While either
+    /// borrowed field holds the keyboard the tap claims nothing, so most of
+    /// the advertised keys go to the field instead: Escape puts the field
+    /// away (the blue "esc done" above says so), ⌘R types nothing. The one
+    /// exception is Return while the draft editor is live — the editor's own
+    /// Return is the same verb as the Insert capsule.
+    static func hintApplies(_ action: MinneKeyAction, guiding: Bool, editingDraft: Bool) -> Bool {
+        guard guiding || editingDraft else { return true }
+        return action == .insert && editingDraft
+    }
+
+    /// Repaints every key hint from where the keyboard actually is: the
+    /// capsules' trailing hints, and the edit hint at the status row's edge.
+    /// One slot, two answers there: ⌘E is how you get in, esc is how you get
+    /// back out — and while the guidance field has the keyboard the slot is
+    /// silent, because ⌘E would reach the field, not the overlay.
+    private func refreshKeyHints() {
+        let guiding = guidance.isEditing
         let editing = draftEditor.isEditing
-        editHint.stringValue = editing ? "esc done" : "⌘E edit"
-        editHint.textColor = editing ? OverlayPalette.blue : OverlayPalette.inkTertiary
+        if editing {
+            editHint.stringValue = "esc done"
+            editHint.textColor = OverlayPalette.blue
+        } else if guiding {
+            editHint.stringValue = ""
+        } else {
+            editHint.stringValue = "⌘E edit"
+            editHint.textColor = OverlayPalette.inkTertiary
+        }
+        for case let button as OverlayButton in buttons.views {
+            guard let action = Self.action(tag: button.tag) else { continue }
+            button.hintShown = Self.hintApplies(action, guiding: guiding, editingDraft: editing)
+        }
     }
 
     /// The steers in force, above the field.
@@ -1108,7 +1239,7 @@ final class MinneKeyOverlayView: NSView {
         // The editor annotates the same grounding line the label did.
         column.setCustomSpacing(grounding.isHidden ? 13 : 7, after: draftEditor)
         draftEditor.setText(text)
-        refreshEditHint()
+        refreshKeyHints()
     }
 
     /// Puts the caret in the editor — split from `beginDraftEditing` because
@@ -1125,7 +1256,7 @@ final class MinneKeyOverlayView: NSView {
         let text = draftEditor.endEditing()
         draftEditor.isHidden = true
         draft.isHidden = false
-        refreshEditHint()
+        refreshKeyHints()
         return text
     }
 
@@ -1137,7 +1268,7 @@ final class MinneKeyOverlayView: NSView {
 
     /// Repaints the edit hint from where the caret actually is.
     func refreshDraftEditingLook() {
-        refreshEditHint()
+        refreshKeyHints()
     }
 
     /// The draft text's own footprint in screen coordinates — the click target
@@ -1290,6 +1421,10 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     /// The caret this overlay is anchored to, in AppKit coordinates, kept so a
     /// state change can re-place a panel that just changed size.
     private var caret: CGRect = .zero
+    /// The width and anchored edge claimed at presentation (US-203). Every
+    /// re-placement keeps both: state changes only choose a height, and the
+    /// panel grows away from the caret with its anchored edge pinned.
+    private var geometry: MinneKeyOverlayGeometry?
     /// Ours rather than `panel.isVisible`, because the panel outlives its
     /// dismissal by the length of the fade — and a press during that fade must
     /// be a fresh presentation, not a toggle of a panel already on its way out.
@@ -1405,6 +1540,13 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         caret = OverlayPlacement.flipped(
             target.anchor.rect, primaryHeight: Self.primaryScreenHeight())
 
+        // The geometry is claimed here, once: the size the panel opens at
+        // decides its width and which edge is pinned, and every state after
+        // this one only chooses a height.
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let size = panel.contentView?.fittingSize ?? panel.frame.size
+        geometry = MinneKeyOverlayGeometry.claim(
+            size: size, caret: caret, visible: Self.screen(containing: caret).visibleFrame)
         let frame = place(animated: false)
         // A short rise from just below where it settles: it reads as the panel
         // arriving at the caret rather than being switched on.
@@ -1722,21 +1864,28 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     }
 
     /// Re-measures and re-places. Called on every state change because the
-    /// panel grows by the height of a draft and has to stay next to the caret
-    /// while it does — animated once it is on screen, so a draft arriving
-    /// unfolds rather than jumps.
+    /// panel grows by the height of a draft — animated once it is on screen,
+    /// so a draft arriving unfolds rather than jumps. The claimed geometry
+    /// does the deciding: the width and the anchored edge never move, only
+    /// the height is read off the content, and a state whose content asks for
+    /// nothing new leaves the frame exactly alone.
     @discardableResult
     private func place(animated: Bool) -> NSRect {
         panel.contentView?.layoutSubtreeIfNeeded()
         let size = panel.contentView?.fittingSize ?? panel.frame.size
         let visible = Self.screen(containing: caret).visibleFrame
-        let frame = OverlayPlacement.frame(for: size, caret: caret, visible: visible)
+        let geometry =
+            geometry ?? MinneKeyOverlayGeometry.claim(size: size, caret: caret, visible: visible)
+        let frame = geometry.frame(height: size.height, visible: visible)
+        guard frame != panel.frame else { return frame }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Self.resizeDuration
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 panel.animator().setFrame(frame, display: true)
             }
+        } else {
+            panel.setFrame(frame, display: true)
         }
         BrainClient.log(
             "minne key: overlay at (\(Int(frame.minX)), \(Int(frame.minY))) "

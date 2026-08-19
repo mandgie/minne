@@ -101,13 +101,10 @@ struct CaretAnchor: Equatable, Sendable {
     }
 }
 
-/// Turns an anchor into a window frame. Split from `CaretAnchor` because these
-/// are two different jobs: one asks the app where the caret is, the other
-/// decides where a panel of a given size fits around it.
+/// The coordinate bridge between the two worlds an anchor lives in. Where the
+/// panel goes is `MinneKeyOverlayGeometry`'s decision — claimed once per
+/// presentation, so a growing panel keeps its anchored edge.
 enum OverlayPlacement {
-    /// Gap between the caret and the overlay's nearest edge.
-    static let gap: CGFloat = 8
-
     /// Accessibility coordinates are top-left-origin; AppKit's are
     /// bottom-left-origin, both anchored on the primary display. `primaryHeight`
     /// is that display's full height (`NSScreen.screens[0].frame.height`) — not
@@ -117,26 +114,5 @@ enum OverlayPlacement {
         CGRect(
             x: rect.origin.x, y: primaryHeight - rect.origin.y - rect.height,
             width: rect.width, height: rect.height)
-    }
-
-    /// Places an overlay of `size` just under the caret, aligned to its leading
-    /// edge, and keeps it on screen: pushed back inside horizontally, and
-    /// flipped above the caret when there is no room beneath it. All arguments
-    /// and the result are AppKit coordinates.
-    static func frame(for size: CGSize, caret: CGRect, visible: CGRect) -> CGRect {
-        var origin = CGPoint(x: caret.minX, y: caret.minY - gap - size.height)
-
-        // No room below (a caret near the bottom of the screen): go above.
-        if origin.y < visible.minY {
-            let above = caret.maxY + gap
-            // Only if it actually fits there; otherwise stay below and let the
-            // clamp handle it, which keeps the overlay next to the caret rather
-            // than jumping to the far edge.
-            if above + size.height <= visible.maxY { origin.y = above }
-        }
-
-        origin.x = min(max(origin.x, visible.minX), max(visible.minX, visible.maxX - size.width))
-        origin.y = min(max(origin.y, visible.minY), max(visible.minY, visible.maxY - size.height))
-        return CGRect(origin: origin, size: size)
     }
 }

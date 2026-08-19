@@ -120,6 +120,38 @@ final class MinneKeyOverlayTests: XCTestCase {
             15.5 * 12)
     }
 
+    // MARK: - Which key hints tell the truth
+
+    /// With the keyboard where it usually is — the app's — every capsule hint
+    /// is honest.
+    func testEveryHintAppliesWhileNothingIsBorrowed() {
+        for action in [MinneKeyAction.insert, .copy, .undo, .regenerate, .retry, .dismiss] {
+            XCTAssertTrue(
+                MinneKeyOverlayView.hintApplies(action, guiding: false, editingDraft: false))
+        }
+    }
+
+    /// While the draft editor holds the keyboard, Escape ends the edit (the
+    /// blue "esc done" says so) and ⌘R types into the editor — so Dismiss and
+    /// the regenerate capsule must stop advertising them. Return still
+    /// inserts: the editor's own Return is the same verb as the Insert button.
+    func testOnlyTheInsertHintSurvivesDraftEditing() {
+        XCTAssertTrue(MinneKeyOverlayView.hintApplies(.insert, guiding: false, editingDraft: true))
+        XCTAssertFalse(
+            MinneKeyOverlayView.hintApplies(.dismiss, guiding: false, editingDraft: true))
+        XCTAssertFalse(
+            MinneKeyOverlayView.hintApplies(.regenerate, guiding: false, editingDraft: true))
+    }
+
+    /// While the guidance field holds the keyboard, Return submits the steer —
+    /// even Insert's hint would be a lie.
+    func testNoHintSurvivesGuiding() {
+        for action in [MinneKeyAction.insert, .regenerate, .dismiss] {
+            XCTAssertFalse(
+                MinneKeyOverlayView.hintApplies(action, guiding: true, editingDraft: false))
+        }
+    }
+
     /// The markers are coloured by walking the parts and stepping over each
     /// one's own length, which is the only thing that could silently drift: a
     /// steer that is elided, counted or contains a `·` of its own would put the

@@ -31,6 +31,10 @@ final class GuidanceRow: NSView {
     /// The field changed height — the panel has to re-measure and re-place,
     /// or the row below the field is drawn over rather than pushed down.
     var onGrowth: (@MainActor () -> Void)?
+    /// The caret arrived or left — whoever paints key hints elsewhere in the
+    /// panel re-reads `isEditing`. Fired from `applyColors`, which is already
+    /// called at every moment the focus can have changed.
+    var onFocusChange: (@MainActor () -> Void)?
 
     /// How many steers are shown before the line starts counting instead.
     nonisolated static let maxChipsShown = 3
@@ -38,21 +42,29 @@ final class GuidanceRow: NSView {
     nonisolated static let maxChipCharacters = 34
     /// How many lines the field grows to before it scrolls inside itself.
     nonisolated static let maxFieldLines = 4
+    /// Air under each line's ink. It exists for one reason beyond looks: glyph
+    /// rasters bleed a fraction of a point past the font's own descent, so a
+    /// viewport cut exactly at a line's bottom still shows the tips of the
+    /// line above. A point of spacing is the moat that bleed drowns in.
+    nonisolated static let fieldLineSpacing: CGFloat = 1
 
     /// The field's height for what is in it: one line when empty, growing with
     /// the text, capped at `maxLines` — past the cap the words scroll inside
     /// the field instead of growing the panel any further. Shared with the
-    /// draft editor, whose cap is merely a different number of lines.
+    /// draft editor, whose cap is merely a different number of lines. `line`
+    /// is one line's whole slot — its height plus `spacing`.
     ///
     /// Growth rounds up so a fractional line height never clips descenders,
-    /// but the cap is *exactly* whole lines: the cap is the one height at which
-    /// the field scrolls, and a viewport even half a point taller than its
-    /// whole lines shows a clipped sliver of the line above kissing the rule.
+    /// but the cap is *exactly* whole lines of ink: `maxLines` slots less the
+    /// trailing spacing. That subtraction is what makes a field scrolled to
+    /// its end rest on a slot boundary — under the spacing moat — rather than
+    /// on a line's ink bottom, where the raster bleed of the scrolled-off
+    /// line lives (US-203's sliver).
     nonisolated static func fieldHeight(
-        content: CGFloat, line: CGFloat, maxLines: Int = maxFieldLines
+        content: CGFloat, line: CGFloat, spacing: CGFloat = 0, maxLines: Int = maxFieldLines
     ) -> CGFloat {
-        let one = ceil(line)
-        let cap = max(line * CGFloat(maxLines), one)
+        let one = ceil(line - spacing)
+        let cap = max(line * CGFloat(maxLines) - spacing, one)
         return min(max(ceil(content), one), cap)
     }
 
@@ -74,8 +86,8 @@ final class GuidanceRow: NSView {
     /// is said by the rule above it and by the ink, never by a fill.
     private let fieldRow = NSView()
     private let column = NSStackView()
-    /// One line's worth of field, from the font — the constraint below grows
-    /// from here and never past `maxFieldLines` of it.
+    /// One line's whole slot — the font's line plus the spacing moat. The
+    /// constraint below grows from here and never past `maxFieldLines` of it.
     private let lineHeight: CGFloat
     private let fieldHeightConstraint: NSLayoutConstraint
 
@@ -107,11 +119,12 @@ final class GuidanceRow: NSView {
         // so the field measures itself with the same TextKit the height maths
         // reads — the convenience initialiser's stack downgrades lazily and
         // measures nothing until it has.
-        let made = OverlayTextEditor.make(font: Self.fieldFont)
+        let made = OverlayTextEditor.make(font: Self.fieldFont, lineSpacing: Self.fieldLineSpacing)
         field = made.view
         scroll = made.scroll
-        lineHeight = made.lineHeight
-        let oneLine = Self.fieldHeight(content: 0, line: lineHeight)
+        lineHeight = made.lineHeight + Self.fieldLineSpacing
+        let oneLine = Self.fieldHeight(
+            content: 0, line: lineHeight, spacing: Self.fieldLineSpacing)
         fieldHeightConstraint = scroll.heightAnchor.constraint(equalToConstant: oneLine)
         super.init(frame: frameRect)
 
@@ -266,7 +279,8 @@ final class GuidanceRow: NSView {
         else { return }
         layoutManager.ensureLayout(for: container)
         let content = layoutManager.usedRect(for: container).height
-        let height = Self.fieldHeight(content: content, line: lineHeight)
+        let height = Self.fieldHeight(
+            content: content, line: lineHeight, spacing: Self.fieldLineSpacing)
         guard fieldHeightConstraint.constant != height else { return }
         fieldHeightConstraint.constant = height
         onGrowth?()
@@ -349,6 +363,7 @@ final class GuidanceRow: NSView {
                 editing ? OverlayPalette.inkSecondary : OverlayPalette.inkTertiary
             rule.isAccented = editing
         }
+        onFocusChange?()
     }
 }
 

@@ -23,6 +23,28 @@ final class OverlayTextView: NSTextView {
     }
 }
 
+/// A clip view that rests only between lines.
+///
+/// Everything that scrolls the field — the user's wheel, the text view chasing
+/// its caret, a programmatic `scrollRangeToVisible` — comes through
+/// `constrainBoundsRect`, so this one override is what guarantees the field's
+/// top edge never cuts through a line of text (the sliver of ascenders and
+/// descenders US-203 fixes). The snapping itself is `OverlayScrollRest`, pure
+/// and tested; this class is only the AppKit socket it plugs into.
+final class LineRestingClipView: NSClipView {
+    /// One line's slot: its height plus the paragraph's line spacing.
+    var pitch: CGFloat = 0
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var bounds = super.constrainBoundsRect(proposedBounds)
+        guard pitch > 0, let document = documentView else { return bounds }
+        bounds.origin.y = OverlayScrollRest.offset(
+            proposing: bounds.origin.y, pitch: pitch,
+            limit: document.frame.height - bounds.height)
+        return bounds
+    }
+}
+
 /// Builds the text system both borrowing fields share.
 ///
 /// TextKit 1, by hand (storage → layoutManager → container → view): the
@@ -32,7 +54,7 @@ final class OverlayTextView: NSTextView {
 /// because the scroller only exists for the text past the field's line cap.
 enum OverlayTextEditor {
     @MainActor
-    static func make(font: NSFont) -> (
+    static func make(font: NSFont, lineSpacing: CGFloat) -> (
         view: OverlayTextView, scroll: NSScrollView, lineHeight: CGFloat
     ) {
         let storage = NSTextStorage()
@@ -46,6 +68,20 @@ enum OverlayTextEditor {
         let view = OverlayTextView(frame: .zero, textContainer: container)
 
         view.font = font
+        // A line's fragment must CONTAIN its glyphs. The 11.5 pt system font's
+        // ascent and descent sum to more than its default line height, so its
+        // descenders overflow the fragment into the line below — and a field
+        // clipped on a fragment boundary then shows the descender tips of the
+        // scrolled-off line along its top edge (US-203's sliver). Raising the
+        // minimum line height to what the glyphs actually need keeps every
+        // line inside its own slot, so a boundary cut is a clean cut.
+        let base = layoutManager.defaultLineHeight(for: font)
+        let lineHeight = max(base, (font.ascender - font.descender + font.leading).rounded(.up))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = lineSpacing
+        paragraph.minimumLineHeight = lineHeight
+        view.defaultParagraphStyle = paragraph
+        view.typingAttributes = [.font: font, .paragraphStyle: paragraph]
         view.drawsBackground = false
         view.isRichText = false
         view.allowsUndo = true
@@ -62,6 +98,10 @@ enum OverlayTextEditor {
             width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
 
         let scroll = NSScrollView()
+        let clip = LineRestingClipView()
+        clip.drawsBackground = false
+        clip.pitch = lineHeight + lineSpacing
+        scroll.contentView = clip
         scroll.documentView = view
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
@@ -72,7 +112,7 @@ enum OverlayTextEditor {
         scroll.verticalScrollElasticity = .none
         scroll.horizontalScrollElasticity = .none
 
-        return (view, scroll, layoutManager.defaultLineHeight(for: font))
+        return (view, scroll, lineHeight)
     }
 }
 
@@ -109,9 +149,17 @@ final class DraftEditor: NSView {
     /// is a HUD at someone's caret.
     nonisolated static let maxLines = 12
 
-    /// The read-only draft's own type, so the swap moves nothing.
-    private static let font = NSFont.systemFont(ofSize: 12.5)
-    private static let lineSpacing: CGFloat = 3
+    /// The read-only draft's own type, so the swap moves nothing. Shared with
+    /// `DraftArea`, which clamps the read-only draft to the same twelve lines —
+    /// the two must measure with the same metrics or the swap would jump.
+    static let font = NSFont.systemFont(ofSize: 12.5)
+    static let lineSpacing: CGFloat = 3
+
+    /// One line's slot in the draft's type: line height plus the paragraph
+    /// air. The read-only draft area caps itself at `maxLines` of exactly this.
+    @MainActor static func linePitch() -> CGFloat {
+        NSLayoutManager().defaultLineHeight(for: font) + lineSpacing
+    }
 
     private let field: OverlayTextView
     private let scroll: NSScrollView
@@ -137,26 +185,20 @@ final class DraftEditor: NSView {
     var text: String { field.string }
 
     override init(frame frameRect: NSRect) {
-        let made = OverlayTextEditor.make(font: Self.font)
+        // The same air between lines the read-only draft label sets — it is
+        // the one paragraph of prose in the panel, editable or not.
+        let made = OverlayTextEditor.make(font: Self.font, lineSpacing: Self.lineSpacing)
         field = made.view
         scroll = made.scroll
         lineHeight = made.lineHeight + Self.lineSpacing
         heightConstraint = scroll.heightAnchor.constraint(
             equalToConstant: GuidanceRow.fieldHeight(
-                content: 0, line: made.lineHeight + Self.lineSpacing, maxLines: Self.maxLines))
+                content: 0, line: made.lineHeight + Self.lineSpacing, spacing: Self.lineSpacing,
+                maxLines: Self.maxLines))
         super.init(frame: frameRect)
 
         field.delegate = self
-        // The same air between lines the read-only draft label sets — it is
-        // the one paragraph of prose in the panel, editable or not.
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = Self.lineSpacing
-        field.defaultParagraphStyle = paragraph
-        field.typingAttributes = [
-            .font: Self.font,
-            .paragraphStyle: paragraph,
-            .foregroundColor: OverlayPalette.ink,
-        ]
+        field.typingAttributes[.foregroundColor] = OverlayPalette.ink
         field.textColor = OverlayPalette.ink
         field.insertionPointColor = OverlayPalette.ink
 
@@ -215,7 +257,7 @@ final class DraftEditor: NSView {
         layoutManager.ensureLayout(for: container)
         let content = layoutManager.usedRect(for: container).height
         let height = GuidanceRow.fieldHeight(
-            content: content, line: lineHeight, maxLines: Self.maxLines)
+            content: content, line: lineHeight, spacing: Self.lineSpacing, maxLines: Self.maxLines)
         guard heightConstraint.constant != height else { return }
         heightConstraint.constant = height
         onGrowth?()

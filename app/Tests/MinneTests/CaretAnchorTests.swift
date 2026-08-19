@@ -129,43 +129,4 @@ final class CaretAnchorTests: XCTestCase {
         XCTAssertEqual(OverlayPlacement.flipped(there, primaryHeight: 1000), caret)
     }
 
-    private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
-    private let overlay = CGSize(width: 240, height: 44)
-
-    func testTheOverlaySitsJustUnderTheCaret() {
-        let caret = CGRect(x: 400, y: 500, width: 1, height: 18)
-        let frame = OverlayPlacement.frame(for: overlay, caret: caret, visible: screen)
-        XCTAssertEqual(frame.minX, 400)
-        XCTAssertEqual(frame.maxY, caret.minY - OverlayPlacement.gap)
-    }
-
-    func testACaretNearTheBottomPutsTheOverlayAbove() {
-        let caret = CGRect(x: 400, y: 12, width: 1, height: 18)
-        let frame = OverlayPlacement.frame(for: overlay, caret: caret, visible: screen)
-        XCTAssertEqual(frame.minY, caret.maxY + OverlayPlacement.gap)
-    }
-
-    func testACaretNearTheRightEdgePullsTheOverlayBackOnScreen() {
-        let caret = CGRect(x: 1400, y: 500, width: 1, height: 18)
-        let frame = OverlayPlacement.frame(for: overlay, caret: caret, visible: screen)
-        XCTAssertEqual(frame.maxX, screen.maxX)
-        XCTAssertTrue(screen.contains(frame))
-    }
-
-    func testTheOverlayStaysOutOfTheDock() {
-        // A visible frame that does not start at the origin — menu bar above,
-        // Dock below — is the normal case, and the overlay must respect it.
-        let visible = CGRect(x: 0, y: 80, width: 1440, height: 780)
-        let caret = CGRect(x: 20, y: 85, width: 1, height: 18)
-        let frame = OverlayPlacement.frame(for: overlay, caret: caret, visible: visible)
-        XCTAssertTrue(visible.contains(frame))
-    }
-
-    func testASecondDisplayLeftOfThePrimaryOneKeepsNegativeCoordinates() {
-        let visible = CGRect(x: -1920, y: 0, width: 1920, height: 1080)
-        let caret = CGRect(x: -1500, y: 600, width: 1, height: 18)
-        let frame = OverlayPlacement.frame(for: overlay, caret: caret, visible: visible)
-        XCTAssertEqual(frame.minX, -1500)
-        XCTAssertTrue(visible.contains(frame))
-    }
 }
