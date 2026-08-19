@@ -40,16 +40,19 @@ final class GuidanceRow: NSView {
     nonisolated static let maxFieldLines = 4
 
     /// The field's height for what is in it: one line when empty, growing with
-    /// the text, capped at `maxFieldLines` — past the cap the words scroll
-    /// inside the field instead of growing the panel any further.
+    /// the text, capped at `maxLines` — past the cap the words scroll inside
+    /// the field instead of growing the panel any further. Shared with the
+    /// draft editor, whose cap is merely a different number of lines.
     ///
     /// Growth rounds up so a fractional line height never clips descenders,
-    /// but the cap is *exactly* four lines: the cap is the one height at which
+    /// but the cap is *exactly* whole lines: the cap is the one height at which
     /// the field scrolls, and a viewport even half a point taller than its
     /// whole lines shows a clipped sliver of the line above kissing the rule.
-    nonisolated static func fieldHeight(content: CGFloat, line: CGFloat) -> CGFloat {
+    nonisolated static func fieldHeight(
+        content: CGFloat, line: CGFloat, maxLines: Int = maxFieldLines
+    ) -> CGFloat {
         let one = ceil(line)
-        let cap = max(line * CGFloat(maxFieldLines), one)
+        let cap = max(line * CGFloat(maxLines), one)
         return min(max(ceil(content), one), cap)
     }
 
@@ -57,8 +60,8 @@ final class GuidanceRow: NSView {
 
     private let rule = OverlayRule(frame: .zero)
     private let chips = NSTextField(labelWithString: "")
-    private let field: GuidanceTextView
-    private let scroll = NSScrollView()
+    private let field: OverlayTextView
+    private let scroll: NSScrollView
     /// An `NSTextView` has no placeholder of its own; this label sits over the
     /// empty field and lets clicks fall through to it.
     private let placeholder = ClickThroughLabel(
@@ -100,19 +103,14 @@ final class GuidanceRow: NSView {
     }
 
     override init(frame frameRect: NSRect) {
-        // The text system built by hand, so the field measures itself with the
-        // same TextKit the height maths reads — the convenience initialiser's
-        // stack downgrades lazily and measures nothing until it has.
-        let storage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
-        storage.addLayoutManager(layoutManager)
-        let container = NSTextContainer(
-            size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = true
-        container.lineFragmentPadding = 0
-        layoutManager.addTextContainer(container)
-        field = GuidanceTextView(frame: .zero, textContainer: container)
-        lineHeight = layoutManager.defaultLineHeight(for: Self.fieldFont)
+        // The shared editor stack (OverlayTextEditor): TextKit 1 built by hand,
+        // so the field measures itself with the same TextKit the height maths
+        // reads — the convenience initialiser's stack downgrades lazily and
+        // measures nothing until it has.
+        let made = OverlayTextEditor.make(font: Self.fieldFont)
+        field = made.view
+        scroll = made.scroll
+        lineHeight = made.lineHeight
         let oneLine = Self.fieldHeight(content: 0, line: lineHeight)
         fieldHeightConstraint = scroll.heightAnchor.constraint(equalToConstant: oneLine)
         super.init(frame: frameRect)
@@ -127,35 +125,7 @@ final class GuidanceRow: NSView {
         chips.isHidden = true
 
         field.delegate = self
-        field.font = Self.fieldFont
-        field.drawsBackground = false
-        field.isRichText = false
-        field.allowsUndo = true
-        field.textContainerInset = .zero
-        // What the user typed is what the model is steered with — a smart
-        // quote or an auto-dash would quietly rewrite their words.
-        field.isAutomaticQuoteSubstitutionEnabled = false
-        field.isAutomaticDashSubstitutionEnabled = false
-        field.isVerticallyResizable = true
-        field.isHorizontallyResizable = false
-        field.autoresizingMask = [.width]
-        field.minSize = .zero
-        field.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         field.onClickWhileInactive = { [weak self] in self?.onRequestEditing?() }
-
-        // Field-like, not document-like: no border, no background, elasticity
-        // off — the scroller only exists for the text past the four-line cap,
-        // and it draws over the text rather than claiming a column.
-        scroll.documentView = field
-        scroll.drawsBackground = false
-        scroll.borderType = .noBorder
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
-        scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .overlay
-        scroll.verticalScrollElasticity = .none
-        scroll.horizontalScrollElasticity = .none
 
         placeholder.font = Self.fieldFont
         placeholder.lineBreakMode = .byTruncatingTail
@@ -432,28 +402,6 @@ extension GuidanceRow: NSTextViewDelegate {
         default:
             return false
         }
-    }
-}
-
-/// The field itself, in a window that is usually not key.
-///
-/// A text view in a non-key window cannot hold a caret, so an ordinary
-/// `mouseDown` there does nothing at all — the click has to become a request to
-/// the presenter to borrow key status first. Once the panel is key it is an
-/// ordinary text view again.
-private final class GuidanceTextView: NSTextView {
-    var onClickWhileInactive: (@MainActor () -> Void)?
-
-    /// The panel belongs to an app that is never active; without this the first
-    /// click on it is swallowed as an activation click.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func mouseDown(with event: NSEvent) {
-        guard window?.isKeyWindow == true else {
-            MainActor.assumeIsolated { onClickWhileInactive?() }
-            return
-        }
-        super.mouseDown(with: event)
     }
 }
 

@@ -64,17 +64,28 @@ private final class FakeOverlay: MinneKeyPresenting {
     var onGuidance: (@MainActor (String) -> Void)?
     /// Screen rectangle the overlay claims, in Quartz coordinates.
     var bounds = CGRect(x: 100, y: 200, width: 240, height: 44)
+    /// Screen rectangle of the draft's own text, inside `bounds`.
+    var draftBounds = CGRect(x: 110, y: 210, width: 200, height: 20)
     /// The steers the overlay has been told to show, latest last.
     private(set) var guidanceShown: [[String]] = []
     /// How often the keyboard was handed back to the app.
     private(set) var keyReturns = 0
     var isGuiding = false
+    var isEditingDraft = false
+    var onDraftEdit: (@MainActor (String) -> Void)?
+    /// How often the draft editor was opened.
+    private(set) var editingBegan = 0
+    /// What the editor holds, mirrored from the real one: the state keeps the
+    /// edits when editing ends.
+    private var editorText: String?
 
     func present(_ target: CaretTarget, state: MinneKeyOverlayState) {
         presented.append(target)
         states.append(state)
         self.state = state
         isPresenting = true
+        isEditingDraft = false
+        editorText = nil
     }
 
     func update(_ state: MinneKeyOverlayState) {
@@ -106,15 +117,51 @@ private final class FakeOverlay: MinneKeyPresenting {
         onGuidance?(steer)
     }
 
+    func beginEditingDraft() {
+        guard isPresenting, case .result = state, !isEditingDraft else { return }
+        isEditingDraft = true
+        editingBegan += 1
+    }
+
+    @discardableResult
+    func endEditingDraft() -> Bool {
+        guard isEditingDraft else { return false }
+        isEditingDraft = false
+        // Mirrors the real presenter: the read-only result it goes back to
+        // carries the edits.
+        if let text = editorText, case .result(_, let grounding) = state {
+            let kept = MinneKeyOverlayState.result(text, grounding: grounding)
+            state = kept
+            states.append(kept)
+        }
+        editorText = nil
+        keyReturns += 1
+        return true
+    }
+
+    /// Types into the draft editor as the user would: the panel reports every
+    /// keystroke while the editor keeps the text.
+    func editDraft(to text: String) {
+        guard isEditingDraft else { return }
+        editorText = text
+        onDraftEdit?(text)
+    }
+
     func dismiss() {
         dismissals += 1
         isPresenting = false
         state = nil
         isGuiding = false
+        isEditingDraft = false
+        editorText = nil
     }
 
     func contains(quartzPoint: CGPoint) -> Bool {
         isPresenting && bounds.contains(quartzPoint)
+    }
+
+    func draftContains(quartzPoint: CGPoint) -> Bool {
+        isPresenting && draftBounds.contains(quartzPoint)
     }
 }
 
@@ -1193,7 +1240,7 @@ final class MinneKeyControllerTests: XCTestCase {
         backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
         overlay.beginGuiding()
 
-        for key: MinneKeyCommand in [.escape, .submit, .undo, .regenerate, .guide] {
+        for key: MinneKeyCommand in [.escape, .submit, .undo, .regenerate, .guide, .edit] {
             XCTAssertEqual(tap.onCommand?(key), false, "\(key) must reach the field")
         }
         XCTAssertTrue(overlay.isPresenting, "Escape belongs to the field, not to the overlay")
@@ -1236,6 +1283,191 @@ final class MinneKeyControllerTests: XCTestCase {
         backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
         XCTAssertEqual(tap.onCommand?(.guide), true)
         XCTAssertTrue(overlay.isGuiding)
+    }
+
+    // MARK: - Editing the draft (US-202)
+
+    func testCommandEOpensTheEditorOnlyOnAFinishedDraft() {
+        makeControllerAndTap()
+        // Still drafting: ⌘E is "use selection for find", as it always is.
+        XCTAssertEqual(tap.onCommand?(.edit), false)
+        XCTAssertFalse(overlay.isEditingDraft)
+
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        XCTAssertEqual(tap.onCommand?(.edit), true)
+        XCTAssertTrue(overlay.isEditingDraft)
+    }
+
+    /// The golden path: no edit gesture means no borrow — tap, read, Return,
+    /// inserted, and the panel never takes the keyboard.
+    func testTheGoldenPathNeverTouchesTheKeyboard() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        XCTAssertEqual(tap.onCommand?(.submit), true)
+        XCTAssertEqual(writer.edits.count, 1)
+        XCTAssertEqual(overlay.keyReturns, 0)
+        XCTAssertEqual(overlay.editingBegan, 0)
+    }
+
+    /// The whole claims-nothing rule again, for the editor: the panel is key,
+    /// so every key belongs to the text being edited — the editor's ⌘Z
+    /// included, which is how the editor gets its own undo for free.
+    func testTheTapClaimsNothingWhileTheDraftIsBeingEdited() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginEditingDraft()
+
+        for key: MinneKeyCommand in [.escape, .submit, .undo, .regenerate, .guide, .edit] {
+            XCTAssertEqual(tap.onCommand?(key), false, "\(key) must reach the editor")
+        }
+        XCTAssertTrue(overlay.isPresenting, "Escape belongs to the editor, not to the overlay")
+        XCTAssertTrue(writer.edits.isEmpty)
+        XCTAssertEqual(backend.requests.count, 1)
+    }
+
+    /// Escape ends editing with the edits kept; the second Escape dismisses —
+    /// the editor's Escape reaches it natively, so what this asserts is the
+    /// hand-back: once editing ends, Escape is the overlay's again.
+    func testEscapeEndsEditingKeepingTheEditsAndThenDismisses() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Torsdag passer utmerket.")
+        XCTAssertEqual(tap.onCommand?(.escape), false)
+
+        overlay.endEditingDraft()
+        XCTAssertEqual(overlay.state, .result("Torsdag passer utmerket.", grounding: nil))
+        XCTAssertTrue(overlay.isPresenting)
+
+        XCTAssertEqual(tap.onCommand?(.escape), true)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    /// Return after an edit inserts the text as edited, not as generated.
+    func testReturnInsertsTheEditedText() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Sorry — Thursday is out.")
+        overlay.endEditingDraft()
+
+        XCTAssertEqual(tap.onCommand?(.submit), true)
+        XCTAssertEqual(writer.contents, "Sorry — Thursday is out.")
+    }
+
+    /// The Insert button pressed mid-edit: the keyboard goes back first, focus
+    /// travels, and what lands is what was on screen at that moment.
+    func testInsertWhileEditingReturnsTheKeyboardAndInsertsTheEdits() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Sorry — Thursday is out.")
+
+        overlay.onAction?(.insert)
+        XCTAssertEqual(overlay.keyReturns, 1)
+        XCTAssertFalse(overlay.isEditingDraft)
+        XCTAssertTrue(writer.edits.isEmpty, "nothing is typed until focus has travelled back")
+
+        runScheduledWork()
+        XCTAssertEqual(writer.contents, "Sorry — Thursday is out.")
+    }
+
+    /// ⌘R after an edit differs from the *edited* text — the user's fix is
+    /// part of the brief now.
+    func testAnotherTakeAfterAnEditSendsTheEditedTextAsPrevious() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Torsdag passer fint, Ingrid.")
+        overlay.endEditingDraft()
+
+        XCTAssertEqual(tap.onCommand?(.regenerate), true)
+        XCTAssertEqual(backend.requests.last?.context.previousDraft, "Torsdag passer fint, Ingrid.")
+        XCTAssertTrue(backend.requests.last?.context.regenerate == true)
+    }
+
+    /// And a steer after an edit reworks the edited text.
+    func testASteerAfterAnEditReworksTheEditedText() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Torsdag passer fint, Ingrid.")
+        overlay.endEditingDraft()
+        overlay.submitGuidance("warmer")
+
+        XCTAssertEqual(backend.requests.last?.context.previousDraft, "Torsdag passer fint, Ingrid.")
+        XCTAssertEqual(backend.requests.last?.context.guidance, ["warmer"])
+    }
+
+    /// A click on the draft's own text while a finished draft is showing is the
+    /// edit gesture; a click elsewhere on the panel still is not, and a click
+    /// outside still dismisses.
+    func testAClickOnTheDraftTextBeginsEditing() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+
+        tap.onClick?(CGPoint(x: 120, y: 215))
+        XCTAssertTrue(overlay.isEditingDraft)
+        XCTAssertTrue(overlay.isPresenting)
+
+        // Another click in the editor is caret placement, not a fresh begin.
+        tap.onClick?(CGPoint(x: 130, y: 215))
+        XCTAssertEqual(overlay.editingBegan, 1)
+    }
+
+    func testAClickElsewhereOnThePanelDoesNotBeginEditing() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        tap.onClick?(CGPoint(x: 105, y: 202))
+        XCTAssertFalse(overlay.isEditingDraft)
+        XCTAssertTrue(overlay.isPresenting)
+    }
+
+    /// While the draft is still being written there is nothing to edit — the
+    /// same click is simply a click on the panel.
+    func testAClickOnTheDraftAreaIsNotAnEditGestureWhileDrafting() {
+        makeControllerAndTap()
+        tap.onClick?(CGPoint(x: 120, y: 215))
+        XCTAssertFalse(overlay.isEditingDraft)
+        XCTAssertTrue(overlay.isPresenting)
+    }
+
+    /// Editing is for a draft that has not gone in yet; afterwards the text is
+    /// the field's, and the result state is gone anyway.
+    func testEditingIsNotOfferedAfterInsertion() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        controller.insert()
+        XCTAssertEqual(tap.onCommand?(.edit), false)
+        XCTAssertFalse(overlay.isEditingDraft)
+    }
+
+    /// Dismissing mid-edit hands the keyboard back like dismissing mid-steer.
+    func testDismissingWhileEditingGivesTheKeyboardBack() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Torsdag passer fint."))
+        overlay.beginEditingDraft()
+        controller.dismiss()
+        XCTAssertEqual(overlay.keyReturns, 1)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    /// Undo after inserting an edited draft restores the field exactly — the
+    /// undo bookkeeping never sees the edit, only the text that went in.
+    func testUndoAfterAnEditedInsertionRestoresTheField() {
+        locator.setField(FieldSnapshot(text: "decline politely"))
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Sorry — Thursday is out.")
+        overlay.endEditingDraft()
+
+        controller.insert()
+        XCTAssertEqual(writer.contents, "Sorry — Thursday is out.")
+        controller.undo()
+        XCTAssertEqual(writer.contents, "decline politely")
     }
 
     @discardableResult

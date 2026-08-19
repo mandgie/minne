@@ -237,15 +237,28 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         // After the focused look: seeding text hides the placeholder, and the
         // field then grows exactly as it does under real typing.
         if !state.fieldText.isEmpty { overlay.previewGuidance(text: state.fieldText) }
+        // Same split as guiding: the editing *look* by default (safe on a
+        // machine somebody is typing on), the real keyboard borrow only when
+        // `-minneKeyPreviewEditing key` asks for it — that is what puts a
+        // blinking caret in the editor for the screenshot.
+        if state.editingDraft {
+            if UserDefaults.standard.string(forKey: "minneKeyPreviewEditing") == "key" {
+                overlay.beginEditingDraft()
+            } else {
+                overlay.previewDraftEditing()
+            }
+        }
     }
 
     /// One preview: what the panel shows, which steers are in force, whether
-    /// the guidance field is drawn focused, and what has been typed into it.
+    /// the guidance field is drawn focused, what has been typed into it, and
+    /// whether the draft itself is open in the in-place editor.
     private struct MinneKeyPreview {
         var state: MinneKeyOverlayState
         var guidance: [String] = []
         var guiding = false
         var fieldText = ""
+        var editingDraft = false
     }
 
     private static let previewDraft = """
@@ -312,6 +325,20 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                     """,
                     grounding: previewGrounding),
                 guidance: ["warmer", "mention the Friday deadline"])
+        case "editing":
+            // The draft open in the in-place editor (US-202).
+            return MinneKeyPreview(
+                state: .result(previewDraft, grounding: previewGrounding), editingDraft: true)
+        case "edited":
+            // The read-only result after an edit: same layout as `result`,
+            // carrying text a user has visibly changed by hand.
+            return MinneKeyPreview(
+                state: .result(
+                    """
+                    Hei Ingrid — torsdag passer fint for meg. Skal vi si 15:30 hos \
+                    dere i stedet? Da rekker vi budsjettet før du reiser.
+                    """,
+                    grounding: previewGrounding))
         case "reworking":
             return MinneKeyPreview(
                 state: .reworking(.guided, previous: previewDraft),

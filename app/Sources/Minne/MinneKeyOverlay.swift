@@ -90,10 +90,16 @@ protocol MinneKeyPresenting: AnyObject {
     var onAction: (@MainActor (MinneKeyAction) -> Void)? { get set }
     /// A steer the user typed into the guidance field and submitted.
     var onGuidance: (@MainActor (String) -> Void)? { get set }
-    /// Whether the guidance field is being edited — which is also the only
-    /// moment the panel holds key status, and therefore the moment at which the
-    /// event tap must claim no keys at all.
+    /// Whether the guidance field is being edited — one of the two moments the
+    /// panel holds key status, and therefore a moment at which the event tap
+    /// must claim no keys at all.
     var isGuiding: Bool { get }
+    /// Whether the draft itself is being edited in place — the other moment the
+    /// panel holds key status. The same claims-nothing rule applies.
+    var isEditingDraft: Bool { get }
+    /// Every keystroke of the draft editor, so the controller's session always
+    /// carries exactly what is on screen.
+    var onDraftEdit: (@MainActor (String) -> Void)? { get set }
     func present(_ target: CaretTarget, state: MinneKeyOverlayState)
     func update(_ state: MinneKeyOverlayState)
     /// The steers in force, shown above the guidance field.
@@ -105,10 +111,20 @@ protocol MinneKeyPresenting: AnyObject {
     /// which is the caller's signal that focus has to travel back across
     /// processes before anything may be typed into that app.
     @discardableResult func endGuiding() -> Bool
+    /// Turns the finished draft into an editor, borrowing the keyboard exactly
+    /// like guiding does.
+    func beginEditingDraft()
+    /// Ends draft editing. The edits are kept on screen — the result the panel
+    /// then shows carries them — and the keyboard is handed back; the return
+    /// value means the same thing as `endGuiding`'s.
+    @discardableResult func endEditingDraft() -> Bool
     func dismiss()
     /// Whether a screen point (Quartz coordinates, as event taps report them)
     /// falls inside the overlay.
     func contains(quartzPoint: CGPoint) -> Bool
+    /// Whether a screen point falls inside the draft's own text — the click
+    /// target that begins editing.
+    func draftContains(quartzPoint: CGPoint) -> Bool
 }
 
 /// Borderless panel that appears at the caret.
@@ -727,6 +743,22 @@ final class MinneKeyOverlayView: NSView {
         get { guidance.onGrowth }
         set { guidance.onGrowth = newValue }
     }
+    /// The draft editor's moments, mirrored from the guidance field's: every
+    /// keystroke (the controller keeps its session current), Escape (the
+    /// presenter ends the borrow), and growth (the panel re-measures). Return
+    /// is wired internally to `.insert` — it is the same verb as the button.
+    var onDraftEdited: (@MainActor (String) -> Void)? {
+        get { draftEditor.onEdit }
+        set { draftEditor.onEdit = newValue }
+    }
+    var onDraftEditCancelled: (@MainActor () -> Void)? {
+        get { draftEditor.onCancel }
+        set { draftEditor.onCancel = newValue }
+    }
+    var onDraftEditorGrew: (@MainActor () -> Void)? {
+        get { draftEditor.onGrowth }
+        set { draftEditor.onGrowth = newValue }
+    }
 
     private let spark = NSImageView()
     private let title = NSTextField(labelWithString: "Minne")
@@ -738,6 +770,9 @@ final class MinneKeyOverlayView: NSView {
     private let outcome = NSImageView()
     private let status = NSTextField(labelWithString: "")
     private let draft = DraftLabel()
+    /// The draft made touchable: swapped in for the label while the user edits
+    /// (US-202), hidden the rest of the time.
+    private let draftEditor = DraftEditor(frame: .zero)
     /// What grounded the draft, in the quiet ink under it. One line always:
     /// it is a citation, not content, and a citation that wrapped would push
     /// the draft around to say less than the tail truncation already does.
@@ -746,12 +781,22 @@ final class MinneKeyOverlayView: NSView {
     private let rule = OverlayRule(frame: .zero)
     private let guidance = GuidanceRow(frame: .zero)
     private let buttons = NSStackView()
+    /// At the status row's trailing edge, the one hint that is about the draft
+    /// rather than about a button: ⌘E while it can be edited, esc while it is
+    /// being. It lives up here because the capsule row is already full — a
+    /// fifth element there compresses the buttons (measured: Insert lost 20 pt
+    /// of its capsule) — and the status line has the room.
+    private let editHint = NSTextField(labelWithString: "")
     private let column = NSStackView()
 
     /// Whether the guidance field is being edited.
     var isGuiding: Bool { guidance.isEditing }
     /// Whether the caret really landed in it.
     var guidanceHasCaret: Bool { guidance.hasCaret }
+    /// Whether the draft editor is live — same caret-derived rule as guiding.
+    var isEditingDraft: Bool { draftEditor.isEditing }
+    /// Whether the caret really landed in the draft editor.
+    var draftEditorHasCaret: Bool { draftEditor.hasCaret }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -824,6 +869,20 @@ final class MinneKeyOverlayView: NSView {
         buttons.alignment = .centerY
         buttons.spacing = 7
 
+        // ⌘E is the invitation to edit; esc, in the accent, is the way back
+        // out — the same one-slot-two-answers pattern as the guidance field's
+        // ⇥/↩ hint, and the affordance that says the draft is touchable at all.
+        editHint.font = .systemFont(ofSize: 10.5)
+        editHint.setContentHuggingPriority(.required, for: .horizontal)
+        editHint.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        draftEditor.isHidden = true
+        // Return in the editor is the same verb as the Insert capsule — the
+        // controller ends the borrow, waits for focus to travel, and inserts
+        // what is on screen.
+        draftEditor.onSubmit = { [weak self] in self?.onAction?(.insert) }
+        draftEditor.onFocusChange = { [weak self] in self?.refreshEditHint() }
+
         let name = NSStackView(views: [spark, title, separator, app])
         name.orientation = .horizontal
         name.alignment = .centerY
@@ -840,13 +899,16 @@ final class MinneKeyOverlayView: NSView {
         header.alignment = .centerY
         header.spacing = 8
 
-        let statusRow = NSStackView(views: [outcome, status])
+        let statusSpacer = NSView()
+        statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let statusRow = NSStackView(views: [outcome, status, statusSpacer, editHint])
         statusRow.orientation = .horizontal
         statusRow.alignment = .firstBaseline
         statusRow.spacing = 5
 
         column.setViews(
-            [header, rule, statusRow, shimmer, draft, grounding, guidance, buttons], in: .top)
+            [header, rule, statusRow, shimmer, draft, draftEditor, grounding, guidance, buttons],
+            in: .top)
         // Air, in three sizes: tight around the rule, a line's worth before the
         // draft, and a little more before the row of capsules. The grounding
         // line hugs the draft it annotates — its spacing is set per state in
@@ -856,6 +918,7 @@ final class MinneKeyOverlayView: NSView {
         column.setCustomSpacing(11, after: statusRow)
         column.setCustomSpacing(13, after: shimmer)
         column.setCustomSpacing(13, after: draft)
+        column.setCustomSpacing(13, after: draftEditor)
         column.setCustomSpacing(13, after: grounding)
         column.setCustomSpacing(12, after: guidance)
         NSLayoutConstraint.activate([
@@ -863,9 +926,11 @@ final class MinneKeyOverlayView: NSView {
             rule.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             shimmer.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             guidance.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            draftEditor.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             draft.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
             grounding.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
-            statusRow.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
+            // Full width, not ≤: the edit hint sits at the row's trailing edge.
+            statusRow.widthAnchor.constraint(equalToConstant: Self.contentWidth),
         ])
     }
 
@@ -962,6 +1027,10 @@ final class MinneKeyOverlayView: NSView {
             body.map { Self.body(Self.preview($0), elided: $0.count > Self.maxPreviewCharacters) }
             ?? NSAttributedString()
         draft.isHidden = body == nil
+        // No state renders the editor — it only ever swaps in through
+        // `beginDraftEditing`, and every path that renders a state has ended
+        // the edit first. Belt and braces against the two showing at once.
+        draftEditor.isHidden = true
         if case .reworking = state { draft.startSweep() } else { draft.stopSweep() }
 
         // Only under a finished draft — never while thinking, where it would
@@ -983,6 +1052,20 @@ final class MinneKeyOverlayView: NSView {
 
         buttons.setViews(actions.map(button(for:)), in: .leading)
         buttons.isHidden = actions.isEmpty
+        // The edit hint exists exactly when editing is on offer: a finished
+        // draft, waiting. Everywhere else it would be a claim about a gesture
+        // that does nothing.
+        if case .result = state { editHint.isHidden = false } else { editHint.isHidden = true }
+        refreshEditHint()
+    }
+
+    /// One slot, two answers: ⌘E is how you get in, esc is how you get back
+    /// out — said in the accent while the editor is live, the way the guidance
+    /// hint flips ⇥ → ↩.
+    private func refreshEditHint() {
+        let editing = draftEditor.isEditing
+        editHint.stringValue = editing ? "esc done" : "⌘E edit"
+        editHint.textColor = editing ? OverlayPalette.blue : OverlayPalette.inkTertiary
     }
 
     /// The steers in force, above the field.
@@ -1011,6 +1094,57 @@ final class MinneKeyOverlayView: NSView {
     /// Seeds the guidance field with text, as if the user had typed it.
     func previewGuidanceText(_ text: String) {
         guidance.setFieldText(text)
+    }
+
+    /// Swaps the read-only draft for the editor, seeded with the whole draft.
+    /// The guidance row steps aside while the editor is up: two borrowed
+    /// fields at once would leave the keyboard's owner ambiguous, and the
+    /// steer belongs to a draft the user is in the middle of changing.
+    func beginDraftEditing(text: String) {
+        draft.stopSweep()
+        draft.isHidden = true
+        guidance.isHidden = true
+        draftEditor.isHidden = false
+        // The editor annotates the same grounding line the label did.
+        column.setCustomSpacing(grounding.isHidden ? 13 : 7, after: draftEditor)
+        draftEditor.setText(text)
+        refreshEditHint()
+    }
+
+    /// Puts the caret in the editor — split from `beginDraftEditing` because
+    /// first responder must be set before the panel asks for key status.
+    func focusDraftEditor() {
+        draftEditor.focus()
+    }
+
+    /// Puts the label back and returns what the editor holds, or nil when
+    /// nothing was being edited. The label still shows the old text until the
+    /// caller renders the state that carries the edits.
+    func endDraftEditing() -> String? {
+        guard !draftEditor.isHidden else { return nil }
+        let text = draftEditor.endEditing()
+        draftEditor.isHidden = true
+        draft.isHidden = false
+        refreshEditHint()
+        return text
+    }
+
+    /// The editor's focused *look*, with no keyboard behind it — the preview
+    /// hook's version of `showGuidingLook`.
+    func showDraftEditingLook() {
+        draftEditor.showEditingLook()
+    }
+
+    /// Repaints the edit hint from where the caret actually is.
+    func refreshDraftEditingLook() {
+        refreshEditHint()
+    }
+
+    /// The draft text's own footprint in screen coordinates — the click target
+    /// that begins editing. Nil while no read-only draft is on screen.
+    func draftFrameOnScreen() -> CGRect? {
+        guard !draft.isHidden, let window else { return nil }
+        return window.convertToScreen(draft.convert(draft.bounds, to: nil))
     }
 
     /// The draft, set with a little air between its lines — it is the one
@@ -1173,7 +1307,24 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
 
     var onGuidance: (@MainActor (String) -> Void)?
 
+    var onDraftEdit: (@MainActor (String) -> Void)? {
+        get { content.onDraftEdited }
+        set { content.onDraftEdited = newValue }
+    }
+
     var isGuiding: Bool { content.isGuiding }
+
+    var isEditingDraft: Bool { content.isEditingDraft }
+
+    /// Which field the borrowed keyboard belongs to right now. The two share
+    /// one borrow implementation (`borrowKeyboard(for:)`); this is what keeps
+    /// `endGuiding` from handing back a keyboard the draft editor is using,
+    /// and the other way round.
+    private enum KeyboardBorrower: String {
+        case guidance = "guidance field"
+        case draftEditor = "draft editor"
+    }
+    private var borrower: KeyboardBorrower?
 
     init() {
         panel = MinneKeyOverlayPanel(
@@ -1216,9 +1367,15 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
 
         content.onRequestGuiding = { [weak self] in self?.beginGuiding() }
         content.onGuidanceCancelled = { [weak self] in self?.endGuiding() }
+        // Escape in the draft editor: back to the read-only result, edits kept.
+        content.onDraftEditCancelled = { [weak self] in self?.endEditingDraft() }
         // A steer being typed can wrap onto another line; the panel grows
         // downward to make room, exactly as it does when a state changes.
         content.onGuidanceGrew = { [weak self] in
+            guard let self, self.presenting else { return }
+            self.place(animated: true)
+        }
+        content.onDraftEditorGrew = { [weak self] in
             guard let self, self.presenting else { return }
             self.place(animated: true)
         }
@@ -1237,11 +1394,13 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     func present(_ target: CaretTarget, state: MinneKeyOverlayState) {
         self.state = state
         presenting = true
-        // A fresh press inherits nothing from the last one — no steers, and
-        // certainly not the keyboard.
+        // A fresh press inherits nothing from the last one — no steers, no
+        // half-finished edit, and certainly not the keyboard.
         panel.wantsKey = false
+        borrower = nil
         content.render(guidance: [])
         content.endGuiding()
+        _ = content.endDraftEditing()
         content.render(target, state: state)
         caret = OverlayPlacement.flipped(
             target.anchor.rect, primaryHeight: Self.primaryScreenHeight())
@@ -1265,6 +1424,10 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
 
     func update(_ state: MinneKeyOverlayState) {
         guard presenting else { return }
+        // A new state supersedes an edit in progress. Nothing is lost: every
+        // keystroke already reached the controller through `onDraftEdit`, so
+        // whatever produced this state acted on the edited text.
+        endEditingDraft()
         self.state = state
         content.render(state)
         // A state with no draft on screen has no field to type into either, so
@@ -1300,13 +1463,59 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     /// observer knows that reactivation is not the user leaving.
     func beginGuiding() {
         guard presenting, state?.isDraftOnScreen == true, !content.isGuiding else { return }
+        borrowKeyboard(for: .guidance)
+    }
+
+    @discardableResult
+    func endGuiding() -> Bool {
+        content.endGuiding()
+        // Only a keyboard borrowed *for the guidance field* is handed back
+        // here — the draft editor may be holding it, and it hands back its own.
+        guard borrower == .guidance else { return false }
+        return handBackKeyboard()
+    }
+
+    /// Turns the finished draft into an editor (US-202) — the same borrow as
+    /// guiding, pointed at the other field.
+    func beginEditingDraft() {
+        guard presenting, let current = state, case .result(let text, _) = current,
+            !content.isEditingDraft
+        else { return }
+        // Clicking into the draft while the guidance field had the keyboard is
+        // a change of mind: the half-typed steer is abandoned (as it is on any
+        // state change) and the borrow simply moves to the editor — the
+        // keyboard never travels back to the app in between.
+        if borrower == .guidance { content.endGuiding() }
+        content.beginDraftEditing(text: text)
+        borrowKeyboard(for: .draftEditor)
+    }
+
+    @discardableResult
+    func endEditingDraft() -> Bool {
+        if let edited = content.endDraftEditing() {
+            // The edits are kept: the read-only result the panel goes back to
+            // *is* the edited text, so Insert, ⌘R and a steer all act on what
+            // the user sees — and a later `beginEditingDraft` reopens it.
+            if let current = state, case .result(_, let grounding) = current {
+                let kept = MinneKeyOverlayState.result(edited, grounding: grounding)
+                state = kept
+                content.render(kept)
+                place(animated: true)
+            }
+        }
+        guard borrower == .draftEditor else { return false }
+        return handBackKeyboard()
+    }
+
+    /// One borrow for both fields — everything the comment on `beginGuiding`
+    /// says, shared. First responder is set *before* asking for key: with
+    /// `becomesKeyOnlyIfNeeded` the panel takes key only when something in it
+    /// needs the keyboard, and asking first is a panel that needs nothing —
+    /// the field then draws focused and never gets a caret.
+    private func borrowKeyboard(for newBorrower: KeyboardBorrower) {
+        borrower = newBorrower
         panel.wantsKey = true
-        // First responder *before* asking for key, not after: with
-        // `becomesKeyOnlyIfNeeded` the panel takes key only when something in
-        // it needs the keyboard, and asking first is a panel that needs
-        // nothing — which is exactly how this went wrong the first time (the
-        // field drew unfocused and never got a caret).
-        content.beginGuiding()
+        focus(newBorrower)
         panel.makeKeyAndOrderFront(nil)
         if !NSApp.isActive {
             reactivateOnEnd = NSWorkspace.shared.frontmostApplication
@@ -1320,45 +1529,73 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         // borrowed keyboard from a panel that merely looks focused.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyArrivalGrace) { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.panel.wantsKey else { return }
-                if !self.content.guidanceHasCaret { self.content.beginGuiding() }
+                guard let self, self.panel.wantsKey, self.borrower == newBorrower else { return }
+                if !self.hasCaret(newBorrower) { self.focus(newBorrower) }
                 // The field editor is rebuilt on the way to key status, so the
-                // focus ring has to be repainted from where the caret ended up.
-                self.content.refreshGuidingLook()
+                // focused look has to be repainted from where the caret ended up.
+                self.refreshLook(newBorrower)
                 // The failsafe. A field that looks focused but does not have
                 // the keyboard is worse than no field at all: the user would
-                // type their steer straight into the document they are writing.
-                // If key did not arrive, put the field back and say so.
+                // type straight into the document they are writing. If key did
+                // not arrive, put the field back and say so.
                 guard self.panel.isKeyWindow else {
-                    BrainClient.log("minne key: the keyboard could not be borrowed — field closed")
-                    self.endGuiding()
+                    BrainClient.log(
+                        "minne key: the keyboard could not be borrowed — "
+                            + "\(newBorrower.rawValue) closed")
+                    self.end(newBorrower)
                     return
                 }
                 BrainClient.log(
-                    "minne key: guidance field has the keyboard "
-                        + "(caret \(self.content.guidanceHasCaret), Minne active \(NSApp.isActive), "
+                    "minne key: \(newBorrower.rawValue) has the keyboard "
+                        + "(caret \(self.hasCaret(newBorrower)), Minne active \(NSApp.isActive), "
                         + "AX sees \(Self.selfAccessibilityFocus()))"
                 )
             }
         }
     }
 
-    @discardableResult
-    func endGuiding() -> Bool {
-        let hadKey = panel.wantsKey
-        content.endGuiding()
-        guard hadKey else { return false }
+    private func focus(_ borrower: KeyboardBorrower) {
+        switch borrower {
+        case .guidance: content.beginGuiding()
+        case .draftEditor: content.focusDraftEditor()
+        }
+    }
+
+    private func hasCaret(_ borrower: KeyboardBorrower) -> Bool {
+        switch borrower {
+        case .guidance: return content.guidanceHasCaret
+        case .draftEditor: return content.draftEditorHasCaret
+        }
+    }
+
+    private func refreshLook(_ borrower: KeyboardBorrower) {
+        switch borrower {
+        case .guidance: content.refreshGuidingLook()
+        case .draftEditor: content.refreshDraftEditingLook()
+        }
+    }
+
+    private func end(_ borrower: KeyboardBorrower) {
+        switch borrower {
+        case .guidance: endGuiding()
+        case .draftEditor: endEditingDraft()
+        }
+    }
+
+    private func handBackKeyboard() -> Bool {
+        guard panel.wantsKey else { return false }
+        borrower = nil
         panel.wantsKey = false
         // AppKit has no "give key back" call. Ordering the panel out and
         // straight back in is the one that works: the window server hands key
         // status to the frontmost app's own window.
         panel.orderOut(nil)
         panel.orderFrontRegardless()
-        // Guiding activated Minne (see `beginGuiding`); activation goes back
-        // to the app the overlay points at, so its field is focused again
-        // before anything — a steer's insertion, the user's next keystroke —
-        // needs it. The app may have quit meanwhile; `deactivate` is the
-        // fallback that hands activation to whoever is next in line.
+        // Borrowing activated Minne (see `borrowKeyboard`); activation goes
+        // back to the app the overlay points at, so its field is focused again
+        // before anything — an insertion, the user's next keystroke — needs
+        // it. The app may have quit meanwhile; `deactivate` is the fallback
+        // that hands activation to whoever is next in line.
         if let previous = reactivateOnEnd {
             reactivateOnEnd = nil
             if previous.isTerminated { NSApp.deactivate() } else { previous.activate() }
@@ -1439,10 +1676,23 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         place(animated: false)
     }
 
+    /// Debug hook: the draft editor's focused look without borrowing the
+    /// keyboard, so `-minneKeyPreview editing` can be screenshotted on a
+    /// machine somebody else is typing on. `-minneKeyPreviewEditing key` asks
+    /// for the real borrow instead, via `beginEditingDraft`.
+    func previewDraftEditing() {
+        guard let current = state, case .result(let text, _) = current else { return }
+        BrainClient.log("minne key: preview draft editing, look only")
+        content.beginDraftEditing(text: text)
+        content.showDraftEditingLook()
+        place(animated: false)
+    }
+
     func dismiss() {
         state = nil
         guard presenting else { return }
         presenting = false
+        endEditingDraft()
         endGuiding()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.disappearDuration
@@ -1462,6 +1712,13 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         let point = CGPoint(
             x: quartzPoint.x, y: Self.primaryScreenHeight() - quartzPoint.y)
         return panel.frame.contains(point)
+    }
+
+    func draftContains(quartzPoint: CGPoint) -> Bool {
+        guard presenting, let rect = content.draftFrameOnScreen() else { return false }
+        let point = CGPoint(
+            x: quartzPoint.x, y: Self.primaryScreenHeight() - quartzPoint.y)
+        return rect.contains(point)
     }
 
     /// Re-measures and re-places. Called on every state change because the

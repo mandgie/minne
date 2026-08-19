@@ -45,6 +45,17 @@ final class MinneKeyCommandTests: XCTestCase {
         XCTAssertNil(command(MinneKeyTap.rKeyCode, [.maskCommand, .maskAlternate]))
     }
 
+    /// ⌘E opens the in-place draft editor while a draft is on screen — and
+    /// "use selection for find" the rest of the time, so the modifiers are as
+    /// exact as ⌘R's.
+    func testCommandEIsEditAndOnlyExactly() {
+        XCTAssertEqual(command(MinneKeyTap.eKeyCode, .maskCommand), .edit)
+        XCTAssertNil(command(MinneKeyTap.eKeyCode))
+        XCTAssertNil(command(MinneKeyTap.eKeyCode, [.maskCommand, .maskShift]))
+        XCTAssertNil(command(MinneKeyTap.eKeyCode, [.maskCommand, .maskAlternate]))
+        XCTAssertNil(command(MinneKeyTap.eKeyCode, [.maskCommand, .maskControl]))
+    }
+
     /// Tab moves into the guidance field. ⌘Tab is the app switcher and ⌥Tab is
     /// the system's; neither is ever ours.
     func testTabIsGuidanceAndOnlyBare() {

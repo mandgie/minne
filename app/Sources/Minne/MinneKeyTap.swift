@@ -15,6 +15,8 @@ enum MinneKeyCommand: Equatable, Sendable {
     case regenerate
     /// Tab: move into the guidance field, to steer the draft in words.
     case guide
+    /// ⌘E: edit the draft on screen, in place.
+    case edit
 }
 
 /// The `CGEventTap` behind the Minne key.
@@ -44,13 +46,14 @@ final class MinneKeyTap {
     /// is a press when it is set and a release when it is not.
     nonisolated static let rightOptionDeviceMask: UInt64 = 0x0000_0040
     /// `kVK_Escape`, `kVK_Return`, `kVK_ANSI_KeypadEnter`, `kVK_ANSI_Z`,
-    /// `kVK_ANSI_R`, `kVK_Tab`.
+    /// `kVK_ANSI_R`, `kVK_Tab`, `kVK_ANSI_E`.
     nonisolated static let escapeKeyCode: Int64 = 53
     nonisolated static let returnKeyCode: Int64 = 36
     nonisolated static let keypadEnterKeyCode: Int64 = 76
     nonisolated static let zKeyCode: Int64 = 6
     nonisolated static let rKeyCode: Int64 = 15
     nonisolated static let tabKeyCode: Int64 = 48
+    nonisolated static let eKeyCode: Int64 = 14
 
     /// A deliberate tap of right-Option.
     var onTap: (@MainActor () -> Void)?
@@ -271,6 +274,10 @@ final class MinneKeyTap {
             return command && !shift && !option && !control ? .undo : nil
         case rKeyCode:
             return command && !shift && !option && !control ? .regenerate : nil
+        case eKeyCode:
+            // ⌘E is "use selection for find" — claimed, like ⌘R, only for the
+            // moment a finished draft is on screen.
+            return command && !shift && !option && !control ? .edit : nil
         case tabKeyCode:
             return command || option || control || shift ? nil : .guide
         default:

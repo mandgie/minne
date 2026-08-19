@@ -109,6 +109,17 @@ final class MinneKeyOverlayTests: XCTestCase {
         XCTAssertEqual(GuidanceRow.fieldHeight(content: 13.4 * 6, line: 13.4), 13.4 * 4)
     }
 
+    /// The draft editor shares the same clamp with a larger cap: it grows with
+    /// the draft and scrolls inside itself past twelve lines.
+    func testTheDraftEditorGrowsToTwelveLinesThenScrolls() {
+        XCTAssertEqual(
+            GuidanceRow.fieldHeight(content: 15.5 * 6, line: 15.5, maxLines: DraftEditor.maxLines),
+            15.5 * 6)
+        XCTAssertEqual(
+            GuidanceRow.fieldHeight(content: 15.5 * 30, line: 15.5, maxLines: DraftEditor.maxLines),
+            15.5 * 12)
+    }
+
     /// The markers are coloured by walking the parts and stepping over each
     /// one's own length, which is the only thing that could silently drift: a
     /// steer that is elided, counted or contains a `·` of its own would put the

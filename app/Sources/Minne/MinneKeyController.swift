@@ -114,7 +114,14 @@ final class MinneKeyController {
         var guidance: [String] = []
         /// This request asked for another take rather than a revision.
         var regenerate = false
+        /// The draft as it stands on screen — the model's text until the user
+        /// edits it in the overlay, then the edited text. Everything that acts
+        /// on "the draft" (insert, rework, regenerate) reads this.
         var draft: String?
+        /// What the model actually wrote, kept apart from `draft` so an edit
+        /// never erases it — the byte-exact diff between the two is what
+        /// US-205 will send to the brain.
+        var generated: String?
         /// The edit that put the draft in, once it is in. Its `inverse` is undo.
         var applied: FieldEdit?
         /// How it got in, which decides whose undo takes it back.
@@ -211,6 +218,7 @@ final class MinneKeyController {
         }
         presenter.onAction = { [weak self] action in self?.perform(action) }
         presenter.onGuidance = { [weak self] steer in self?.guide(steer) }
+        presenter.onDraftEdit = { [weak self] text in self?.draftEdited(text) }
         refreshTap()
     }
 
@@ -442,6 +450,7 @@ final class MinneKeyController {
         switch result {
         case .success(let reply):
             session?.draft = reply.text
+            session?.generated = reply.text
             BrainClient.log(
                 "minne key: draft ready (\(reply.text.count) chars"
                     + (reply.stylePage.map { ", style \($0)" } ?? "")
@@ -499,6 +508,18 @@ final class MinneKeyController {
         show(.consulting(session.mode, tool: name))
     }
 
+    // MARK: - Editing the draft
+
+    /// Every keystroke of the overlay's draft editor (US-202). The session's
+    /// draft tracks the screen exactly, which is the whole contract: whatever
+    /// happens next — Insert, ⌘R, a steer — acts on the text the user is
+    /// looking at, edits included. `generated` is deliberately left alone.
+    private func draftEdited(_ text: String) {
+        guard var session, session.draft != nil, session.applied == nil else { return }
+        session.draft = text
+        self.session = session
+    }
+
     // MARK: - Insertion and undo
 
     /// Puts the draft in the field — the first and only moment this feature
@@ -512,12 +533,14 @@ final class MinneKeyController {
     /// stayed put would be one more thing to dismiss.
     func insert() {
         guard let session, session.draft != nil, session.applied == nil else { return }
-        // If the guidance field has the keyboard, the app about to be typed
-        // into does not. Give it back first and let focus travel: the
-        // pasteboard path posts a real ⌘V, and a ⌘V posted while our own panel
-        // is key goes into our own panel.
+        // If either borrowed field — guidance or the draft editor — has the
+        // keyboard, the app about to be typed into does not. Give it back
+        // first and let focus travel: the pasteboard path posts a real ⌘V,
+        // and a ⌘V posted while our own panel is key goes into our own panel.
         let requestId = session.requestId
-        if presenter.endGuiding() {
+        let wasGuiding = presenter.endGuiding()
+        let wasEditing = presenter.endEditingDraft()
+        if wasGuiding || wasEditing {
             schedule(Self.focusReturnDelay) { [weak self] in self?.performInsert(requestId) }
             return
         }
@@ -657,15 +680,17 @@ final class MinneKeyController {
     /// the user is typing in, which is the whole reason this is a question the
     /// tap asks rather than a rule it applies.
     ///
-    /// And while the guidance field is being edited, **nothing** is ours. The
-    /// panel holds the keyboard in that state, so every key the user presses is
-    /// meant for the text they are typing into it: Return submits the steer,
-    /// Escape puts the field away, and ⌘Z is the field editor's own undo. All
-    /// four arrive at the field natively, which is only true because the tap
-    /// lets them past.
+    /// And while the panel holds the keyboard — for the guidance field or for
+    /// the draft editor — **nothing** is ours. Every key the user presses is
+    /// meant for the text they are typing: Return submits or inserts, Escape
+    /// puts the field away, and ⌘Z is the text view's own undo. All of them
+    /// arrive at the field natively, which is only true because the tap lets
+    /// them past.
     @discardableResult
     func command(_ command: MinneKeyCommand) -> Bool {
-        guard presenter.isPresenting, !presenter.isGuiding else { return false }
+        guard presenter.isPresenting, !presenter.isGuiding, !presenter.isEditingDraft else {
+            return false
+        }
         switch command {
         case .escape:
             dismiss()
@@ -682,6 +707,10 @@ final class MinneKeyController {
             guard case .result = presenter.state else { return false }
             presenter.beginGuiding()
             return true
+        case .edit:
+            guard case .result = presenter.state, session?.draft != nil else { return false }
+            presenter.beginEditingDraft()
+            return true
         case .undo:
             guard case .inserted(let method) = presenter.state, session?.applied != nil,
                 !method.undoBelongsToTheApp
@@ -695,11 +724,21 @@ final class MinneKeyController {
 
     /// A click anywhere but on the overlay puts the user somewhere else — very
     /// likely a different caret — so the overlay goes away, and so does any
-    /// retry still waiting on a woken tree.
+    /// retry still waiting on a woken tree. A click *on the draft's own text*,
+    /// though, is the edit gesture (US-202): fixing a word should happen where
+    /// mistakes are free, before the field is ever touched.
     func clicked(at point: CGPoint) {
         cancelWakeRetry(.click)
-        guard presenter.isPresenting, !presenter.contains(quartzPoint: point) else { return }
-        dismiss()
+        guard presenter.isPresenting else { return }
+        guard presenter.contains(quartzPoint: point) else {
+            dismiss()
+            return
+        }
+        if case .result = presenter.state, !presenter.isEditingDraft,
+            presenter.draftContains(quartzPoint: point)
+        {
+            presenter.beginEditingDraft()
+        }
     }
 
     /// Some app became active. Usually that is the user leaving and the
@@ -726,6 +765,7 @@ final class MinneKeyController {
     func dismiss() {
         // The keyboard goes back before the panel does: it is the app's, and
         // the user is about to be typing in it again.
+        presenter.endEditingDraft()
         presenter.endGuiding()
         if let session, session.draft == nil {
             backend?.abortDraft(id: session.requestId)
