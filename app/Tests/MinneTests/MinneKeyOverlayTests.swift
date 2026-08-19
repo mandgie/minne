@@ -82,6 +82,33 @@ final class MinneKeyOverlayTests: XCTestCase {
         XCTAssertLessThan(line.count, GuidanceRow.maxChipCharacters + 4)
     }
 
+    // MARK: - The guidance field's growth
+
+    func testAnEmptyFieldIsOneLineTall() {
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 0, line: 14), 14)
+    }
+
+    func testTheFieldGrowsWithItsContent() {
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 28, line: 14), 28)
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 42, line: 14), 42)
+    }
+
+    /// Past four lines the words scroll inside the field instead of growing
+    /// the panel any further.
+    func testGrowthStopsAtFourLines() {
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 14 * 4, line: 14), 14 * 4)
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 14 * 9, line: 14), 14 * 4)
+    }
+
+    /// Growth rounds up — a fractional line height that was floored would clip
+    /// the last line's descenders — but the cap is exactly four lines: the cap
+    /// is the one height at which the field scrolls, and a viewport taller
+    /// than its whole lines shows a clipped sliver of the line above.
+    func testAFractionalLineHeightRoundsUpButTheCapStaysOnWholeLines() {
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 13.4, line: 13.4), 14)
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 13.4 * 6, line: 13.4), 13.4 * 4)
+    }
+
     /// The markers are coloured by walking the parts and stepping over each
     /// one's own length, which is the only thing that could silently drift: a
     /// steer that is elided, counted or contains a `·` of its own would put the

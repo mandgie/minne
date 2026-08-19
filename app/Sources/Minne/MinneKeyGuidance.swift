@@ -2,12 +2,18 @@ import AppKit
 
 /// The line under the draft where the user says what they want changed.
 ///
-/// It is one text field and nothing else — no label, no button, no border until
+/// It is one text view and nothing else — no label, no button, no border until
 /// the caret is in it. A hairline separates it from the draft above, the same
 /// hairline the header uses, so the panel keeps its single rule and its single
 /// grid. What it is for is said by the placeholder, and the placeholder is a
 /// worked example rather than a noun: "shorter, warmer, mention…" is the whole
 /// instruction manual.
+///
+/// The field wraps and grows. A steer is often a sentence, and a single line
+/// scrolled the words out of view exactly while they were being judged — so the
+/// field grows with its content to four lines and then scrolls inside itself,
+/// and the panel reflows downward to make room. Return still submits; a newline
+/// is asked for with Shift-Return.
 ///
 /// The chips above it are the steers already in force. They matter because
 /// guidance stacks: after two rounds the draft on screen is the product of
@@ -22,15 +28,41 @@ final class GuidanceRow: NSView {
     var onSubmit: (@MainActor (String) -> Void)?
     /// Escape in the field: stop editing, and leave the draft as it is.
     var onCancel: (@MainActor () -> Void)?
+    /// The field changed height — the panel has to re-measure and re-place,
+    /// or the row below the field is drawn over rather than pushed down.
+    var onGrowth: (@MainActor () -> Void)?
 
     /// How many steers are shown before the line starts counting instead.
     nonisolated static let maxChipsShown = 3
     /// How long one steer may be before it is elided in the chip line.
     nonisolated static let maxChipCharacters = 34
+    /// How many lines the field grows to before it scrolls inside itself.
+    nonisolated static let maxFieldLines = 4
+
+    /// The field's height for what is in it: one line when empty, growing with
+    /// the text, capped at `maxFieldLines` — past the cap the words scroll
+    /// inside the field instead of growing the panel any further.
+    ///
+    /// Growth rounds up so a fractional line height never clips descenders,
+    /// but the cap is *exactly* four lines: the cap is the one height at which
+    /// the field scrolls, and a viewport even half a point taller than its
+    /// whole lines shows a clipped sliver of the line above kissing the rule.
+    nonisolated static func fieldHeight(content: CGFloat, line: CGFloat) -> CGFloat {
+        let one = ceil(line)
+        let cap = max(line * CGFloat(maxFieldLines), one)
+        return min(max(ceil(content), one), cap)
+    }
+
+    private static let fieldFont = NSFont.systemFont(ofSize: 11.5)
 
     private let rule = OverlayRule(frame: .zero)
     private let chips = NSTextField(labelWithString: "")
-    private let field = GuidanceTextField(frame: .zero)
+    private let field: GuidanceTextView
+    private let scroll = NSScrollView()
+    /// An `NSTextView` has no placeholder of its own; this label sits over the
+    /// empty field and lets clicks fall through to it.
+    private let placeholder = ClickThroughLabel(
+        labelWithString: "Guide it — shorter, warmer, mention…")
     /// The key that gets you in, and — once you are in — the key that sends
     /// what you typed. One slot, two answers, so focus is legible from the
     /// trailing edge as well as from the rule.
@@ -39,6 +71,10 @@ final class GuidanceRow: NSView {
     /// is said by the rule above it and by the ink, never by a fill.
     private let fieldRow = NSView()
     private let column = NSStackView()
+    /// One line's worth of field, from the font — the constraint below grows
+    /// from here and never past `maxFieldLines` of it.
+    private let lineHeight: CGFloat
+    private let fieldHeightConstraint: NSLayoutConstraint
 
     /// False while a rework is in flight — there is nothing to steer yet, so
     /// the row must not advertise a key that would do nothing.
@@ -48,10 +84,9 @@ final class GuidanceRow: NSView {
     ///
     /// Derived from where the caret actually is rather than from a flag set
     /// when editing was *asked for*: key status arrives from the window server
-    /// a beat later and the field editor is torn down and rebuilt on the way,
-    /// so a remembered flag ends up disagreeing with the blinking caret the
-    /// user can see. `previewLook` is the one exception, for the screenshot
-    /// hook that has no keyboard to take.
+    /// a beat later, so a remembered flag ends up disagreeing with the blinking
+    /// caret the user can see. `previewLook` is the one exception, for the
+    /// screenshot hook that has no keyboard to take.
     var isEditing: Bool { previewLook || hasCaret }
 
     private var previewLook = false
@@ -65,6 +100,21 @@ final class GuidanceRow: NSView {
     }
 
     override init(frame frameRect: NSRect) {
+        // The text system built by hand, so the field measures itself with the
+        // same TextKit the height maths reads — the convenience initialiser's
+        // stack downgrades lazily and measures nothing until it has.
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(
+            size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        container.lineFragmentPadding = 0
+        layoutManager.addTextContainer(container)
+        field = GuidanceTextView(frame: .zero, textContainer: container)
+        lineHeight = layoutManager.defaultLineHeight(for: Self.fieldFont)
+        let oneLine = Self.fieldHeight(content: 0, line: lineHeight)
+        fieldHeightConstraint = scroll.heightAnchor.constraint(equalToConstant: oneLine)
         super.init(frame: frameRect)
 
         // A caption, but not the same grey as the placeholder under it: these
@@ -77,36 +127,65 @@ final class GuidanceRow: NSView {
         chips.isHidden = true
 
         field.delegate = self
-        field.isBordered = false
-        field.isBezeled = false
+        field.font = Self.fieldFont
         field.drawsBackground = false
-        field.focusRingType = .none
-        field.font = .systemFont(ofSize: 11.5)
-        field.cell?.usesSingleLineMode = true
-        field.cell?.wraps = false
-        field.cell?.isScrollable = true
+        field.isRichText = false
+        field.allowsUndo = true
+        field.textContainerInset = .zero
+        // What the user typed is what the model is steered with — a smart
+        // quote or an auto-dash would quietly rewrite their words.
+        field.isAutomaticQuoteSubstitutionEnabled = false
+        field.isAutomaticDashSubstitutionEnabled = false
+        field.isVerticallyResizable = true
+        field.isHorizontallyResizable = false
+        field.autoresizingMask = [.width]
+        field.minSize = .zero
+        field.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         field.onClickWhileInactive = { [weak self] in self?.onRequestEditing?() }
+
+        // Field-like, not document-like: no border, no background, elasticity
+        // off — the scroller only exists for the text past the four-line cap,
+        // and it draws over the text rather than claiming a column.
+        scroll.documentView = field
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.verticalScrollElasticity = .none
+        scroll.horizontalScrollElasticity = .none
+
+        placeholder.font = Self.fieldFont
+        placeholder.lineBreakMode = .byTruncatingTail
+        placeholder.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         hint.font = .systemFont(ofSize: 10.5)
         hint.setContentHuggingPriority(.required, for: .horizontal)
 
         // Constraints rather than a stack view: the hint belongs at the far
-        // edge of the field whatever the field's intrinsic width says, and a
-        // stack view packs both at its leading edge the moment the field stops
-        // being the stretchy one.
-        field.translatesAutoresizingMaskIntoConstraints = false
+        // edge of the field whatever the field's width says, and a stack view
+        // packs both at its leading edge the moment the field stops being the
+        // stretchy one. The hint and the placeholder both sit on the *first*
+        // line — where typing begins, and where they stay when the field grows.
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        placeholder.translatesAutoresizingMaskIntoConstraints = false
         hint.translatesAutoresizingMaskIntoConstraints = false
-        fieldRow.addSubview(field)
+        fieldRow.addSubview(scroll)
+        fieldRow.addSubview(placeholder)
         fieldRow.addSubview(hint)
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: fieldRow.leadingAnchor),
-            field.topAnchor.constraint(equalTo: fieldRow.topAnchor, constant: 4),
-            field.bottomAnchor.constraint(equalTo: fieldRow.bottomAnchor, constant: -4),
-            field.trailingAnchor.constraint(equalTo: hint.leadingAnchor, constant: -6),
+            scroll.leadingAnchor.constraint(equalTo: fieldRow.leadingAnchor),
+            scroll.topAnchor.constraint(equalTo: fieldRow.topAnchor, constant: 4),
+            scroll.bottomAnchor.constraint(equalTo: fieldRow.bottomAnchor, constant: -4),
+            scroll.trailingAnchor.constraint(equalTo: hint.leadingAnchor, constant: -6),
+            fieldHeightConstraint,
             hint.trailingAnchor.constraint(equalTo: fieldRow.trailingAnchor),
-            hint.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            hint.centerYAnchor.constraint(equalTo: scroll.topAnchor, constant: oneLine / 2),
+            placeholder.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+            placeholder.trailingAnchor.constraint(lessThanOrEqualTo: scroll.trailingAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: scroll.topAnchor, constant: oneLine / 2),
         ])
 
         column.orientation = .vertical
@@ -146,8 +225,7 @@ final class GuidanceRow: NSView {
     /// Deliberately not conditional on the window being key yet: a panel asked
     /// for key status is granted it by the window server, which does not
     /// necessarily answer within the call. Making the field first responder
-    /// anyway installs the field editor, and the keystrokes arrive at it the
-    /// moment key does.
+    /// anyway means the keystrokes arrive at it the moment key does.
     func beginEditing() {
         guard !hasCaret else { return }
         window?.makeFirstResponder(field)
@@ -162,19 +240,14 @@ final class GuidanceRow: NSView {
 
     /// Whether the field really holds the keyboard.
     ///
-    /// Both halves are needed. AppKit makes this field the panel's initial
-    /// first responder — field editor and all — the moment the overlay is
-    /// ordered front, so being first responder proves nothing on its own: in a
-    /// window that is not key that editor receives nothing, and treating it as
-    /// focused would light the focus ring on every draft and, far worse, tell
-    /// the event tap to stop claiming Escape and Return. And the first
-    /// responder of a window whose text field *is* being edited is the field
-    /// editor — an `NSTextView` this field is the delegate of — not the field.
+    /// Being first responder proves nothing on its own: AppKit can make this
+    /// field the panel's initial first responder the moment the overlay is
+    /// ordered front, and in a window that is not key it receives nothing.
+    /// Treating that as focused would light the focus ring on every draft
+    /// and, far worse, tell the event tap to stop claiming Escape and Return.
     var hasCaret: Bool {
-        guard let window, window.isKeyWindow, let responder = window.firstResponder as AnyObject?
-        else { return false }
-        if responder === field { return true }
-        return (responder as? NSTextView)?.delegate === field
+        guard let window, window.isKeyWindow else { return false }
+        return window.firstResponder === field
     }
 
     /// The focused look without the focus. Only the overlay's preview hook uses
@@ -185,11 +258,24 @@ final class GuidanceRow: NSView {
         applyColors()
     }
 
+    /// Puts words in the field as if they had been typed — the preview hook's
+    /// way of screenshotting the wrapped and scrolling states, since the real
+    /// thing needs the keyboard. Scrolled to the end, which is where a caret
+    /// that had just typed this would be.
+    func setFieldText(_ text: String) {
+        field.string = text
+        placeholder.isHidden = !text.isEmpty
+        updateFieldHeight()
+        field.scrollRangeToVisible(NSRange(location: (text as NSString).length, length: 0))
+    }
+
     /// Gives the field up and empties it. Called both when the user cancels and
     /// when a steer is submitted — a steer that has been applied is shown as a
     /// chip, so leaving it in the field would say it twice.
     func endEditing() {
-        field.stringValue = ""
+        field.string = ""
+        placeholder.isHidden = false
+        updateFieldHeight()
         previewLook = false
         if hasCaret, let window { window.makeFirstResponder(nil) }
         applyColors()
@@ -201,6 +287,19 @@ final class GuidanceRow: NSView {
         field.isEditable = editable
         field.isSelectable = editable
         applyColors()
+    }
+
+    /// Re-measures the text and grows or shrinks the field, within the cap.
+    /// Growth is the panel's business too — `onGrowth` is how it hears.
+    private func updateFieldHeight() {
+        guard let layoutManager = field.layoutManager, let container = field.textContainer
+        else { return }
+        layoutManager.ensureLayout(for: container)
+        let content = layoutManager.usedRect(for: container).height
+        let height = Self.fieldHeight(content: content, line: lineHeight)
+        guard fieldHeightConstraint.constant != height else { return }
+        fieldHeightConstraint.constant = height
+        onGrowth?()
     }
 
     /// `chipLine`, inked: the words in the secondary ink and every marker in the
@@ -272,27 +371,24 @@ final class GuidanceRow: NSView {
             hint.textColor = editing ? OverlayPalette.blue : OverlayPalette.inkTertiary
             hint.isHidden = !isEditable
             field.textColor = OverlayPalette.ink
-            field.placeholderAttributedString = NSAttributedString(
-                string: "Guide it — shorter, warmer, mention…",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11.5),
-                    // The invitation steps forward when it is live and recedes
-                    // again when it is not.
-                    .foregroundColor: editing
-                        ? OverlayPalette.inkSecondary : OverlayPalette.inkTertiary,
-                ])
+            field.insertionPointColor = OverlayPalette.ink
+            placeholder.isHidden = !field.string.isEmpty
+            // The invitation steps forward when it is live and recedes again
+            // when it is not.
+            placeholder.textColor =
+                editing ? OverlayPalette.inkSecondary : OverlayPalette.inkTertiary
             rule.isAccented = editing
         }
     }
 }
 
-extension GuidanceRow: NSTextFieldDelegate {
-    func controlTextDidBeginEditing(_ notification: Notification) {
+extension GuidanceRow: NSTextViewDelegate {
+    func textDidBeginEditing(_ notification: Notification) {
         applyColors()
     }
 
-    func controlTextDidEndEditing(_ notification: Notification) {
-        // On the next pass: the field editor is still the first responder while
+    func textDidEndEditing(_ notification: Notification) {
+        // On the next pass: the responder chain is still mid-hand-off while
         // this is being delivered, so reading the caret now would say the field
         // is focused a moment after it stopped being.
         DispatchQueue.main.async { [weak self] in
@@ -300,16 +396,22 @@ extension GuidanceRow: NSTextFieldDelegate {
         }
     }
 
-    /// The two keys the field owns while it is being edited. The event tap is
-    /// told to claim nothing at all in this state (`MinneKeyController.command`),
-    /// precisely so that these arrive here as ordinary text-field commands
+    func textDidChange(_ notification: Notification) {
+        placeholder.isHidden = !field.string.isEmpty
+        updateFieldHeight()
+    }
+
+    /// The keys the field owns while it is being edited. The event tap is told
+    /// to claim nothing at all in this state (`MinneKeyController.command`),
+    /// precisely so that these arrive here as ordinary text-view commands
     /// rather than as overlay shortcuts.
-    func control(
-        _ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
-    ) -> Bool {
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
-            let steer = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Return submits, however many lines are on screen; the newline is
+            // Shift-Return's, handed back to the text view to insert.
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { return false }
+            let steer = field.string.trimmingCharacters(in: .whitespacesAndNewlines)
             // Return on an empty field is not a steer; it just puts the field
             // away, which is the least surprising thing it can do.
             if steer.isEmpty {
@@ -335,11 +437,11 @@ extension GuidanceRow: NSTextFieldDelegate {
 
 /// The field itself, in a window that is usually not key.
 ///
-/// A text field in a non-key window cannot get a field editor, so an ordinary
+/// A text view in a non-key window cannot hold a caret, so an ordinary
 /// `mouseDown` there does nothing at all — the click has to become a request to
 /// the presenter to borrow key status first. Once the panel is key it is an
-/// ordinary text field again.
-private final class GuidanceTextField: NSTextField {
+/// ordinary text view again.
+private final class GuidanceTextView: NSTextView {
     var onClickWhileInactive: (@MainActor () -> Void)?
 
     /// The panel belongs to an app that is never active; without this the first
@@ -353,4 +455,10 @@ private final class GuidanceTextField: NSTextField {
         }
         super.mouseDown(with: event)
     }
+}
+
+/// A label that clicks fall through: it sits over the guidance field, and a
+/// click on the placeholder has to reach the field it is inviting you into.
+private final class ClickThroughLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

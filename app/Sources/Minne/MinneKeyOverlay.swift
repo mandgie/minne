@@ -134,6 +134,16 @@ private final class MinneKeyOverlayPanel: NSPanel {
     var wantsKey = false
     override var canBecomeKey: Bool { wantsKey }
     override var canBecomeMain: Bool { false }
+
+    /// A borderless panel is ignored by accessibility, so even with the
+    /// guidance field key-and-focused, Minne's app element reported no
+    /// focused window and no focused element — and the system-wide focus
+    /// (how Wispr Flow and macOS Dictation find their target) resolved to
+    /// nothing (probed live, 2026-08-19). Opting the panel back in is what
+    /// makes the caret findable; activation alone (see `beginGuiding`) was
+    /// necessary but not sufficient.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .window }
 }
 
 /// The panel's background: one flat white surface with a hairline edge.
@@ -712,6 +722,11 @@ final class MinneKeyOverlayView: NSView {
         get { guidance.onCancel }
         set { guidance.onCancel = newValue }
     }
+    /// The guidance field grew or shrank — the panel has to re-measure.
+    var onGuidanceGrew: (@MainActor () -> Void)? {
+        get { guidance.onGrowth }
+        set { guidance.onGrowth = newValue }
+    }
 
     private let spark = NSImageView()
     private let title = NSTextField(labelWithString: "Minne")
@@ -993,6 +1008,11 @@ final class MinneKeyOverlayView: NSView {
         guidance.refreshLook()
     }
 
+    /// Seeds the guidance field with text, as if the user had typed it.
+    func previewGuidanceText(_ text: String) {
+        guidance.setFieldText(text)
+    }
+
     /// The draft, set with a little air between its lines — it is the one
     /// paragraph of prose in the panel and the thing being judged.
     ///
@@ -1196,6 +1216,12 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
 
         content.onRequestGuiding = { [weak self] in self?.beginGuiding() }
         content.onGuidanceCancelled = { [weak self] in self?.endGuiding() }
+        // A steer being typed can wrap onto another line; the panel grows
+        // downward to make room, exactly as it does when a state changes.
+        content.onGuidanceGrew = { [weak self] in
+            guard let self, self.presenting else { return }
+            self.place(animated: true)
+        }
         content.onGuidanceSubmitted = { [weak self] steer in
             guard let self else { return }
             // Key goes back to the app being written into *before* the steer is
@@ -1310,7 +1336,8 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
                 }
                 BrainClient.log(
                     "minne key: guidance field has the keyboard "
-                        + "(caret \(self.content.guidanceHasCaret), Minne active \(NSApp.isActive))"
+                        + "(caret \(self.content.guidanceHasCaret), Minne active \(NSApp.isActive), "
+                        + "AX sees \(Self.selfAccessibilityFocus()))"
                 )
             }
         }
@@ -1340,6 +1367,60 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         return true
     }
 
+    /// What Minne's own accessibility reports as focused — the exact lookup a
+    /// dictation tool makes (through the app element; the system-wide one
+    /// resolves here once Minne is active). Diagnostic for the guiding log
+    /// line: "window+element" is a field Wispr Flow can find, anything else
+    /// is why it cannot.
+    private static func selfAccessibilityFocus() -> String {
+        let app = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+        var window: CFTypeRef?
+        let hasWindow =
+            AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window)
+            == .success
+        var element: CFTypeRef?
+        let hasElement =
+            AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &element)
+            == .success
+        var role = "?"
+        if hasElement, let element, CFGetTypeID(element) == AXUIElementGetTypeID() {
+            var value: CFTypeRef?
+            AXUIElementCopyAttributeValue(
+                element as! AXUIElement, kAXRoleAttribute as CFString, &value)
+            role = value as? String ?? "?"
+        }
+        let selfView: String
+        switch (hasWindow, hasElement) {
+        case (true, true): selfView = "window+element(\(role))"
+        case (true, false): selfView = "window only"
+        case (false, true): selfView = "element(\(role)) only"
+        case (false, false): selfView = "nothing"
+        }
+        return "\(selfView); systemwide → \(systemwideFocus())"
+    }
+
+    /// The window server's answer to "who is focused" — the step a dictation
+    /// tool takes BEFORE looking inside any app. An accessory app that is
+    /// active but not reported here is invisible to dictation no matter how
+    /// good its own tree is.
+    private static func systemwideFocus() -> String {
+        let systemwide = AXUIElementCreateSystemWide()
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(
+            systemwide, kAXFocusedUIElementAttribute as CFString, &value)
+        guard err == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return "error \(err.rawValue)"
+        }
+        let element = value as! AXUIElement
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        var roleValue: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
+        let role = roleValue as? String ?? "?"
+        let ours = pid == ProcessInfo.processInfo.processIdentifier
+        return "\(role) in \(ours ? "Minne" : "pid \(pid)")"
+    }
+
     /// Debug hook: paints the guidance field as focused without borrowing the
     /// keyboard, so `-minneKeyPreview guiding` can be screenshotted on a
     /// machine somebody else is typing on.
@@ -1347,6 +1428,14 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         BrainClient.log(
             "minne key: preview guiding, look only (caret \(content.guidanceHasCaret))")
         content.showGuidingLook()
+        place(animated: false)
+    }
+
+    /// Debug hook: seeds the guidance field with text as if it had been typed,
+    /// so the wrapped and internally-scrolling field states can be
+    /// screenshotted without a keyboard to take.
+    func previewGuidance(text: String) {
+        content.previewGuidanceText(text)
         place(animated: false)
     }
 

@@ -234,14 +234,18 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 overlay.previewGuiding()
             }
         }
+        // After the focused look: seeding text hides the placeholder, and the
+        // field then grows exactly as it does under real typing.
+        if !state.fieldText.isEmpty { overlay.previewGuidance(text: state.fieldText) }
     }
 
-    /// One preview: what the panel shows, which steers are in force, and
-    /// whether the guidance field is drawn focused.
+    /// One preview: what the panel shows, which steers are in force, whether
+    /// the guidance field is drawn focused, and what has been typed into it.
     private struct MinneKeyPreview {
         var state: MinneKeyOverlayState
         var guidance: [String] = []
         var guiding = false
+        var fieldText = ""
     }
 
     private static let previewDraft = """
@@ -276,6 +280,22 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         case "guiding":
             return MinneKeyPreview(
                 state: .result(previewDraft, grounding: previewGrounding), guiding: true)
+        case "guiding-typed":
+            // One line in the field, mid-steer.
+            return MinneKeyPreview(
+                state: .result(previewDraft, grounding: previewGrounding), guiding: true,
+                fieldText: "warmer, and mention the deadline")
+        case "guiding-tall":
+            // Enough words to pass the four-line cap: the field stops growing
+            // and scrolls inside itself, showing the end where the caret is.
+            return MinneKeyPreview(
+                state: .result(previewDraft, grounding: previewGrounding), guiding: true,
+                fieldText:
+                    "Make it warmer and a little less formal, mention that the Friday "
+                    + "deadline is safe either way, keep the Norwegian greeting exactly as "
+                    + "it is, drop the second sentence about the budget, and sign it off "
+                    + "with just my first name the way I usually do with Ingrid — she reads "
+                    + "these on her phone, so the shorter the better.")
         case "guiding-steered":
             // The busiest the guidance line ever gets: the rule in the accent,
             // the steers already in force under it, and the field live.
