@@ -9,6 +9,7 @@
 // anything unreadable.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { sanitizeEdits, type EditState } from "./editledger";
 import { sanitizeRegisters, type RegisterState } from "./register";
 import { sanitizeSteers, type SteerState } from "./steer";
 
@@ -80,6 +81,13 @@ export interface SyncState {
    * the registers: the page is presentation, this is the learning.
    */
   steers?: Record<string, SteerState>;
+  /**
+   * US-205's edit-ledger counters, keyed the same way. Folded when a
+   * `draft_outcome` settles a draft (edited insert → per-feature corrections,
+   * untouched insert → an approval, dismissal → an abandon) and distilled into
+   * the same "## Standing guidance" section as the steers.
+   */
+  edits?: Record<string, EditState>;
 }
 
 export const EMPTY_SYNC_STATE: SyncState = { watermark: 0, lastSync: null, lastLint: null };
@@ -109,6 +117,8 @@ export function loadSyncState(path: string): SyncState {
   if (registers !== null) state.registers = registers;
   const steers = sanitizeSteers(raw["steers"]);
   if (steers !== null) state.steers = steers;
+  const edits = sanitizeEdits(raw["edits"]);
+  if (edits !== null) state.edits = edits;
   return state;
 }
 

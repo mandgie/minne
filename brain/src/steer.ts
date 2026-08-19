@@ -27,6 +27,7 @@
 // synonymy) would merge steers the user meant differently; the cost is that a
 // habit split across phrasings takes longer to reach the threshold.
 import { domainOf } from "./draft";
+import { editRules, type EditState } from "./editledger";
 import { parseFrontmatter, type Frontmatter } from "./frontmatter";
 import { NotFoundError, type Memory } from "./memory";
 import { messageHash, upsertSection } from "./register";
@@ -145,21 +146,50 @@ export function standingRules(state: SteerState): [string, number][] {
 }
 
 /**
- * The section as it appears on the style page — and therefore inside every
- * draft prompt for this context. The rule is the user's own steer, capitalized
- * and nothing more: deterministic, and their words rather than a paraphrase.
+ * Every rule the section carries for one context — the steers the user
+ * repeated (their own words, capitalized) and the corrections they made in
+ * the editor (US-205's edit ledger), merged most-repeated first under the one
+ * cap. One budget, however many sources of guidance.
  */
-export function renderStandingGuidance(state: SteerState): string {
-  const rules = standingRules(state);
+export function combinedRules(
+  steer: SteerState | null | undefined,
+  edits: EditState | null | undefined,
+): string[] {
+  const rules: [string, number][] = [
+    ...(steer == null
+      ? []
+      : standingRules(steer).map(
+          ([text, count]): [string, number] => [`${capitalize(text)} — asked ${count} times`, count],
+        )),
+    ...(edits == null ? [] : editRules(edits)),
+  ];
+  return rules
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, MAX_STANDING_RULES)
+    .map(([label]) => label);
+}
+
+/**
+ * The section as it appears on the style page — and therefore inside every
+ * draft prompt for this context. A steer's rule is the user's own words and
+ * nothing more; a correction's is a fixed phrase over counted evidence.
+ * Deterministic either way — never a paraphrase, never a model.
+ */
+export function renderStandingGuidance(
+  state: SteerState | null,
+  edits: EditState | null = null,
+): string {
+  const updated =
+    [state?.updated ?? "", edits?.updated ?? ""].sort().at(-1) ?? "";
   const lines = [
     STANDING_GUIDANCE_HEADING,
     "",
     `Guidance the user has repeated when drafting here — treat each line as a ` +
       `standing rule for every draft. Maintained automatically from their ` +
-      `steers, last updated ${state.updated}; Minne rewrites this section as ` +
-      `the counts change.`,
+      `steers and in-editor corrections, last updated ${updated}; Minne ` +
+      `rewrites this section as the counts change.`,
     "",
-    ...rules.map(([steer, count]) => `- ${capitalize(steer)} — asked ${count} times`),
+    ...combinedRules(state, edits).map((label) => `- ${label}`),
   ];
   return lines.join("\n");
 }
@@ -211,34 +241,43 @@ const NEW_PAGE_INTRO =
   "repeated to Minne's drafting key — their own words, never invented.";
 
 /**
- * Rewrites the standing-guidance section of every style page whose steers
- * changed past threshold since the last pass. Deterministic and model-free;
- * writes go through `Memory.writePage` (lint-enforced), and a failure is
- * logged, never allowed to fail the sync pass. Returns the pages written.
+ * Rewrites the standing-guidance section of every style page whose steers or
+ * edit-ledger counters changed past threshold since the last pass (US-204 +
+ * US-205 share the section, the cap and the budget). Deterministic and
+ * model-free; writes go through `Memory.writePage` (lint-enforced), and a
+ * failure is logged, never allowed to fail the sync pass. Returns the pages
+ * written.
  *
- * Like the register, this recreates a section the user deleted if the steer
+ * Like the register, this recreates a section the user deleted if the habit
  * recurs afterwards — which is the feature: they asked again. A rule they
  * deleted stays gone until then, because a clean pass leaves the page alone.
  */
-export function distillSteers(
+export function distillGuidance(
   memory: Memory,
   steers: Record<string, SteerState>,
+  edits: Record<string, EditState>,
   log: (...args: unknown[]) => void,
 ): string[] {
   const pages: string[] = [];
-  for (const title of Object.keys(steers).sort()) {
-    const state = steers[title] as SteerState;
-    if (!state.dirty) continue;
-    if (standingRules(state).length === 0) {
-      state.dirty = false;
+  const titles = [...new Set([...Object.keys(steers), ...Object.keys(edits)])].sort();
+  for (const title of titles) {
+    const steer = steers[title] ?? null;
+    const edit = edits[title] ?? null;
+    if (steer?.dirty !== true && edit?.dirty !== true) continue;
+    const settle = () => {
+      if (steer !== null) steer.dirty = false;
+      if (edit !== null) edit.dirty = false;
+    };
+    if (combinedRules(steer, edit).length === 0) {
+      settle();
       continue;
     }
     try {
-      const written = writeStandingGuidancePage(memory, title, state);
+      const written = writeStandingGuidancePage(memory, title, steer, edit);
       if (written !== null) pages.push(written);
-      state.dirty = false;
+      settle();
     } catch (err) {
-      log(`steer distillation: could not update the style page for ${title}:`, err);
+      log(`guidance distillation: could not update the style page for ${title}:`, err);
     }
   }
   return pages;
@@ -252,7 +291,8 @@ export function distillSteers(
 function writeStandingGuidancePage(
   memory: Memory,
   title: string,
-  state: SteerState,
+  state: SteerState | null,
+  edits: EditState | null,
 ): string | null {
   const path = pagePath("style", title);
   let existing = null;
@@ -262,7 +302,9 @@ function writeStandingGuidancePage(
     if (!(err instanceof NotFoundError)) throw err;
   }
 
-  const where = state.recipient === undefined ? state.context : `${state.context} — ${state.recipient}`;
+  const context = state?.context ?? edits?.context ?? "";
+  const recipient = state?.recipient ?? edits?.recipient;
+  const where = recipient === undefined ? context : `${context} — ${recipient}`;
   let summary = `How the user writes in ${where}, with standing guidance they repeated to the drafting key.`;
   let body = `# ${title}\n\n${NEW_PAGE_INTRO}`;
   if (existing !== null) {
@@ -288,7 +330,7 @@ function writeStandingGuidancePage(
     type: "style",
     title,
     summary,
-    body: upsertSection(body, STANDING_GUIDANCE_HEADING, renderStandingGuidance(state)),
+    body: upsertSection(body, STANDING_GUIDANCE_HEADING, renderStandingGuidance(state, edits)),
   });
   return result.path;
 }

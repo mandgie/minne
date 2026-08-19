@@ -28,8 +28,9 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
 import { isoLocal, localDate, type Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
+import { foldDraftOutcome, type DraftOutcomePress } from "./editledger";
 import { updateVoiceRegisters } from "./register";
-import { distillSteers, foldSteerPress, type SteerPress } from "./steer";
+import { distillGuidance, foldSteerPress, type SteerPress } from "./steer";
 import { readSnapshotsAfter, snapshotBacklog, type SnapshotRow } from "./sources";
 import {
   loadSyncState,
@@ -316,6 +317,19 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * US-205: one draft's settled outcome, counted the moment it arrives and
+   * persisted at once, same as the steers — the edit is a byte-exact
+   * correction and must survive whatever the next pass does. The texts are
+   * compared here and forgotten; only feature counters are stored.
+   */
+  recordDraftOutcome(press: DraftOutcomePress): void {
+    this.state.edits ??= {};
+    if (foldDraftOutcome(this.state.edits, press, localDate(this.clock()))) {
+      saveSyncState(this.statePath, this.state);
+    }
+  }
+
   // ---- sync ----
 
   /**
@@ -336,12 +350,18 @@ export class SyncEngine {
     let snapshots = 0;
     let batches = 0;
     try {
-      // US-204: recurring steers become standing rules on their context's
-      // style page. Deterministic and model-free, so it runs before the idle
-      // check — a user who drafts a lot while capturing nothing still gets
-      // their rules — and a failure is logged, never allowed to fail the pass.
+      // US-204 + US-205: recurring steers and in-editor corrections become
+      // standing rules on their context's style page. Deterministic and
+      // model-free, so it runs before the idle check — a user who drafts a lot
+      // while capturing nothing still gets their rules — and a failure is
+      // logged, never allowed to fail the pass.
       try {
-        const distilled = distillSteers(this.memory, this.state.steers ?? {}, this.log);
+        const distilled = distillGuidance(
+          this.memory,
+          this.state.steers ?? {},
+          this.state.edits ?? {},
+          this.log,
+        );
         if (distilled.length > 0) {
           for (const path of distilled) touched.add(path);
           saveSyncState(this.statePath, this.state);

@@ -91,6 +91,31 @@ final class BrainProtocolTests: XCTestCase {
         XCTAssertEqual(json["regenerate"] as? Bool, true)
     }
 
+    /// US-205: an edited insert settles its draft with the byte-exact pair.
+    func testAnEditedDraftOutcomeCarriesBothTexts() throws {
+        let json = try encodeToJSON(
+            .draftOutcome(
+                id: "o1", draftId: "d1", outcome: "inserted",
+                edited: "Sorry — Thursday is out.", generated: "Sorry, not Thursday."))
+        XCTAssertEqual(json["type"] as? String, "draft_outcome")
+        XCTAssertEqual(json["id"] as? String, "o1")
+        XCTAssertEqual(json["draftId"] as? String, "d1")
+        XCTAssertEqual(json["outcome"] as? String, "inserted")
+        XCTAssertEqual(json["edited"] as? String, "Sorry — Thursday is out.")
+        XCTAssertEqual(json["generated"] as? String, "Sorry, not Thursday.")
+    }
+
+    /// An unedited insert and an abandon send no texts — the keys must be
+    /// absent, not null, because the brain rejects one half without the other.
+    func testAnUneditedDraftOutcomeSendsNoTexts() throws {
+        let json = try encodeToJSON(
+            .draftOutcome(id: "o2", draftId: "d2", outcome: "abandoned", edited: nil, generated: nil))
+        XCTAssertEqual(json["type"] as? String, "draft_outcome")
+        XCTAssertEqual(json["outcome"] as? String, "abandoned")
+        XCTAssertNil(json["edited"])
+        XCTAssertNil(json["generated"])
+    }
+
     func testAuthPromptDecoding() throws {
         let json = """
             {"type":"auth_prompt","id":"l1","promptId":"l1:1","prompt":"Enter the code",\

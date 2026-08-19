@@ -172,6 +172,34 @@ export interface DraftRequest {
   regenerate?: boolean;
 }
 
+export type DraftOutcome = "inserted" | "abandoned";
+
+/**
+ * What became of the draft the request `draftId` wrote (US-205). Fire-and-
+ * forget from the app's point of view: the brain folds the outcome into the
+ * edit ledger and answers a bare `done` — nothing in the insert path waits on
+ * it.
+ *
+ * `edited` and `generated` ride along only when the user edited the draft in
+ * the overlay before inserting it — the byte-exact correction nobody else can
+ * see. They come together or not at all: an unedited insert sends neither
+ * (it counts as an approval of the generated text), and an abandon carries no
+ * texts (it is counted, never interpreted). The brain attributes the outcome
+ * to the draft's style context via an in-memory map of recent draft ids, so
+ * an outcome for a brain restarted mid-press is silently dropped — accepted.
+ */
+export interface DraftOutcomeRequest {
+  type: "draft_outcome";
+  id: string;
+  /** id of the draft request whose text this settles */
+  draftId: string;
+  outcome: DraftOutcome;
+  /** the inserted text, only when it differs from what the model wrote */
+  edited?: string;
+  /** what the model wrote, only alongside `edited` */
+  generated?: string;
+}
+
 /**
  * The last few wiki pages by `last_updated`, for the status-bar menu's
  * "Recently remembered" submenu. Terminates with `done` whose result is
@@ -213,6 +241,7 @@ export type BrainRequest =
   | IngestRequest
   | SearchSourcesRequest
   | DraftRequest
+  | DraftOutcomeRequest
   | MemoryRecentRequest
   | StatusRequest;
 
@@ -519,6 +548,34 @@ export function decodeRequest(line: string): DecodeResult {
         }
         request.regenerate = regenerate;
       }
+      return ok(request);
+    }
+    case "draft_outcome": {
+      const draftId = parsed["draftId"];
+      if (typeof draftId !== "string" || draftId === "") {
+        return fail(id, "invalid_request", "draft_outcome requires a non-empty string `draftId`");
+      }
+      const outcome = parsed["outcome"];
+      if (outcome !== "inserted" && outcome !== "abandoned") {
+        return fail(id, "invalid_request", 'draft_outcome `outcome` must be "inserted" or "abandoned"');
+      }
+      const edited = parsed["edited"];
+      const generated = parsed["generated"];
+      for (const [field, value] of [
+        ["edited", edited],
+        ["generated", generated],
+      ] as const) {
+        if (value !== undefined && typeof value !== "string") {
+          return fail(id, "invalid_request", `draft_outcome \`${field}\` must be a string when present`);
+        }
+      }
+      // The pair is a diff: one half alone can never be compared to anything.
+      if ((edited === undefined) !== (generated === undefined)) {
+        return fail(id, "invalid_request", "draft_outcome `edited` and `generated` come together");
+      }
+      const request: DraftOutcomeRequest = { type: "draft_outcome", id, draftId, outcome };
+      if (edited !== undefined) request.edited = edited as string;
+      if (generated !== undefined) request.generated = generated as string;
       return ok(request);
     }
     case "memory_recent":

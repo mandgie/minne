@@ -248,6 +248,16 @@ private final class FakeDraftBackend: DraftBackend {
 
     func abortDraft(id: String) { aborted.append(id) }
 
+    /// Every outcome the controller reported (US-205), in order.
+    private(set) var outcomes:
+        [(draftId: String, outcome: DraftOutcome, edited: String?, generated: String?)] = []
+
+    func reportDraftOutcome(
+        draftId: String, outcome: DraftOutcome, edited: String?, generated: String?
+    ) {
+        outcomes.append((draftId, outcome, edited, generated))
+    }
+
     /// Answers the request the controller is waiting on.
     func finish(_ id: String, with reply: DraftReply) {
         completions.removeValue(forKey: id)?(.success(reply))
@@ -1471,6 +1481,111 @@ final class MinneKeyControllerTests: XCTestCase {
     }
 
     @discardableResult
+    // MARK: - The edit ledger (US-205)
+
+    /// A draft inserted untouched is an approval: the outcome goes out with no
+    /// texts, because there is no diff to learn from.
+    func testAnUneditedInsertReportsApprovalWithoutTexts() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+
+        XCTAssertEqual(backend.outcomes.count, 1)
+        XCTAssertEqual(backend.outcomes.first?.draftId, "draft-1")
+        XCTAssertEqual(backend.outcomes.first?.outcome, .inserted)
+        XCTAssertNil(backend.outcomes.first?.edited)
+        XCTAssertNil(backend.outcomes.first?.generated)
+
+        // The overlay's own scheduled close is not a second verdict.
+        runScheduledWork()
+        XCTAssertFalse(overlay.isPresenting)
+        XCTAssertEqual(backend.outcomes.count, 1)
+    }
+
+    /// An edited insert carries the byte-exact pair — the correction nobody
+    /// but the two of them can see.
+    func testAnEditedInsertReportsTheByteExactPair() {
+        makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Sorry, not Thursday."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Sorry — Thursday is out.")
+
+        overlay.onAction?(.insert)
+        runScheduledWork()  // focus travels back, then the insert lands
+
+        XCTAssertEqual(backend.outcomes.count, 1)
+        XCTAssertEqual(backend.outcomes.first?.outcome, .inserted)
+        XCTAssertEqual(backend.outcomes.first?.edited, "Sorry — Thursday is out.")
+        XCTAssertEqual(backend.outcomes.first?.generated, "Sorry, not Thursday.")
+    }
+
+    /// An edit typed and then reverted byte for byte is no edit at all.
+    func testAnEditRevertedToTheGeneratedTextReportsNoTexts() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        overlay.beginEditingDraft()
+        overlay.editDraft(to: "Thursday might work.")
+        overlay.editDraft(to: "Thursday works.")
+        overlay.endEditingDraft()
+        controller.insert()
+
+        XCTAssertEqual(backend.outcomes.count, 1)
+        XCTAssertNil(backend.outcomes.first?.edited)
+        XCTAssertNil(backend.outcomes.first?.generated)
+    }
+
+    /// Walking away from a finished draft is an abandon — counted, never
+    /// interpreted, and never carrying any text.
+    func testDismissingAFinishedDraftReportsAnAbandon() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.dismiss()
+
+        XCTAssertEqual(backend.outcomes.count, 1)
+        XCTAssertEqual(backend.outcomes.first?.draftId, "draft-1")
+        XCTAssertEqual(backend.outcomes.first?.outcome, .abandoned)
+        XCTAssertNil(backend.outcomes.first?.edited)
+        XCTAssertNil(backend.outcomes.first?.generated)
+        XCTAssertTrue(backend.aborted.isEmpty, "a finished draft has nothing to abort")
+    }
+
+    /// Dismissing while the brain is still writing settles nothing: the press
+    /// is aborted, and there is no draft whose fate could be reported.
+    func testDismissingMidDraftReportsNoOutcome() {
+        let controller = makeControllerAndTap()
+        controller.dismiss()
+        XCTAssertEqual(backend.aborted, ["draft-1"])
+        XCTAssertTrue(backend.outcomes.isEmpty)
+    }
+
+    /// A rework settles under its own request id — the one whose text the
+    /// user actually saw and inserted.
+    func testAReworkedDraftSettlesUnderItsOwnRequestId() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "A long reply."))
+        overlay.submitGuidance("shorter")
+        runScheduledWork()
+        backend.finish("draft-2", with: DraftReply(text: "Short."))
+        controller.insert()
+
+        XCTAssertEqual(backend.outcomes.count, 1)
+        XCTAssertEqual(backend.outcomes.first?.draftId, "draft-2")
+        XCTAssertEqual(backend.outcomes.first?.outcome, .inserted)
+    }
+
+    /// Undo takes the text back out, but the insertion already settled the
+    /// draft: the dismiss that follows must not add an abandon on top.
+    func testUndoAfterInsertionDoesNotTurnTheOutcomeIntoAnAbandon() {
+        let controller = makeControllerAndTap()
+        backend.finish("draft-1", with: DraftReply(text: "Thursday works."))
+        controller.insert()
+        controller.undo()
+        controller.dismiss()
+
+        XCTAssertEqual(backend.outcomes.count, 1)
+        XCTAssertEqual(backend.outcomes.first?.outcome, .inserted)
+    }
+
     private func makeControllerAndTap() -> MinneKeyController {
         let controller = makeController()
         tap.onTap?()

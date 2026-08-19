@@ -31,6 +31,16 @@ describe("decodeRequest", () => {
       { type: "search_sources", id: "15", query: "oslo trip" },
       { type: "search_sources", id: "16", query: "oslo", limit: 5 },
       { type: "memory_recent", id: "17" },
+      { type: "draft_outcome", id: "18", draftId: "d1", outcome: "inserted" },
+      { type: "draft_outcome", id: "19", draftId: "d2", outcome: "abandoned" },
+      {
+        type: "draft_outcome",
+        id: "20",
+        draftId: "d3",
+        outcome: "inserted",
+        edited: "short",
+        generated: "something much longer",
+      },
     ];
     for (const message of valid) {
       const decoded = decodeRequest(JSON.stringify(message));
@@ -102,6 +112,13 @@ describe("decodeRequest", () => {
       '{"type":"search_sources","id":"a","query":"x","limit":2.5}',
       '{"type":"ingest","id":"a","mode":"compost"}',
       '{"type":"ingest","id":"a","mode":1}',
+      '{"type":"draft_outcome","id":"a","outcome":"inserted"}',
+      '{"type":"draft_outcome","id":"a","draftId":"","outcome":"inserted"}',
+      '{"type":"draft_outcome","id":"a","draftId":"d","outcome":"lost"}',
+      '{"type":"draft_outcome","id":"a","draftId":"d","outcome":"inserted","edited":7,"generated":"g"}',
+      // The texts are a diff: one half alone can never be compared to anything.
+      '{"type":"draft_outcome","id":"a","draftId":"d","outcome":"inserted","edited":"e"}',
+      '{"type":"draft_outcome","id":"a","draftId":"d","outcome":"inserted","generated":"g"}',
     ];
     for (const line of bad) {
       const decoded = decodeRequest(line);

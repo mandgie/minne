@@ -14,6 +14,12 @@ protocol MinneKeyTapping: AnyObject {
 
 extension MinneKeyTap: MinneKeyTapping {}
 
+/// What became of a draft the user saw (US-205).
+enum DraftOutcome: String, Sendable {
+    case inserted
+    case abandoned
+}
+
 /// The brain, as the Minne key needs it: one request, one answer.
 @MainActor
 protocol DraftBackend: AnyObject {
@@ -25,6 +31,13 @@ protocol DraftBackend: AnyObject {
         completion: @escaping @MainActor (Result<DraftReply, any Error>) -> Void)
     /// Cancels the in-flight draft `id`.
     func abortDraft(id: String)
+    /// Reports what became of the draft `draftId` wrote, so in-editor
+    /// corrections feed the brain's edit ledger (US-205). `edited` and
+    /// `generated` ride along together only when the inserted text differs
+    /// from what the model wrote. Fire-and-forget: the insert path never
+    /// waits on it, and a failure is only logged.
+    func reportDraftOutcome(
+        draftId: String, outcome: DraftOutcome, edited: String?, generated: String?)
 }
 
 /// What the brain wrote.
@@ -126,6 +139,10 @@ final class MinneKeyController {
         var applied: FieldEdit?
         /// How it got in, which decides whose undo takes it back.
         var method: InsertionMethod?
+        /// The outcome has been reported to the brain (US-205): each draft
+        /// settles exactly once, so the dismiss that follows a successful
+        /// insertion cannot also count as an abandon.
+        var outcomeReported = false
     }
 
     private let locator: any CaretLocating
@@ -562,6 +579,7 @@ final class MinneKeyController {
         BrainClient.log(
             "minne key: inserted via \(method.rawValue) (\(session.target.strategy.rawValue))")
         show(.inserted(method))
+        reportOutcome(.inserted)
         if method == .pasteboard { confirmPaste(session.requestId, after: Self.pasteConfirmDelay) }
         closeOverlay(after: Self.insertedDismissDelay)
     }
@@ -593,6 +611,24 @@ final class MinneKeyController {
             self.session = session
             self.fail("\(session.target.appName) did not take the draft — use Copy")
         }
+    }
+
+    /// Tells the brain what became of the draft, so an in-editor correction —
+    /// the byte-exact diff between what the model wrote and what the user
+    /// inserted — feeds the edit ledger (US-205). Fire-and-forget: it never
+    /// blocks or delays the insert path, and a no-op when the session has no
+    /// draft yet or the outcome is already reported. The texts ride along only
+    /// on an edited insert; an unedited insert counts as approval and an
+    /// abandon carries nothing but the fact.
+    private func reportOutcome(_ outcome: DraftOutcome) {
+        guard var session, !session.outcomeReported, let draft = session.draft else { return }
+        session.outcomeReported = true
+        self.session = session
+        let edited: String? =
+            outcome == .inserted && draft != session.generated ? draft : nil
+        backend?.reportDraftOutcome(
+            draftId: session.requestId, outcome: outcome,
+            edited: edited, generated: edited == nil ? nil : session.generated)
     }
 
     /// Puts back exactly what the field held before the draft went in.
@@ -770,6 +806,10 @@ final class MinneKeyController {
         if let session, session.draft == nil {
             backend?.abortDraft(id: session.requestId)
         }
+        // A draft the user saw but never inserted is an abandon (US-205) —
+        // counted, never interpreted. A no-op when there was no draft yet or
+        // the insertion already reported this session.
+        reportOutcome(.abandoned)
         session = nil
         overlayGeneration += 1
         presenter.dismiss()
@@ -812,6 +852,23 @@ final class BrainDraftBackend: DraftBackend {
                 try await client.request(.abort(id: UUID().uuidString, targetId: id))
             } catch {
                 BrainClient.log("draft abort failed: \(error)")
+            }
+        }
+    }
+
+    func reportDraftOutcome(
+        draftId: String, outcome: DraftOutcome, edited: String?, generated: String?
+    ) {
+        Task {
+            do {
+                try await client.request(
+                    .draftOutcome(
+                        id: UUID().uuidString, draftId: draftId, outcome: outcome.rawValue,
+                        edited: edited, generated: generated))
+            } catch {
+                // The ledger learns from the next draft; the insert already
+                // happened and must not care.
+                BrainClient.log("draft outcome report failed: \(error)")
             }
         }
     }

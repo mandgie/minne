@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findStylePage } from "./draft";
+import { emptyEditState, foldDraftOutcome, type EditState } from "./editledger";
 import { Memory } from "./memory";
 import { MOCK_LOGIN_CODE } from "./mock-provider";
 import type { BrainEvent } from "./protocol";
@@ -16,7 +17,7 @@ import {
   MAX_STANDING_RULES,
   MAX_STEER_CHARS,
   STEER_THRESHOLD,
-  distillSteers,
+  distillGuidance,
   emptySteerState,
   foldSteerPress,
   normalizeSteer,
@@ -200,6 +201,28 @@ describe("standing rules", () => {
     small.counts["keep it short"] = 3;
     expect(renderStandingGuidance(small)).toContain("- Keep it short — asked 3 times");
   });
+
+  /** US-205: corrections and steers share the section, the cap and the budget. */
+  test("edit-ledger rules merge under the same cap, most-repeated first", () => {
+    const steer = emptySteerState("x.com");
+    steer.updated = "2026-08-19";
+    for (let i = 0; i < MAX_STANDING_RULES; i++) {
+      steer.counts[`steer number ${String(i).padStart(2, "0")}`] = STEER_THRESHOLD + i;
+    }
+    const edits = emptyEditState("x.com");
+    edits.updated = "2026-08-20";
+    // More corrections than the most-asked steer: the edit rule leads the list.
+    edits.corrections["trimmed"] = STEER_THRESHOLD + MAX_STANDING_RULES;
+
+    const section = renderStandingGuidance(steer, edits);
+    const rules = section.split("\n").filter((line) => line.startsWith("- "));
+    expect(rules).toHaveLength(MAX_STANDING_RULES);
+    expect(rules[0]).toBe(`- Trim it — the user shortened 11 of 11 drafts here`);
+    // The least-asked steer fell off the end to make room.
+    expect(section).not.toContain("steer number 00");
+    expect(section).toContain("last updated 2026-08-20");
+    expect(section.length).toBeLessThan(2_500);
+  });
 });
 
 describe("sanitizeSteers", () => {
@@ -224,7 +247,7 @@ describe("sanitizeSteers", () => {
   });
 });
 
-describe("distillSteers", () => {
+describe("distillGuidance", () => {
   test("a steer past threshold becomes a section on a page the draft path reads", () => {
     const root = scratch();
     const memory = new Memory({ root, dataDir: root });
@@ -232,7 +255,7 @@ describe("distillSteers", () => {
     foldTimes(steers, 3, "shorter");
     foldTimes(steers, 1, "warmer"); // one-off: never distilled
 
-    const pages = distillSteers(memory, steers, () => {});
+    const pages = distillGuidance(memory, steers, {}, () => {});
     expect(pages).toEqual(["wiki/style/style-x-com.md"]);
     const page = readFileSync(join(root, "wiki", "style", "style-x-com.md"), "utf8");
     expect(page).toContain("## Standing guidance");
@@ -248,7 +271,7 @@ describe("distillSteers", () => {
 
     // Distillation cleared the dirty flag; a clean pass leaves the page alone.
     expect(steers["Style — x.com"]?.dirty).toBe(false);
-    expect(distillSteers(memory, steers, () => {})).toEqual([]);
+    expect(distillGuidance(memory, steers, {}, () => {})).toEqual([]);
   });
 
   test("an existing style page keeps its prose, register and frontmatter", () => {
@@ -264,7 +287,7 @@ describe("distillSteers", () => {
     const steers: Record<string, SteerState> = {};
     foldTimes(steers, 4, "no hashtags");
 
-    distillSteers(memory, steers, () => {});
+    distillGuidance(memory, steers, {}, () => {});
     const page = readFileSync(join(root, "wiki", "style", "style-x-com.md"), "utf8");
     expect(page).toContain("summary: Lowercase, no hashtags.");
     expect(page).toContain("sources/2026-08-17/1400-chrome.md#1");
@@ -276,16 +299,48 @@ describe("distillSteers", () => {
     expect(page.indexOf("## Standing guidance")).toBeLessThan(page.indexOf("## Register"));
   });
 
+  /** US-205: one pipeline — a steer and a correction land in the one section. */
+  test("steers and edit-ledger corrections distill into the same section", () => {
+    const root = scratch();
+    const memory = new Memory({ root, dataDir: root });
+    const steers: Record<string, SteerState> = {};
+    foldTimes(steers, 3, "shorter");
+    const edits: Record<string, EditState> = {};
+    for (let i = 0; i < 4; i++) {
+      foldDraftOutcome(
+        edits,
+        {
+          app: "Google Chrome",
+          url: "https://x.com/compose",
+          outcome: "inserted",
+          generated: `Hey! Great news — the demo went really well! Can't wait! (${i})`,
+          edited: "The demo went really well and the client seemed happy today.",
+        },
+        "2026-08-20",
+      );
+    }
+
+    const pages = distillGuidance(memory, steers, edits, () => {});
+    expect(pages).toEqual(["wiki/style/style-x-com.md"]);
+    const page = readFileSync(join(root, "wiki", "style", "style-x-com.md"), "utf8");
+    // Most-repeated first: 4 corrections outrank 3 asks, inside one section.
+    const section = page.slice(page.indexOf("## Standing guidance"));
+    expect(section.indexOf("Skip the greeting — the user removed it from 4 of 4 drafts here"))
+      .toBeLessThan(section.indexOf("Shorter — asked 3 times"));
+    expect((page.match(/## Standing guidance/g) ?? []).length).toBe(1);
+    expect(lintWiki(loadWikiTree(root)).errors).toEqual([]);
+  });
+
   test("more asks re-render the count on the page", () => {
     const root = scratch();
     const memory = new Memory({ root, dataDir: root });
     const steers: Record<string, SteerState> = {};
     foldTimes(steers, 3, "shorter");
-    distillSteers(memory, steers, () => {});
+    distillGuidance(memory, steers, {}, () => {});
     // Two more asks, on drafts the first three did not steer.
     foldSteerPress(steers, press({ guidance: ["shorter"], previousDraft: "fourth draft" }), "2026-08-20");
     foldSteerPress(steers, press({ guidance: ["shorter"], previousDraft: "fifth draft" }), "2026-08-20");
-    distillSteers(memory, steers, () => {});
+    distillGuidance(memory, steers, {}, () => {});
     const page = readFileSync(join(root, "wiki", "style", "style-x-com.md"), "utf8");
     expect(page).toContain("— asked 5 times");
     expect((page.match(/## Standing guidance/g) ?? []).length).toBe(1);

@@ -139,6 +139,14 @@ enum BrainRequest: Encodable, Sendable {
     /// whole, so half a draft has nowhere to go — but `toolCall` events do
     /// arrive, for the overlay's progress line.
     case draft(id: String, context: DraftRequestContext)
+    /// What became of the draft that request `draftId` wrote (US-205):
+    /// "inserted" or "abandoned". Fire-and-forget — the brain folds it into
+    /// the edit ledger and answers a bare `done`; nothing waits on it. When
+    /// the user edited the draft in the overlay before inserting, `edited`
+    /// and `generated` carry the byte-exact pair (both or neither); an
+    /// unedited insert sends neither and counts as approval of the text.
+    case draftOutcome(
+        id: String, draftId: String, outcome: String, edited: String?, generated: String?)
     /// The last few wiki pages by `last_updated`, for the status-bar menu's
     /// "Recently remembered" submenu. `done`'s result is
     /// `{pages: [{path, title, lastUpdated}]}` — newest first, at most 8,
@@ -158,6 +166,7 @@ enum BrainRequest: Encodable, Sendable {
         case .ingest(let id, _): return id
         case .searchSources(let id, _, _): return id
         case .draft(let id, _): return id
+        case .draftOutcome(let id, _, _, _, _): return id
         case .memoryRecent(let id): return id
         case .status(let id): return id
         }
@@ -168,6 +177,7 @@ enum BrainRequest: Encodable, Sendable {
         case method, promptId, value, cancel, model, baseUrl, query, limit, mode
         case fieldText, selection, windowText, app, bundleId, windowTitle, url, recipient
         case previousDraft, guidance, regenerate
+        case draftId, outcome, edited, generated
     }
 
     func encode(to encoder: Encoder) throws {
@@ -229,6 +239,15 @@ enum BrainRequest: Encodable, Sendable {
                 try container.encode(context.guidance, forKey: .guidance)
             }
             if context.regenerate { try container.encode(true, forKey: .regenerate) }
+        case let .draftOutcome(_, draftId, outcome, edited, generated):
+            try container.encode("draft_outcome", forKey: .type)
+            try container.encode(draftId, forKey: .draftId)
+            try container.encode(outcome, forKey: .outcome)
+            // Omitted rather than null: the pair rides along only when the
+            // user actually edited the draft, and the brain rejects one half
+            // without the other.
+            try container.encodeIfPresent(edited, forKey: .edited)
+            try container.encodeIfPresent(generated, forKey: .generated)
         case .memoryRecent:
             try container.encode("memory_recent", forKey: .type)
         case .status:

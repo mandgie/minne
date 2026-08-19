@@ -20,6 +20,7 @@ import {
   type BrainRequest,
   type ChatRequest,
   type ConfigureRequest,
+  type DraftOutcomeRequest,
   type DraftRequest,
   type IngestRequest,
   type LoginRequest,
@@ -125,6 +126,17 @@ export class MinneBrain {
   private activeChatId: string | null = null;
   /** id of the draft currently being written, if any */
   private activeDraftId: string | null = null;
+  /**
+   * The style context of recent drafts, so a `draft_outcome` can be attributed
+   * to the page the draft read (US-205). In-memory only and capped small: an
+   * outcome for a brain restarted mid-press finds nothing here and is silently
+   * dropped — an accepted loss, the ledger learns from the next press.
+   */
+  private recentDraftContexts = new Map<
+    string,
+    { app: string; url?: string; recipient?: string }
+  >();
+  private static readonly MAX_RECENT_DRAFTS = 16;
 
   constructor(deps: MinneBrainDeps) {
     this.send = deps.send;
@@ -211,6 +223,8 @@ export class MinneBrain {
         return this.handleMemoryRecent(request.id);
       case "draft":
         return this.handleDraft(request);
+      case "draft_outcome":
+        return this.handleDraftOutcome(request);
       case "ingest":
         return this.handleIngest(request);
       case "abort": {
@@ -424,6 +438,19 @@ export class MinneBrain {
       this.log("steer record failed:", err);
     }
 
+    // US-205: remember which style context this draft belongs to, so the
+    // outcome that may arrive later can be attributed without carrying the
+    // whole context back over the wire.
+    this.recentDraftContexts.set(id, {
+      app: context.app,
+      ...(request.url === undefined ? {} : { url: request.url }),
+      ...(request.recipient === undefined ? {} : { recipient: request.recipient }),
+    });
+    while (this.recentDraftContexts.size > MinneBrain.MAX_RECENT_DRAFTS) {
+      const oldest = this.recentDraftContexts.keys().next().value as string;
+      this.recentDraftContexts.delete(oldest);
+    }
+
     const aborter = new AbortController();
     this.aborters.set(id, aborter);
     this.activeDraftId = id;
@@ -461,6 +488,40 @@ export class MinneBrain {
       this.activeDraftId = null;
       this.aborters.delete(id);
     }
+  }
+
+  /**
+   * What became of a draft (US-205): an edited insert feeds the edit ledger,
+   * an untouched insert counts as approval, a dismissal as an abandon. The
+   * app fires and forgets this, so the answer is always a bare `done` —
+   * including for a draft id the map no longer knows (a brain restarted
+   * mid-press, or an id long since aged out), whose outcome is dropped
+   * silently by design.
+   */
+  private handleDraftOutcome(request: DraftOutcomeRequest): void {
+    const context = this.recentDraftContexts.get(request.draftId);
+    this.recentDraftContexts.delete(request.draftId);
+    if (context === undefined) {
+      this.log(`draft_outcome for unknown draft ${request.draftId} — dropped`);
+      this.send(doneEvent(request.id, { recorded: false }));
+      return;
+    }
+    try {
+      this.sync.recordDraftOutcome({
+        ...context,
+        outcome: request.outcome,
+        ...(request.edited === undefined ? {} : { edited: request.edited }),
+        ...(request.generated === undefined ? {} : { generated: request.generated }),
+      });
+      this.log(
+        `draft_outcome ${request.draftId}: ${request.outcome}` +
+          (request.edited === undefined ? "" : " (edited)"),
+      );
+    } catch (err) {
+      // Never let ledger bookkeeping turn a fire-and-forget into an error.
+      this.log("draft outcome record failed:", err);
+    }
+    this.send(doneEvent(request.id, { recorded: true }));
   }
 
   // ---- ingestion ----
