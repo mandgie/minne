@@ -415,6 +415,15 @@ export class MinneBrain {
       ...(request.regenerate === undefined ? {} : { regenerate: request.regenerate }),
     };
 
+    // US-204: a steer is learned the moment it is submitted, before the model
+    // runs — a draft that then fails, or is retried, changes nothing about
+    // what the user asked for. Never allowed to fail the draft itself.
+    try {
+      this.sync.recordSteer(context);
+    } catch (err) {
+      this.log("steer record failed:", err);
+    }
+
     const aborter = new AbortController();
     this.aborters.set(id, aborter);
     this.activeDraftId = id;

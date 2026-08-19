@@ -26,9 +26,10 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
-import { isoLocal, type Memory } from "./memory";
+import { isoLocal, localDate, type Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
 import { updateVoiceRegisters } from "./register";
+import { distillSteers, foldSteerPress, type SteerPress } from "./steer";
 import { readSnapshotsAfter, snapshotBacklog, type SnapshotRow } from "./sources";
 import {
   loadSyncState,
@@ -301,6 +302,20 @@ export class SyncEngine {
     };
   }
 
+  /**
+   * US-204: one draft request's worth of steer, counted the moment it arrives.
+   * Same discipline as the voice registers: the counters live in
+   * sync-state.json and are persisted immediately — before any model runs —
+   * so a draft that fails still remembers what the user asked for, and a
+   * retried one cannot count it twice (the steer+draft hash in `foldSteerPress`).
+   */
+  recordSteer(press: SteerPress): void {
+    this.state.steers ??= {};
+    if (foldSteerPress(this.state.steers, press, localDate(this.clock()))) {
+      saveSyncState(this.statePath, this.state);
+    }
+  }
+
   // ---- sync ----
 
   /**
@@ -321,6 +336,20 @@ export class SyncEngine {
     let snapshots = 0;
     let batches = 0;
     try {
+      // US-204: recurring steers become standing rules on their context's
+      // style page. Deterministic and model-free, so it runs before the idle
+      // check — a user who drafts a lot while capturing nothing still gets
+      // their rules — and a failure is logged, never allowed to fail the pass.
+      try {
+        const distilled = distillSteers(this.memory, this.state.steers ?? {}, this.log);
+        if (distilled.length > 0) {
+          for (const path of distilled) touched.add(path);
+          saveSyncState(this.statePath, this.state);
+        }
+      } catch (err) {
+        this.log("steer distillation failed:", err);
+      }
+
       let backlog = snapshotBacklog(this.dataDir, this.state.watermark);
       // The index no longer reaches our mark: it was wiped or rebuilt (retention
       // prunes the oldest rows, never the newest, so this cannot be pruning).
@@ -333,7 +362,13 @@ export class SyncEngine {
         backlog = snapshotBacklog(this.dataDir, 0);
       }
       if (backlog.pending === 0) {
-        return this.finishSync({ ...this.blankSync(), status: "idle" });
+        // Still an idle pass — no snapshots, no model — but a distillation
+        // that wrote pages reports them.
+        return this.finishSync({
+          ...this.blankSync(),
+          status: "idle",
+          pagesTouched: [...touched].sort(),
+        });
       }
 
       const resolution = await this.resolveModel();
@@ -342,6 +377,7 @@ export class SyncEngine {
           ...this.blankSync(),
           status: "skipped",
           reason: resolution.unavailable,
+          pagesTouched: [...touched].sort(),
         });
       }
 

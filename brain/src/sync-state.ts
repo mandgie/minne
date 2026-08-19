@@ -10,6 +10,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { sanitizeRegisters, type RegisterState } from "./register";
+import { sanitizeSteers, type SteerState } from "./steer";
 
 /** Outcome of one ingestion pass, as `status` reports it and Settings shows it. */
 export interface SyncPassSummary {
@@ -72,6 +73,13 @@ export interface SyncState {
    * stays deduplicated across restarts.
    */
   registers?: Record<string, RegisterState>;
+  /**
+   * US-204's steer counters, keyed the same way (`Style — x.com`). Folded the
+   * moment a draft request carries a new steer and distilled into the page's
+   * "## Standing guidance" section during the sync pass — same discipline as
+   * the registers: the page is presentation, this is the learning.
+   */
+  steers?: Record<string, SteerState>;
 }
 
 export const EMPTY_SYNC_STATE: SyncState = { watermark: 0, lastSync: null, lastLint: null };
@@ -99,6 +107,8 @@ export function loadSyncState(path: string): SyncState {
   if (isRecord(raw["lastLint"])) state.lastLint = raw["lastLint"] as unknown as LintPassSummary;
   const registers = sanitizeRegisters(raw["registers"]);
   if (registers !== null) state.registers = registers;
+  const steers = sanitizeSteers(raw["steers"]);
+  if (steers !== null) state.steers = steers;
   return state;
 }
 

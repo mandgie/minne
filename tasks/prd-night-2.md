@@ -167,3 +167,10 @@ to learn from the corrections — the byte-exact diff nobody else can see.
 ## Open Questions
 
 (Parking area — append story, blocker, what was tried.)
+
+- US-204 did not need the optional `draft_outcome` request: the new steer of a
+  request is exactly the last `guidance` entry of a non-regenerate draft (the
+  retry path is deduplicated by hashing steer+previousDraft), so counting is
+  complete without knowing whether the draft was inserted or abandoned. US-205
+  should add `draft_outcome` itself — it genuinely needs the edited/inserted/
+  abandoned signal that no existing request carries.

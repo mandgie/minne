@@ -20,7 +20,7 @@ import {
   renderRegister,
   sanitizeRegisters,
   updateVoiceRegisters,
-  upsertRegisterSection,
+  upsertSection,
   type RegisterState,
 } from "./register";
 import { loadSyncState, saveSyncState, syncStatePath } from "./sync-state";
@@ -299,12 +299,12 @@ describe("the running register", () => {
 
   test("upsert inserts before the first heading and replaces in place", () => {
     const body = "# Style — Messages — Ingrid\n\nIntro prose.\n\n## Observations\n\n- warm tone\n";
-    const inserted = upsertRegisterSection(body, "## Register\n\n- Greeting: none");
+    const inserted = upsertSection(body, "## Register", "## Register\n\n- Greeting: none");
     expect(inserted.indexOf("## Register")).toBeLessThan(inserted.indexOf("## Observations"));
     expect(inserted).toContain("Intro prose.");
     expect(inserted).toContain("- warm tone");
 
-    const replaced = upsertRegisterSection(inserted, "## Register\n\n- Greeting: \"hej\"");
+    const replaced = upsertSection(inserted, "## Register", "## Register\n\n- Greeting: \"hej\"");
     expect(replaced).toContain('- Greeting: "hej"');
     expect(replaced).not.toContain("- Greeting: none");
     expect(replaced.match(/## Register/g)).toHaveLength(1);
@@ -312,7 +312,7 @@ describe("the running register", () => {
   });
 
   test("upsert appends when the body has no headings at all", () => {
-    const result = upsertRegisterSection("Just prose.", "## Register\n\n- Greeting: none");
+    const result = upsertSection("Just prose.", "## Register", "## Register\n\n- Greeting: none");
     expect(result).toBe("Just prose.\n\n## Register\n\n- Greeting: none");
   });
 });

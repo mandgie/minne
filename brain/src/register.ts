@@ -418,15 +418,21 @@ function describeLanguage(languages: Record<string, number>): string {
 }
 
 /**
- * Replaces the `## Register` section of a page body, or inserts one before the
+ * Replaces one `## `-level section of a page body, or inserts it before the
  * first `## ` heading (so a long page truncated at the read budget loses the
  * agent's trailing observations before it loses this). Pure text surgery: the
- * rest of the body — the sync agent's own observations — is untouched.
+ * rest of the body — the sync agent's own observations — is untouched. Shared
+ * with US-204's standing guidance: one section surgeon, however many sections.
+ *
+ * `heading` is the section's full heading line ("## Register"); the section
+ * text passed must open with it.
  */
-export function upsertRegisterSection(body: string, section: string): string {
+export function upsertSection(body: string, heading: string, section: string): string {
   const lines = body.split("\n");
   const isHeading = (line: string) => /^##\s/.test(line);
-  const start = lines.findIndex((line) => /^##\s+Register\s*$/.test(line));
+  const title = heading.replace(/^##\s+/, "");
+  const pattern = new RegExp(`^##\\s+${escapeRegExp(title)}\\s*$`);
+  const start = lines.findIndex((line) => pattern.test(line));
   if (start >= 0) {
     let end = start + 1;
     while (end < lines.length && !isHeading(lines[end] as string)) end++;
@@ -443,6 +449,10 @@ export function upsertRegisterSection(body: string, section: string): string {
 
 function normalizeBlankRuns(text: string): string {
   return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ---- persistence guards ----
@@ -584,7 +594,7 @@ function writeRegisterPage(memory: Memory, title: string, state: RegisterState):
     title,
     summary,
     sources,
-    body: upsertRegisterSection(body, renderRegister(state)),
+    body: upsertSection(body, REGISTER_HEADING, renderRegister(state)),
   });
   return result.path;
 }
