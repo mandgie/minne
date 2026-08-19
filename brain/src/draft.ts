@@ -480,9 +480,16 @@ export async function runDraft(
   }
   const stop = () => agent.abort();
   deps.signal?.addEventListener("abort", stop, { once: true });
+  const prompt = buildDraftPrompt(context, style, grounding);
+  // The exact user turn the provider receives, for verifying what a press
+  // sends without a TLS proxy. Debug-only: the window text and memory
+  // excerpts land in the log, so never default this on.
+  if (process.env["MINNE_LOG_DRAFT_PROMPT"] === "1") {
+    deps.log?.(`draft prompt as sent:\n${prompt}`);
+  }
   try {
     deps.signal?.throwIfAborted();
-    await agent.prompt(buildDraftPrompt(context, style, grounding));
+    await agent.prompt(prompt);
   } finally {
     deps.signal?.removeEventListener("abort", stop);
   }
