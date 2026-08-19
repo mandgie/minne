@@ -384,6 +384,7 @@ final class MinneKeyController {
             app: target.appName,
             bundleId: target.bundleIdentifier,
             windowTitle: target.field.windowTitle,
+            url: target.pageURL,
             recipient: target.recipient,
             previousDraft: previousDraft,
             guidance: guidance,

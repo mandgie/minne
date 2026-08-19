@@ -151,6 +151,12 @@ export interface DraftRequest {
   app?: string;
   bundleId?: string;
   windowTitle?: string;
+  /**
+   * The page's address for web content, query and fragment already stripped
+   * by the app — the register signal a browser's name cannot give, and the
+   * key for domain-scoped style pages.
+   */
+  url?: string;
   /** person or channel written to, when the window title gives one away */
   recipient?: string;
   /**
@@ -488,6 +494,7 @@ export function decodeRequest(line: string): DecodeResult {
         "app",
         "bundleId",
         "windowTitle",
+        "url",
         "recipient",
         "previousDraft",
       ] as const) {

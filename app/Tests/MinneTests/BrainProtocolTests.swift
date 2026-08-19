@@ -60,6 +60,21 @@ final class BrainProtocolTests: XCTestCase {
         XCTAssertNil(json["previousDraft"])
         XCTAssertNil(json["guidance"])
         XCTAssertNil(json["regenerate"])
+        // A native app has no page; the key must be absent, not null.
+        XCTAssertNil(json["url"])
+    }
+
+    /// Web content carries its page address — the register signal a browser's
+    /// app name cannot give.
+    @MainActor
+    func testWebContentSendsItsPageURL() throws {
+        var target = CaretTarget(
+            bundleIdentifier: "com.google.Chrome", appName: "Google Chrome",
+            anchor: CaretAnchor(rect: .zero, source: .caret))
+        target.isWebContent = true
+        target.pageURL = "https://x.com/sweatystartup/status/1"
+        let json = try encodeToJSON(.draft(id: "d3", context: MinneKeyController.context(for: target, mode: .infer)))
+        XCTAssertEqual(json["url"] as? String, "https://x.com/sweatystartup/status/1")
     }
 
     @MainActor

@@ -43,6 +43,13 @@ export interface DraftContext {
   app: string;
   bundleId?: string;
   windowTitle?: string;
+  /**
+   * The page's address for web content, query/fragment already stripped by
+   * the app. "Google Chrome" says nothing about register; x.com vs github.com
+   * is the context that matters — so the domain outranks the browser as the
+   * style page's context, and the prompt states the page outright.
+   */
+  url?: string;
   /** person or channel being written to, when the app's title gives one away */
   recipient?: string;
   /**
@@ -147,8 +154,29 @@ a fact about a person or a commitment on the user's behalf: if memory cannot
 settle it either, write the sentence so it does not need to be known.`;
 
 /**
- * The style page for this context, most specific first: the one for this app
- * and this recipient, else the one for the app.
+ * The registrable part of a sanitized page URL — "x.com" from
+ * "https://www.x.com/foo" — or null when there is no usable host. The `www.`
+ * prefix is dropped because it never distinguishes a register.
+ */
+export function domainOf(url?: string): string | null {
+  if (url === undefined) return null;
+  let host: string | undefined;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return null;
+  }
+  const domain = host.replace(/^www\./, "");
+  return domain === "" ? null : domain;
+}
+
+/**
+ * The style page for this context, most specific first: the domain narrowed
+ * to this recipient, the domain, the app narrowed to the recipient, the app.
+ *
+ * The domain outranks the app for web content because a browser is not a
+ * register — how the user writes on x.com and on github.com differ the way
+ * Slack and Mail differ, while "Google Chrome" lumps them together.
  *
  * Reading rather than searching is deliberate — the page's name follows from
  * the context by rule (`stylePagePaths`), so there is nothing to search for,
@@ -158,8 +186,13 @@ export function findStylePage(
   memory: Memory,
   app: string,
   recipient?: string,
+  domain?: string | null,
 ): StylePage | null {
-  for (const path of stylePagePaths(app, recipient)) {
+  const paths =
+    domain === undefined || domain === null
+      ? stylePagePaths(app, recipient)
+      : [...stylePagePaths(domain, recipient), ...stylePagePaths(app, recipient)];
+  for (const path of paths) {
     try {
       const page = memory.read(path, { maxChars: 4_000 });
       return { path: page.path, text: page.text };
@@ -309,6 +342,9 @@ export function buildDraftPrompt(
   if (context.windowTitle !== undefined && context.windowTitle.trim() !== "") {
     where.push(`Window: ${context.windowTitle}`);
   }
+  if (context.url !== undefined && context.url.trim() !== "") {
+    where.push(`Page: ${context.url}`);
+  }
   if (context.recipient !== undefined && context.recipient.trim() !== "") {
     where.push(`Writing to: ${context.recipient}`);
   }
@@ -421,7 +457,7 @@ export async function runDraft(
   context: DraftContext,
   deps: RunDraftDeps,
 ): Promise<DraftResult> {
-  const style = findStylePage(deps.memory, context.app, context.recipient);
+  const style = findStylePage(deps.memory, context.app, context.recipient, domainOf(context.url));
   const grounding: MemoryGrounding = {
     indexMap: memoryIndexMap(deps.memory),
     pages: findMemoryPages(deps.memory, context.recipient),

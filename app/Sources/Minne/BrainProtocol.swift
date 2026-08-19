@@ -83,6 +83,9 @@ struct DraftRequestContext: Encodable, Sendable, Equatable {
     var app: String
     var bundleId: String
     var windowTitle: String
+    /// The page's address for web content, query and fragment stripped — the
+    /// register signal a browser's app name cannot give.
+    var url: String?
     var recipient: String?
     /// The draft already on screen, when this press reworks it rather than
     /// starting one. Every draft is a fresh agent with no transcript, so a
@@ -163,7 +166,7 @@ enum BrainRequest: Encodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case type, id, protocolVersion, client, message, newChat, targetId, provider
         case method, promptId, value, cancel, model, baseUrl, query, limit, mode
-        case fieldText, selection, windowText, app, bundleId, windowTitle, recipient
+        case fieldText, selection, windowText, app, bundleId, windowTitle, url, recipient
         case previousDraft, guidance, regenerate
     }
 
@@ -216,6 +219,7 @@ enum BrainRequest: Encodable, Sendable {
             try container.encode(context.app, forKey: .app)
             try container.encode(context.bundleId, forKey: .bundleId)
             try container.encode(context.windowTitle, forKey: .windowTitle)
+            try container.encodeIfPresent(context.url, forKey: .url)
             try container.encodeIfPresent(context.recipient, forKey: .recipient)
             // Omitted rather than sent empty on a first press: the brain builds
             // the plain prompt when they are absent, and a `guidance: []` would

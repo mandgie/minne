@@ -14,6 +14,7 @@ import {
   MAX_WINDOW_CHARS,
   buildDraftPrompt,
   cleanDraft,
+  domainOf,
   findMemoryPages,
   findStylePage,
   memoryIndexMap,
@@ -124,6 +125,47 @@ describe("findStylePage", () => {
 
   test("no style page at all is null, not an error", () => {
     expect(findStylePage(memoryWith({}), "Mail")).toBeNull();
+  });
+
+  test("the domain outranks the browser as the style context", () => {
+    const memory = memoryWith({
+      "wiki/style/style-google-chrome.md": stylePage("Style — Google Chrome", "Neutral prose."),
+      "wiki/style/style-x-com.md": stylePage("Style — x.com", "Lowercase, blunt, no hashtags."),
+    });
+    expect(findStylePage(memory, "Google Chrome", undefined, "x.com")?.path).toBe(
+      "wiki/style/style-x-com.md",
+    );
+  });
+
+  test("a domain with no page falls back to the browser's page", () => {
+    const memory = memoryWith({
+      "wiki/style/style-google-chrome.md": stylePage("Style — Google Chrome", "Neutral prose."),
+    });
+    expect(findStylePage(memory, "Google Chrome", undefined, "x.com")?.path).toBe(
+      "wiki/style/style-google-chrome.md",
+    );
+  });
+
+  test("the domain narrowed to the recipient beats everything", () => {
+    const memory = memoryWith({
+      "wiki/style/style-x-com.md": stylePage("Style — x.com", "Lowercase."),
+      "wiki/style/style-x-com-nick-huber.md": stylePage(
+        "Style — x.com — Nick Huber",
+        "Contrarian, numbers-forward.",
+      ),
+    });
+    expect(findStylePage(memory, "Google Chrome", "Nick Huber", "x.com")?.path).toBe(
+      "wiki/style/style-x-com-nick-huber.md",
+    );
+  });
+});
+
+describe("domainOf", () => {
+  test("host without www, or null when there is nothing usable", () => {
+    expect(domainOf("https://www.x.com/sweatystartup/status/1")).toBe("x.com");
+    expect(domainOf("https://github.com/mandgie/minne/pull/2")).toBe("github.com");
+    expect(domainOf("not a url")).toBeNull();
+    expect(domainOf(undefined)).toBeNull();
   });
 });
 
@@ -259,6 +301,15 @@ describe("buildDraftPrompt", () => {
     expect(prompt).toContain("Application: Slack");
     expect(prompt).toContain("Window: #oslo-migration");
     expect(prompt).toContain("Writing to: Ingrid Berg");
+  });
+
+  test("the page URL reaches the model for web content, and only then", () => {
+    const prompt = buildDraftPrompt(
+      context({ app: "Google Chrome", url: "https://x.com/sweatystartup/status/1" }),
+      null,
+    );
+    expect(prompt).toContain("Page: https://x.com/sweatystartup/status/1");
+    expect(buildDraftPrompt(context(), null)).not.toContain("Page:");
   });
 
   /**
@@ -411,13 +462,23 @@ describe("draft requests are validated", () => {
           mode: "rewrite",
           selection: "hi",
           app: "Mail",
+          url: "https://x.com/a/status/1",
           recipient: "Ingrid",
         }),
       ),
     ).toMatchObject({
       ok: true,
-      request: { type: "draft", mode: "rewrite", selection: "hi", app: "Mail" },
+      request: {
+        type: "draft",
+        mode: "rewrite",
+        selection: "hi",
+        app: "Mail",
+        url: "https://x.com/a/status/1",
+      },
     });
+    expect(
+      decodeRequest(JSON.stringify({ type: "draft", id: "d1", mode: "infer", url: 7 })),
+    ).toMatchObject({ ok: false, error: { code: "invalid_request" } });
   });
 
   test("the rework fields are an optional string, string array and boolean", () => {

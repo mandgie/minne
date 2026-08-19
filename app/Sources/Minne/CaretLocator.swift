@@ -20,6 +20,12 @@ struct CaretTarget {
     /// but also an Electron app or an embedded web view. It decides how the
     /// draft goes in; see `InsertionStrategy`.
     var isWebContent = false
+    /// The web area's address, when there is one and it is a web URL — query
+    /// and fragment already stripped (see `PageURL.sanitize`). "Google Chrome"
+    /// says almost nothing about the register a draft should hit; x.com vs
+    /// github.com is the context that actually matters, so this rides to the
+    /// brain for the prompt and for domain-keyed style pages.
+    var pageURL: String?
 
     /// Which insertion paths this target allows.
     var strategy: InsertionStrategy {
@@ -119,13 +125,15 @@ final class AccessibilityCaretLocator: CaretLocating {
                 window: element(app, kAXFocusedWindowAttribute).flatMap { frame(of: $0) })
         else { return nil }
 
+        let webArea = webArea(from: focused, role: role)
         return CaretTarget(
             bundleIdentifier: running.bundleIdentifier ?? "unknown",
             appName: running.localizedName ?? "Unknown",
             anchor: anchor,
             field: snapshot(of: focused),
             handle: FocusedFieldHandle(element: focused),
-            isWebContent: role == Self.webAreaRole || isInsideWebArea(focused))
+            isWebContent: webArea != nil,
+            pageURL: webArea.flatMap(pageURL(of:)))
     }
 
     /// The role that means "this is a rendered web page".
@@ -175,14 +183,23 @@ final class AccessibilityCaretLocator: CaretLocating {
     /// address bar, which is a native field. Measured at 1.3 ms for the full
     /// twelve levels of a Chrome tab — the depth cap is there for a tree with a
     /// cycle in it, not for the cost.
-    private func isInsideWebArea(_ element: AXUIElement) -> Bool {
+    private func webArea(from element: AXUIElement, role: String?) -> AXUIElement? {
+        if role == Self.webAreaRole { return element }
         var current = element
         for _ in 0..<Self.ancestorDepthLimit {
-            guard let parent = self.element(current, kAXParentAttribute) else { return false }
-            if string(parent, kAXRoleAttribute) == Self.webAreaRole { return true }
+            guard let parent = self.element(current, kAXParentAttribute) else { return nil }
+            if string(parent, kAXRoleAttribute) == Self.webAreaRole { return parent }
             current = parent
         }
-        return false
+        return nil
+    }
+
+    /// The web area's `AXURL` (a CFURL, same read capture makes), sanitized.
+    /// One extra AX call on an element the walk already visited.
+    private func pageURL(of webArea: AXUIElement) -> String? {
+        guard let value = copyValue(webArea, kAXURLAttribute) else { return nil }
+        let raw = (value as? URL)?.absoluteString ?? (value as? String)
+        return raw.flatMap(PageURL.sanitize)
     }
 
     private static let ancestorDepthLimit = 16

@@ -406,6 +406,7 @@ export class MinneBrain {
       app: request.app ?? "this app",
       ...(request.bundleId === undefined ? {} : { bundleId: request.bundleId }),
       ...(request.windowTitle === undefined ? {} : { windowTitle: request.windowTitle }),
+      ...(request.url === undefined ? {} : { url: request.url }),
       ...(request.recipient === undefined ? {} : { recipient: request.recipient }),
       // The rework fields: absent on a first press, and absent rather than
       // empty here so a plain draft's prompt is byte-for-byte what it was.
