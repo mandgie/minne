@@ -20,3 +20,6 @@ build/
 
 # Browser automation scratch
 .playwright-mcp/
+*.o
+*.d
+*.swiftdeps

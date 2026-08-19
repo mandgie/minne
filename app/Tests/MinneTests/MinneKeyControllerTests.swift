@@ -332,6 +332,30 @@ final class MinneKeyControllerTests: XCTestCase {
         XCTAssertTrue(controller.isActive)
     }
 
+    /// Guiding activates Minne so dictation tools can find the field; ending
+    /// it reactivates the target app. That reactivation must not dismiss the
+    /// overlay — only a genuinely different app is the user leaving.
+    func testActivationReturningToTheTargetAppIsNotAnAppSwitch() {
+        let controller = makeController()
+        tap.onTap?()
+        XCTAssertTrue(overlay.isPresenting)
+
+        controller.appActivated(bundleIdentifier: "com.apple.TextEdit")
+        XCTAssertTrue(overlay.isPresenting)
+
+        controller.appActivated(bundleIdentifier: "com.apple.Safari")
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
+    func testAnAppSwitchWithoutABundleIdStillDismisses() {
+        let controller = makeController()
+        tap.onTap?()
+        XCTAssertTrue(overlay.isPresenting)
+
+        controller.appActivated(bundleIdentifier: nil)
+        XCTAssertFalse(overlay.isPresenting)
+    }
+
     func testLosingTheGrantStopsTheKeyAndHidesTheOverlay() {
         let controller = makeController()
         tap.onTap?()

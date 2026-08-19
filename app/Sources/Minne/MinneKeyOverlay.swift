@@ -1140,6 +1140,9 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     /// dismissal by the length of the fade — and a press during that fade must
     /// be a fresh presentation, not a toggle of a panel already on its way out.
     private var presenting = false
+    /// The app that was active when guiding borrowed activation (see
+    /// `beginGuiding`) — reactivated by `endGuiding`, nil the rest of the time.
+    private var reactivateOnEnd: NSRunningApplication?
 
     private(set) var state: MinneKeyOverlayState?
 
@@ -1259,6 +1262,16 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     /// as long as the field has them. That is the whole trick, and the reason
     /// `canBecomeKey` is a variable — a panel that could always become key
     /// would take the caret every time it appeared.
+    ///
+    /// One deliberate exception to "Minne never activates": **while the
+    /// guidance field is being edited, Minne becomes the active app.** Voice
+    /// dictation tools (Wispr Flow, macOS Dictation) find their target through
+    /// the system-wide Accessibility focus, which only resolves through the
+    /// active application — a key-but-not-active panel is invisible to them,
+    /// so dictating a steer failed with "no cursor found" (verified live with
+    /// Wispr Flow, 2026-08-19). The app that was active is remembered and
+    /// reactivated the moment guiding ends, and the controller's app-switch
+    /// observer knows that reactivation is not the user leaving.
     func beginGuiding() {
         guard presenting, state?.isDraftOnScreen == true, !content.isGuiding else { return }
         panel.wantsKey = true
@@ -1269,6 +1282,10 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         // field drew unfocused and never got a caret).
         content.beginGuiding()
         panel.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive {
+            reactivateOnEnd = NSWorkspace.shared.frontmostApplication
+            NSApp.activate(ignoringOtherApps: true)
+        }
         // Key status is granted by the window server and need not have arrived
         // by the time that call returns. One re-assert on the next pass, so a
         // field that did not take the caret first time still gets it rather
@@ -1307,10 +1324,18 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         panel.wantsKey = false
         // AppKit has no "give key back" call. Ordering the panel out and
         // straight back in is the one that works: the window server hands key
-        // status to the frontmost app's own window, which — because Minne was
-        // never activated — is the field this overlay is pointing at.
+        // status to the frontmost app's own window.
         panel.orderOut(nil)
         panel.orderFrontRegardless()
+        // Guiding activated Minne (see `beginGuiding`); activation goes back
+        // to the app the overlay points at, so its field is focused again
+        // before anything — a steer's insertion, the user's next keystroke —
+        // needs it. The app may have quit meanwhile; `deactivate` is the
+        // fallback that hands activation to whoever is next in line.
+        if let previous = reactivateOnEnd {
+            reactivateOnEnd = nil
+            if previous.isTerminated { NSApp.deactivate() } else { previous.activate() }
+        }
         BrainClient.log("minne key: keyboard handed back to the app")
         return true
     }

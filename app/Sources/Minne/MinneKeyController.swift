@@ -206,7 +206,8 @@ final class MinneKeyController {
             guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
                 return
             }
-            Task { @MainActor in self?.appSwitched() }
+            let bundleId = app?.bundleIdentifier
+            Task { @MainActor in self?.appActivated(bundleIdentifier: bundleId) }
         }
         presenter.onAction = { [weak self] action in self?.perform(action) }
         presenter.onGuidance = { [weak self] steer in self?.guide(steer) }
@@ -699,6 +700,19 @@ final class MinneKeyController {
         cancelWakeRetry(.click)
         guard presenter.isPresenting, !presenter.contains(quartzPoint: point) else { return }
         dismiss()
+    }
+
+    /// Some app became active. Usually that is the user leaving and the
+    /// overlay dismisses — but activation returning to the very app the
+    /// overlay points at is the tail of `endGuiding` handing back what
+    /// guiding borrowed (see the overlay's `beginGuiding`), not a departure.
+    func appActivated(bundleIdentifier: String?) {
+        if presenter.isPresenting, let session, let bundleIdentifier,
+            bundleIdentifier == session.target.bundleIdentifier
+        {
+            return
+        }
+        appSwitched()
     }
 
     func appSwitched() {
