@@ -90,7 +90,27 @@ jobs:
       - name: Build the dmg
         run: scripts/release.sh
 
+      # A stable-named copy rides along so the site's Download button
+      # (releases/latest/download/Minne.dmg) tracks every release without a
+      # redeploy.
+      - name: Stable asset name
+        if: env.HAS_SIGNING == 'true'
+        run: cp build/Minne-*.dmg build/Minne.dmg
+
+      # Publish ONLY what is signed and notarized. Without the signing
+      # secrets this job still proves the tag builds green, but it must never
+      # attach an unsigned dmg to the release — on 2026-08-19 it silently
+      # replaced the notarized v0.1.3 asset with an unsigned rebuild, which
+      # Gatekeeper quarantines. The authoritative unsigned-secrets path is the
+      # local scripts/release.sh + `gh release create`.
       - uses: softprops/action-gh-release@v2
+        if: env.HAS_SIGNING == 'true'
         with:
-          files: build/Minne-*.dmg
+          files: |
+            build/Minne-*.dmg
+            build/Minne.dmg
           generate_release_notes: true
+
+      - name: Unsigned build — release not published
+        if: env.HAS_SIGNING != 'true'
+        run: echo "No signing secrets; tag verified green but the release is published locally. See scripts/release.sh."
