@@ -24,6 +24,18 @@ final class GuidanceRow: NSView {
     /// The user clicked into the field while the panel was not key — the
     /// presenter has to borrow key status before there can be a caret here.
     var onRequestEditing: (@MainActor () -> Void)?
+
+    /// While the draft editor holds the keyboard the row stays on screen —
+    /// hiding it resized the whole panel, which read as a jump (user report,
+    /// 2026-08-20) — but it must not compete for the borrow: inert means
+    /// dimmed and deaf to clicks, so the single-borrower invariant holds
+    /// without a single point of geometry changing.
+    private(set) var isInert = false
+
+    func setInert(_ inert: Bool) {
+        isInert = inert
+        alphaValue = inert ? 0.4 : 1
+    }
     /// Return in the field: steer the draft with this text.
     var onSubmit: (@MainActor (String) -> Void)?
     /// Escape in the field: stop editing, and leave the draft as it is.
@@ -138,7 +150,10 @@ final class GuidanceRow: NSView {
         chips.isHidden = true
 
         field.delegate = self
-        field.onClickWhileInactive = { [weak self] in self?.onRequestEditing?() }
+        field.onClickWhileInactive = { [weak self] in
+            guard let self, !self.isInert else { return }
+            self.onRequestEditing?()
+        }
 
         placeholder.font = Self.fieldFont
         placeholder.lineBreakMode = .byTruncatingTail

@@ -1228,13 +1228,16 @@ final class MinneKeyOverlayView: NSView {
     }
 
     /// Swaps the read-only draft for the editor, seeded with the whole draft.
-    /// The guidance row steps aside while the editor is up: two borrowed
-    /// fields at once would leave the keyboard's owner ambiguous, and the
-    /// steer belongs to a draft the user is in the middle of changing.
+    /// The guidance row goes *inert* while the editor is up — dimmed and deaf
+    /// to clicks, so the keyboard's owner stays unambiguous — but it does NOT
+    /// hide: hiding it shrank the panel by the row's height and the whole box
+    /// visibly jumped on ⌘E (user report, 2026-08-20). Entering the editor
+    /// must move nothing; the label and the editor already share their pitch
+    /// and cap, so with the row standing still the swap is pixel-stable.
     func beginDraftEditing(text: String) {
         draft.stopSweep()
         draft.isHidden = true
-        guidance.isHidden = true
+        guidance.setInert(true)
         draftEditor.isHidden = false
         // The editor annotates the same grounding line the label did.
         column.setCustomSpacing(grounding.isHidden ? 13 : 7, after: draftEditor)
@@ -1256,6 +1259,7 @@ final class MinneKeyOverlayView: NSView {
         let text = draftEditor.endEditing()
         draftEditor.isHidden = true
         draft.isHidden = false
+        guidance.setInert(false)
         refreshKeyHints()
         return text
     }
