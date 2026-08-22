@@ -25,6 +25,16 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/scripts/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$APP_BIN" "$APP/Contents/MacOS/Minne"
+# SwiftPM emits declared resources as a side-by-side bundle rather than folding
+# them into the executable, so the bundled fonts only reach the .app if it is
+# copied in. Without it MinneTheme silently falls back to San Francisco — the
+# app still works, which is exactly why a missing copy would go unnoticed.
+RESOURCE_BUNDLE="$(dirname "$APP_BIN")/Minne_Minne.bundle"
+if [ ! -d "$RESOURCE_BUNDLE" ]; then
+	echo "error: $RESOURCE_BUNDLE missing — declared resources did not build" >&2
+	exit 1
+fi
+cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
 # The brain lives in Contents/MacOS, not Contents/Resources: an executable
 # under Resources is a sealed resource rather than nested code, which codesign
 # and notarization both object to.

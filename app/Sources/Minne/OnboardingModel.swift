@@ -16,6 +16,25 @@ enum OnboardingStep: Equatable, Sendable {
     case finished
 }
 
+/// The four entries the onboarding rail shows, in order. Fewer than there are
+/// `OnboardingStep`s: `granted` is the accessibility step's confirmation, not a
+/// station of its own, so the rail does not move for it.
+enum OnboardingRailStep: Int, CaseIterable, Equatable, Sendable {
+    case privacy
+    case accessibility
+    case provider
+    case ready
+
+    var title: String {
+        switch self {
+        case .privacy: return "Privacy"
+        case .accessibility: return "Accessibility"
+        case .provider: return "Provider"
+        case .ready: return "Ready"
+        }
+    }
+}
+
 /// What a step renders below its bullets. The provider step owns a live view
 /// of `AuthModel`; every other step is static text.
 enum OnboardingPageKind: Equatable, Sendable {
@@ -76,12 +95,20 @@ struct OnboardingPage: Equatable, Sendable {
     /// Quiet small print under the buttons; the permission step uses it to
     /// say that Apple's own dialog never closes itself.
     let footnote: String?
+    /// Which step the progress marks are on. `nil` on a page with no position.
+    let rail: OnboardingRailStep?
+    /// The account line on the closing screen, shown in its own row rather
+    /// than buried in the body.
+    let account: String?
+    /// One thing worth learning before the window closes.
+    let hint: String?
 
     init(
         title: String, body: String, bullets: [OnboardingBullet], primaryTitle: String,
         primaryAction: OnboardingAction, secondaryTitle: String?, isWaiting: Bool,
         kind: OnboardingPageKind = .info, repair: RepairPresentation? = nil,
-        footnote: String? = nil
+        footnote: String? = nil, rail: OnboardingRailStep? = nil,
+        account: String? = nil, hint: String? = nil
     ) {
         self.title = title
         self.body = body
@@ -93,6 +120,9 @@ struct OnboardingPage: Equatable, Sendable {
         self.kind = kind
         self.repair = repair
         self.footnote = footnote
+        self.rail = rail
+        self.account = account
+        self.hint = hint
     }
 }
 
@@ -244,8 +274,7 @@ enum OnboardingModel {
                 title: "Minne remembers what you work on",
                 body: """
                     Minne reads the text of whatever window you have in front of you \
-                    and turns it into a plain-markdown memory that stays on this Mac. \
-                    Here is exactly what that does and does not mean.
+                    and turns it into a plain-markdown memory that stays on this Mac.
                     """,
                 bullets: [
                     .init(
@@ -255,9 +284,7 @@ enum OnboardingModel {
                     ),
                     .init(
                         isPositive: true,
-                        text:
-                            "Stores it as markdown files in ~/Minne, yours to read, edit or delete"
-                    ),
+                        text: "Stores it as plain markdown in ~/Minne, yours to edit or delete"),
                     .init(
                         isPositive: true,
                         text: "Talks only to the AI provider you sign in with yourself"),
@@ -274,7 +301,8 @@ enum OnboardingModel {
                 primaryTitle: "Continue",
                 primaryAction: .advance,
                 secondaryTitle: nil,
-                isWaiting: false)
+                isWaiting: false,
+                rail: .privacy)
 
         case .requestPermission:
             return OnboardingPage(
@@ -302,7 +330,8 @@ enum OnboardingModel {
                 footnote: """
                     Apple's permission dialog does not close by itself — once the \
                     switch is on, it is safe to close.
-                    """)
+                    """,
+                rail: .accessibility)
 
         case .granted:
             return OnboardingPage(
@@ -316,7 +345,8 @@ enum OnboardingModel {
                 primaryTitle: "Continue",
                 primaryAction: .advance,
                 secondaryTitle: nil,
-                isWaiting: false)
+                isWaiting: false,
+                rail: .accessibility)
 
         case .chooseProvider:
             return OnboardingPage(
@@ -331,23 +361,27 @@ enum OnboardingModel {
                 primaryAction: .finish,
                 secondaryTitle: "Set Up Later",
                 isWaiting: false,
-                kind: .providers)
+                kind: .providers,
+                rail: .provider)
 
         case .ready:
             return OnboardingPage(
                 title: "You're all set",
                 body: """
-                    \(signInSummary ?? "Signed in").
-
-                    Minne lives in the menu bar from here: press ⌥Space to ask it \
-                    something, pause capture whenever you want, and change any of this \
-                    in Settings.
+                    Minne lives in the menu bar from here. It starts remembering as \
+                    soon as you close this window.
                     """,
                 bullets: [],
                 primaryTitle: "Start Using Minne",
                 primaryAction: .finish,
                 secondaryTitle: nil,
-                isWaiting: false)
+                isWaiting: false,
+                footnote: """
+                    Pause capture or change any of this in Settings, any time.
+                    """,
+                rail: .ready,
+                account: signInSummary,
+                hint: "asks Minne anything, from any app")
 
         case .finished:
             return nil
@@ -363,12 +397,13 @@ enum OnboardingModel {
             return nil
         case .escalated:
             return RepairPresentation(
+                // The caption above this already asks "switch on, nothing
+                // happening?", so the body answers rather than asking again.
                 body: """
-                    Flipped the switch and nothing happened? macOS may be holding \
-                    on to a stale entry from an older copy of Minne — the switch \
-                    can already look on, but it belongs to that old copy. Repair \
-                    clears the stale entry, then asks for the permission again so \
-                    a fresh switch can land.
+                    macOS may be holding on to a stale entry from an older copy of \
+                    Minne — the switch can already look on, but it belongs to that \
+                    old copy. Repair clears the stale entry, then asks for the \
+                    permission again so a fresh switch can land.
                     """,
                 buttonTitle: "Repair Permission",
                 inProgress: false)

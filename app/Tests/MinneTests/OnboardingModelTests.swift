@@ -85,7 +85,7 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertTrue(state.signedIn("Claude (Pro/Max) — Claude Sonnet 5"))
         XCTAssertEqual(state.step, .ready)
         // The closing screen names the account that was just set up.
-        XCTAssertEqual(state.page?.body.contains("Claude Sonnet 5"), true)
+        XCTAssertEqual(state.page?.account?.contains("Claude Sonnet 5"), true)
         XCTAssertEqual(state.page?.primaryAction, .finish)
     }
 
@@ -93,7 +93,7 @@ final class OnboardingModelTests: XCTestCase {
         var state = OnboardingState(permission: .granted, step: .ready)
         XCTAssertFalse(state.signedIn("Local (Ollama) — llama3.1"))
         XCTAssertEqual(state.step, .ready)
-        XCTAssertEqual(state.page?.body.contains("llama3.1"), true)
+        XCTAssertEqual(state.page?.account?.contains("llama3.1"), true)
     }
 
     func testDoneOnTheProviderStepFinishesWithoutSigningIn() {
@@ -274,9 +274,49 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertNil(page.footnote, "the footnote belongs to the request step only")
     }
 
-    func testOnlyThePermissionStepCarriesAFootnote() {
-        for step in [OnboardingStep.welcome, .granted, .chooseProvider, .ready] {
+    func testMidFlowStepsCarryNoFootnote() {
+        for step in [OnboardingStep.welcome, .granted, .chooseProvider] {
             XCTAssertNil(OnboardingModel.page(for: step)?.footnote, "\(step)")
+        }
+    }
+
+    func testClosingStepPointsAtSettingsRatherThanRepeatingItself() throws {
+        let page = try XCTUnwrap(OnboardingModel.page(for: .ready))
+        let footnote = try XCTUnwrap(page.footnote)
+        XCTAssertTrue(footnote.contains("Settings"))
+        XCTAssertEqual(page.hint?.isEmpty, false, "the closing screen teaches the shortcut")
+    }
+
+    func testEveryVisibleStepLightsExactlyOneRailEntry() {
+        let expected: [OnboardingStep: OnboardingRailStep] = [
+            .welcome: .privacy,
+            // `granted` is the accessibility step's confirmation, so the rail
+            // must not advance for it — the user has not started the next job.
+            .requestPermission: .accessibility,
+            .granted: .accessibility,
+            .chooseProvider: .provider,
+            .ready: .ready,
+        ]
+        for (step, rail) in expected {
+            XCTAssertEqual(OnboardingModel.page(for: step)?.rail, rail, "\(step)")
+        }
+        XCTAssertNil(OnboardingModel.page(for: .finished), "the finished step has no page at all")
+    }
+
+    /// The promise list carries its own sense: what Minne does reads as a
+    /// statement, what it never does begins with "Never". Nothing labels the
+    /// two halves, so the copy itself has to keep them apart.
+    func testPromiseListSpeaksForItselfWithoutCaptions() throws {
+        for step in [OnboardingStep.welcome, .requestPermission] {
+            let page = try XCTUnwrap(OnboardingModel.page(for: step))
+            XCTAssertTrue(page.bullets.contains(where: \.isPositive), "\(step)")
+            XCTAssertTrue(page.bullets.contains { !$0.isPositive }, "\(step)")
+        }
+        let welcome = try XCTUnwrap(OnboardingModel.page(for: .welcome))
+        for bullet in welcome.bullets where !bullet.isPositive {
+            XCTAssertTrue(
+                bullet.text.hasPrefix("Never"),
+                "an uncaptioned negative has to say so itself: \(bullet.text)")
         }
     }
 }

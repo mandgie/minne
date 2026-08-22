@@ -3,32 +3,54 @@ import AppKit
 /// First-run window. All flow decisions live in `OnboardingState`; this class
 /// renders the current `OnboardingPage` into AppKit views and reports the
 /// user's clicks back.
+///
+/// Two columns: `OnboardingRailView` answers "how far in am I", and the pane
+/// beside it is the step itself — a title, a paragraph, the promises, and the
+/// step's one action, and nothing else. The rail states position, so the pane
+/// never repeats it; an earlier version carried a "step 1 of 4" eyebrow and a
+/// caption over each half of the promise list as well, saying three times over
+/// what the lit spark and the copy already said.
 @MainActor
 final class OnboardingWindowController: NSObject, NSWindowDelegate {
     /// The flow is over (granted, skipped, or the window was closed). The app
     /// stops fast permission polling and marks onboarding as seen.
     var onFinished: (@MainActor () -> Void)?
 
-    private static let contentWidth: CGFloat = 520
-    private static let inset: CGFloat = 28
+    private static let contentWidth: CGFloat = 680
+    private static let inset: CGFloat = 32
+    /// The pane's usable width — what every wrapping label measures against.
+    private static var textWidth: CGFloat {
+        contentWidth - OnboardingRailView.width - inset * 2
+    }
 
     private var state: OnboardingState
     private let window: NSWindow
     private let auth: AuthModel
     private let repair: AccessibilityRepair
 
-    private let titleLabel = NSTextField(labelWithString: "")
+    private let titleLabel = NSTextField(wrappingLabelWithString: "")
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
-    private let bulletStack = NSStackView()
+    private let promiseStack = NSStackView()
+
+    private let accountTitle = NSTextField(labelWithString: "")
+    private let accountDetail = NSTextField(labelWithString: "")
+    private let accountStack = NSStackView()
+    private let hintLabel = NSTextField(wrappingLabelWithString: "")
+
     private let waitingSpinner = NSProgressIndicator()
-    private let waitingLabel = NSTextField(labelWithString: "Waiting for permission…")
+    private let waitingLabel = NSTextField(labelWithString: "Watching for the grant…")
     private let waitingRow = NSStackView()
+
     private let repairLabel = NSTextField(wrappingLabelWithString: "")
-    private let repairButton = NSButton(title: "", target: nil, action: nil)
-    private let repairStack = NSStackView()
+    private let repairButton: MinneButton
+    private let repairBlock = AccentRuleView()
+
     private let footnoteLabel = NSTextField(wrappingLabelWithString: "")
-    private let secondaryButton = NSButton(title: "", target: nil, action: nil)
-    private let primaryButton = NSButton(title: "", target: nil, action: nil)
+    private let rail = OnboardingRailView()
+    private let secondaryButton: MinneButton
+    private let primaryButton: MinneButton
+    private let footer = NSStackView()
+
     private var providerSetup: ProviderSetupView?
     /// Feeds the stale-grant patience clock while the window is up.
     private var repairClock: Timer?
@@ -41,6 +63,14 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         state = OnboardingState(permission: permission, step: step)
         self.auth = auth
         self.repair = repair
+        // The buttons need `self` as their target, so they are built here
+        // rather than as stored-property initialisers.
+        repairButton = MinneButton(
+            title: "", style: .quiet, target: nil, action: #selector(Self.repairClicked))
+        secondaryButton = MinneButton(
+            title: "", style: .ghost, target: nil, action: #selector(Self.secondaryClicked))
+        primaryButton = MinneButton(
+            title: "", style: .primary, target: nil, action: #selector(Self.primaryClicked))
         window = NSWindow(
             contentRect: NSRect(
                 x: 0, y: 0, width: OnboardingWindowController.contentWidth, height: 420),
@@ -49,9 +79,15 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             defer: false)
         super.init()
 
+        for button in [repairButton, secondaryButton, primaryButton] { button.target = self }
+
         window.title = "Welcome to Minne"
         window.isReleasedWhenClosed = false
         window.delegate = self
+        window.backgroundColor = MinneTheme.paper
+        // The page is white; a dark-mode titlebar over it would look like a
+        // rendering fault rather than a choice.
+        window.appearance = NSAppearance(named: .aqua)
         window.contentView = buildContentView()
         // A successful sign-in advances the flow on its own — the user does
         // not have to notice a button changing.
@@ -116,132 +152,191 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     // MARK: - Layout
 
     private func buildContentView() -> NSView {
-        let width = OnboardingWindowController.contentWidth
         let inset = OnboardingWindowController.inset
-        let textWidth = width - inset * 2
+        let textWidth = OnboardingWindowController.textWidth
 
-        titleLabel.font = .systemFont(ofSize: 20, weight: .semibold)
+        titleLabel.font = MinneTheme.display(24)
+        titleLabel.textColor = MinneTheme.ink
+        titleLabel.preferredMaxLayoutWidth = textWidth
 
-        bodyLabel.font = .systemFont(ofSize: 13)
-        bodyLabel.textColor = .secondaryLabelColor
+        bodyLabel.font = MinneTheme.body(13)
+        bodyLabel.textColor = MinneTheme.prose
         bodyLabel.preferredMaxLayoutWidth = textWidth
 
-        bulletStack.orientation = .vertical
-        bulletStack.alignment = .leading
-        bulletStack.spacing = 8
+        promiseStack.orientation = .vertical
+        promiseStack.alignment = .leading
+        promiseStack.spacing = 8
+
+        accountTitle.font = MinneTheme.body(13, .semibold)
+        accountTitle.textColor = MinneTheme.ink
+        accountDetail.font = MinneTheme.body(12.5)
+        accountDetail.textColor = MinneTheme.prose
+        accountStack.orientation = .vertical
+        accountStack.alignment = .leading
+        accountStack.spacing = 3
+        accountStack.setViews([accountTitle, accountDetail], in: .leading)
+
+        hintLabel.preferredMaxLayoutWidth = textWidth
 
         waitingSpinner.style = .spinning
         waitingSpinner.controlSize = .small
         waitingSpinner.startAnimation(nil)
-        waitingLabel.font = .systemFont(ofSize: 12)
-        waitingLabel.textColor = .secondaryLabelColor
+        waitingLabel.font = MinneTheme.body(12)
+        waitingLabel.textColor = MinneTheme.mute
         waitingRow.orientation = .horizontal
         waitingRow.spacing = 8
+        waitingRow.alignment = .centerY
         waitingRow.setViews([waitingSpinner, waitingLabel], in: .leading)
 
-        // The stale-grant escalation: an explanation and its one-button fix.
-        repairLabel.font = .systemFont(ofSize: 12)
-        repairLabel.textColor = .secondaryLabelColor
-        repairLabel.preferredMaxLayoutWidth = textWidth
-        repairButton.bezelStyle = .rounded
-        repairButton.target = self
-        repairButton.action = #selector(repairClicked)
+        repairLabel.font = MinneTheme.body(12.5)
+        repairLabel.textColor = MinneTheme.prose
+        repairLabel.preferredMaxLayoutWidth = textWidth - 16
+        let repairStack = NSStackView(views: [repairLabel, repairButton])
         repairStack.orientation = .vertical
         repairStack.alignment = .leading
-        repairStack.spacing = 8
-        repairStack.setViews([repairLabel, repairButton], in: .leading)
+        repairStack.spacing = 11
+        repairStack.translatesAutoresizingMaskIntoConstraints = false
+        repairBlock.addSubview(repairStack)
+        NSLayoutConstraint.activate([
+            repairStack.leadingAnchor.constraint(equalTo: repairBlock.leadingAnchor, constant: 16),
+            repairStack.trailingAnchor.constraint(equalTo: repairBlock.trailingAnchor),
+            repairStack.topAnchor.constraint(equalTo: repairBlock.topAnchor, constant: 1),
+            repairStack.bottomAnchor.constraint(equalTo: repairBlock.bottomAnchor, constant: -1),
+        ])
 
-        footnoteLabel.font = .systemFont(ofSize: 11)
-        footnoteLabel.textColor = .tertiaryLabelColor
+        footnoteLabel.font = MinneTheme.body(11.5)
+        footnoteLabel.textColor = MinneTheme.mute
         footnoteLabel.preferredMaxLayoutWidth = textWidth
 
-        secondaryButton.bezelStyle = .rounded
-        secondaryButton.target = self
-        secondaryButton.action = #selector(secondaryClicked)
-
-        primaryButton.bezelStyle = .rounded
         primaryButton.keyEquivalent = "\r"
-        primaryButton.target = self
-        primaryButton.action = #selector(primaryClicked)
-
-        let buttonRow = NSStackView(views: [secondaryButton, primaryButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 12
-        buttonRow.alignment = .centerY
-
-        let buttonContainer = NSStackView(views: [buttonRow])
-        buttonContainer.orientation = .horizontal
-        buttonContainer.alignment = .centerY
-        buttonContainer.distribution = .fill
-        // Push the buttons to the trailing edge.
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
-        buttonContainer.setViews([spacer, buttonRow], in: .leading)
+        footer.orientation = .horizontal
+        footer.spacing = 9
+        footer.alignment = .centerY
+        footer.setViews([spacer, secondaryButton, primaryButton], in: .leading)
 
         let setup = ProviderSetupView(model: auth, width: textWidth)
         providerSetup = setup
 
+        // Eats the slack, pinning the footer to the bottom however tall the
+        // step above it is.
+        let filler = NSView()
+        filler.translatesAutoresizingMaskIntoConstraints = false
+        filler.setContentHuggingPriority(.defaultLow - 1, for: .vertical)
+        filler.setContentCompressionResistancePriority(.defaultLow - 1, for: .vertical)
+
+        let rule = HairlineView()
+
         let stack = NSStackView(views: [
-            titleLabel, bodyLabel, bulletStack, setup, waitingRow, repairStack, buttonContainer,
-            footnoteLabel,
+            titleLabel, bodyLabel, promiseStack, setup, accountStack, hintLabel,
+            waitingRow, repairBlock, filler, footnoteLabel, rule, footer,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 16
-        stack.setCustomSpacing(10, after: titleLabel)
-        // The footnote is small print to the buttons above it, not a section.
-        stack.setCustomSpacing(10, after: buttonContainer)
+        stack.spacing = 18
+        stack.setCustomSpacing(12, after: titleLabel)
+        stack.setCustomSpacing(22, after: bodyLabel)
+        stack.setCustomSpacing(14, after: footnoteLabel)
+        stack.setCustomSpacing(16, after: rule)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSView()
-        container.addSubview(stack)
+        let pane = NSView()
+        pane.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(stack)
+
+        let container = OnboardingPageView()
+        container.addSubview(rail)
+        container.addSubview(pane)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: width),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
-            buttonContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            container.widthAnchor.constraint(
+                equalToConstant: OnboardingWindowController.contentWidth),
+
+            rail.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            rail.topAnchor.constraint(equalTo: container.topAnchor),
+            rail.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            pane.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
+            pane.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            pane.topAnchor.constraint(equalTo: container.topAnchor),
+            pane.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: inset),
+            stack.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -inset),
+            stack.topAnchor.constraint(equalTo: pane.topAnchor, constant: inset),
+            stack.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -22),
+            // Full-width children, so the rule and the footer span the column.
+            footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            rule.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            repairBlock.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            promiseStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         return container
     }
 
-    private func bulletView(_ bullet: OnboardingBullet, width: CGFloat) -> NSView {
-        let symbol = bullet.isPositive ? "checkmark.circle.fill" : "xmark.circle.fill"
-        let icon = NSImageView(
-            image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = bullet.isPositive ? .systemGreen : .secondaryLabelColor
-        icon.setContentHuggingPriority(.required, for: .horizontal)
-
+    /// One promise, as a line of text.
+    ///
+    /// No icon: the copy already says "Never …" where it needs to, and a green
+    /// tick beside a privacy guarantee reads like a validation result. Colour
+    /// carries the distinction instead — what Minne does in ink, what it never
+    /// does in prose grey.
+    private func promiseView(_ bullet: OnboardingBullet, width: CGFloat) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: bullet.text)
-        label.font = .systemFont(ofSize: 13)
-        label.preferredMaxLayoutWidth = width - 24
-
-        let row = NSStackView(views: [icon, label])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 8
-        return row
+        label.font = MinneTheme.body(13)
+        label.textColor = bullet.isPositive ? MinneTheme.ink : MinneTheme.prose
+        label.preferredMaxLayoutWidth = width
+        return label
     }
 
     // MARK: - Rendering
 
     private func render() {
         guard let page = state.page else { return }
-        let textWidth =
-            OnboardingWindowController.contentWidth - OnboardingWindowController.inset * 2
+        let textWidth = OnboardingWindowController.textWidth
+
+        rail.show(page.rail)
 
         titleLabel.stringValue = page.title
         bodyLabel.stringValue = page.body
+        bodyLabel.isHidden = page.body.isEmpty
 
-        for view in bulletStack.arrangedSubviews {
-            bulletStack.removeArrangedSubview(view)
+        for view in promiseStack.arrangedSubviews {
+            promiseStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        var lastPositive: NSView?
         for bullet in page.bullets {
-            bulletStack.addArrangedSubview(bulletView(bullet, width: textWidth))
+            let row = promiseView(bullet, width: textWidth)
+            promiseStack.addArrangedSubview(row)
+            if bullet.isPositive { lastPositive = row }
         }
-        bulletStack.isHidden = page.bullets.isEmpty
+        // The one gap that separates what Minne does from what it never does.
+        // A caption over each half said out loud what the copy already says;
+        // a wider gap says it quietly.
+        if let lastPositive, page.bullets.contains(where: { !$0.isPositive }) {
+            promiseStack.setCustomSpacing(18, after: lastPositive)
+        }
+        promiseStack.isHidden = page.bullets.isEmpty
+
+        if let account = page.account {
+            // "Claude (Pro/Max) — Claude Sonnet 5" splits into a name and the
+            // model underneath it; an em dash is the summary's own separator.
+            let parts = account.components(separatedBy: " — ")
+            accountTitle.stringValue = parts.first.map { "Signed in to \($0)" } ?? account
+            accountDetail.stringValue =
+                parts.count > 1 ? parts.dropFirst().joined(separator: " — ") : ""
+            accountDetail.isHidden = accountDetail.stringValue.isEmpty
+            accountStack.isHidden = false
+        } else {
+            accountStack.isHidden = true
+        }
+
+        if let hint = page.hint {
+            hintLabel.attributedStringValue = shortcutHint(hint)
+            hintLabel.isHidden = false
+        } else {
+            hintLabel.isHidden = true
+        }
 
         waitingRow.isHidden = !page.isWaiting
         providerSetup?.isHidden = page.kind != .providers
@@ -250,9 +345,9 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             repairLabel.stringValue = repair.body
             repairButton.title = repair.buttonTitle
             repairButton.isEnabled = !repair.inProgress
-            repairStack.isHidden = false
+            repairBlock.isHidden = false
         } else {
-            repairStack.isHidden = true
+            repairBlock.isHidden = true
         }
 
         footnoteLabel.stringValue = page.footnote ?? ""
@@ -261,12 +356,35 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         primaryButton.title = page.primaryTitle
         secondaryButton.title = page.secondaryTitle ?? ""
         secondaryButton.isHidden = page.secondaryTitle == nil
+        primaryButton.invalidateIntrinsicContentSize()
+        secondaryButton.invalidateIntrinsicContentSize()
+        repairButton.invalidateIntrinsicContentSize()
         // On the provider step the card's own button is the one to press;
         // Return there should not close the window.
         primaryButton.keyEquivalent = page.kind == .providers ? "" : "\r"
 
         resizeToFit()
         if page.kind != .providers { window.makeFirstResponder(primaryButton) }
+    }
+
+    /// "⌥Space asks Minne anything" — the shortcut in ink and the rest in
+    /// prose. Deliberately not the utility face: IBM Plex Mono has no glyph
+    /// for ⌥, and the fallback it triggers renders it clipped.
+    private func shortcutHint(_ tail: String) -> NSAttributedString {
+        let hint = NSMutableAttributedString(
+            string: "⌥Space ",
+            attributes: [
+                .font: MinneTheme.body(13, .semibold),
+                .foregroundColor: MinneTheme.ink,
+            ])
+        hint.append(
+            NSAttributedString(
+                string: tail,
+                attributes: [
+                    .font: MinneTheme.body(13),
+                    .foregroundColor: MinneTheme.prose,
+                ]))
+        return hint
     }
 
     /// The provider step grows and shrinks under the window (a prompt appears,

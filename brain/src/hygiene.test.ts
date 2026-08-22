@@ -19,6 +19,9 @@ const BINARY_EXTENSIONS = new Set([
   ".zip",
   ".dmg",
   ".p12",
+  // Bundled typefaces (app/Sources/Minne/Resources/Fonts) — binary by nature.
+  ".ttf",
+  ".otf",
 ]);
 const ALLOWED = new Set([0x09, 0x0a, 0x0d]); // \t \n \r
 
