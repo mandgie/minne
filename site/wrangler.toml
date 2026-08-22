@@ -1,5 +1,20 @@
 name = "minne"
+main = "src/worker.js"
 compatibility_date = "2026-08-01"
+account_id = "2fc8e8ea8ca52f166fdd1d6a033b51a6"
 
+# run_worker_first is required, not optional: without it a request whose path
+# matches an asset is served straight from the edge and src/worker.js never sees
+# it — so www.minne.sh/ would serve index.html instead of redirecting.
 [assets]
 directory = "./dist"
+binding = "ASSETS"
+run_worker_first = true
+
+[[routes]]
+pattern = "minne.sh"
+custom_domain = true
+
+[[routes]]
+pattern = "www.minne.sh"
+custom_domain = true

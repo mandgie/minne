@@ -52,5 +52,27 @@ hand when the app's look changes.
 
 ## Deploy
 
-`cd site && mkdir -p dist && cp index.html styles.css dist/ && cp -R assets dist/assets && npx -y wrangler@3 deploy`
-→ https://minne.magnus-uno-friberg.workers.dev
+Deployed as a Worker with static assets, on the `magnus@mandgie.com` Cloudflare
+account (`2fc8e8ea8ca52f166fdd1d6a033b51a6`), pinned in `wrangler.toml`.
+
+```sh
+cd site
+rm -rf dist && mkdir -p dist && cp index.html styles.css dist/ && cp -R assets dist/assets
+npx -y wrangler@4.86.0 deploy
+```
+
+→ https://minne.sh
+
+Two things that will bite you:
+
+- **`rm -rf dist` matters.** Without it, `cp -R assets dist/assets` copies *into*
+  the existing directory and you ship `dist/assets/assets/` as well — every font
+  and image twice.
+- **The wrangler version is pinned on purpose.** wrangler 4.87+ requires Node
+  >= 22 and this machine runs Node 20; `npx wrangler` unpinned fails with
+  "Wrangler requires at least Node.js v22.0.0". 4.86.0 needs only >= 20.3.0.
+  Upgrade Node before you unpin.
+
+`wrangler login` is authenticated as `magnus@mandgie.com`. The apex domain is
+bound via the `[[routes]]` block with `custom_domain = true`; DNS and the edge
+certificate are managed by Cloudflare from that binding alone.
