@@ -1,0 +1,24 @@
+name = "minne-docs"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+account_id = "2fc8e8ea8ca52f166fdd1d6a033b51a6"
+
+# Same reason as the marketing worker: without run_worker_first a request whose
+# path matches an asset is answered at the edge and src/worker.js never runs —
+# so the extensionless /guides/minne-key routes below would 404.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+run_worker_first = true
+# Without this, Cloudflare answers /guides/minne-key with a 307 to
+# /guides/minne-key/ (the directory holding index.html) and src/worker.js 301s
+# the trailing slash straight back — an infinite loop on every page but the
+# root. "drop-trailing-slash" serves dist/<slug>/index.html at /<slug> directly,
+# which is the URL shape the canonical tags and the sidebar already use.
+# A local `python -m http.server` serves directory indexes without redirecting,
+# so this failure only ever appears once deployed.
+html_handling = "drop-trailing-slash"
+
+[[routes]]
+pattern = "docs.minne.sh"
+custom_domain = true

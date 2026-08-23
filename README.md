@@ -64,6 +64,11 @@ Anthropic (Claude Pro/Max or API key), OpenAI (ChatGPT Plus/Pro or API key),
 and Local (Ollama or any OpenAI-compatible server). Point Minne at Ollama on
 localhost and model traffic never leaves the machine.
 
+## Documentation
+
+[docs.minne.sh](https://docs.minne.sh) — install, the Minne key, the memory
+format, every setting, and what leaves your Mac. Source in [`docs-site/`](docs-site/).
+
 ## Status
 
 Early development. The plan lives in [`tasks/prd-minne.md`](tasks/prd-minne.md).

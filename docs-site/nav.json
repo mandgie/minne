@@ -1,0 +1,50 @@
+[
+  {
+    "title": "Minne",
+    "pages": [
+      { "slug": "", "file": "index.md", "title": "Introduction" }
+    ]
+  },
+  {
+    "title": "Get started",
+    "pages": [
+      { "slug": "start/install", "file": "start-install.md", "title": "Install" },
+      { "slug": "start/first-run", "file": "start-first-run.md", "title": "First run" },
+      { "slug": "start/provider", "file": "start-provider.md", "title": "Choose your AI" }
+    ]
+  },
+  {
+    "title": "Guides",
+    "pages": [
+      { "slug": "guides/minne-key", "file": "guides-minne-key.md", "title": "The Minne key" },
+      { "slug": "guides/instructions", "file": "guides-instructions.md", "title": "Telling it what you want" },
+      { "slug": "guides/chat", "file": "guides-chat.md", "title": "Chat" },
+      { "slug": "guides/memory", "file": "guides-memory.md", "title": "Your memory folder" },
+      { "slug": "guides/schema", "file": "guides-schema.md", "title": "Steering with SCHEMA.md" },
+      { "slug": "guides/mcp", "file": "guides-mcp.md", "title": "Minne in Claude Desktop" }
+    ]
+  },
+  {
+    "title": "Privacy",
+    "pages": [
+      { "slug": "privacy", "file": "privacy.md", "title": "What leaves your Mac" }
+    ]
+  },
+  {
+    "title": "Reference",
+    "pages": [
+      { "slug": "reference/settings", "file": "reference-settings.md", "title": "Settings" },
+      { "slug": "reference/shortcuts", "file": "reference-shortcuts.md", "title": "Keys and shortcuts" },
+      { "slug": "reference/files", "file": "reference-files.md", "title": "Files and paths" },
+      { "slug": "reference/cli", "file": "reference-cli.md", "title": "CLI and environment" },
+      { "slug": "reference/build", "file": "reference-build.md", "title": "Build from source" }
+    ]
+  },
+  {
+    "title": "Help",
+    "pages": [
+      { "slug": "troubleshooting", "file": "troubleshooting.md", "title": "Troubleshooting" },
+      { "slug": "faq", "file": "faq.md", "title": "FAQ" }
+    ]
+  }
+]

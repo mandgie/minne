@@ -1,0 +1,12 @@
+{
+  "name": "minne-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/build.mjs",
+    "serve": "bun scripts/build.mjs && python3 -m http.server 8766 --directory dist"
+  },
+  "devDependencies": {
+    "marked": "16.4.0"
+  }
+}
