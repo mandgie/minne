@@ -72,6 +72,16 @@ export interface SyncSettings {
   snapshotChars: number;
   /** tool round trips the agent gets per batch before the pass stops it */
   maxTurns: number;
+  /**
+   * Delay before the next scheduled sync when a pass ingested its fill and
+   * still left a backlog. Heavy days capture faster than one pass per
+   * `intervalMs` can digest (a 2,600-snapshot day against a 48-per-pass
+   * ceiling); chaining passes this closely drains the backlog while keeping
+   * every individual pass at its bounded cost. Only an `ingested` pass chains
+   * — a skipped or failed one waits the full interval, so a signed-out
+   * provider is not polled every two minutes.
+   */
+  drainMs: number;
 }
 
 export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
@@ -81,6 +91,7 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   maxBatches: 4,
   snapshotChars: 4_000,
   maxTurns: 12,
+  drainMs: 2 * 60 * 1000,
 };
 
 /** Env overrides, so tests (and impatient dev runs) can retune the schedule. */
@@ -99,7 +110,48 @@ export function settingsFromEnv(env: Record<string, string | undefined>): Partia
   read("MINNE_SYNC_MAX_BATCHES", "maxBatches", 1);
   read("MINNE_SYNC_SNAPSHOT_CHARS", "snapshotChars", 200);
   read("MINNE_SYNC_MAX_TURNS", "maxTurns", 1);
+  read("MINNE_SYNC_DRAIN_MS", "drainMs", 1_000);
   return settings;
+}
+
+// ---- scheduling arithmetic (pure, so the restart behavior is testable) ----
+
+/** An overdue pass fires this soon after launch, never in the launch stampede. */
+export const OVERDUE_GRACE_MS = 30_000;
+
+/**
+ * When a scheduled pass is due and how long to wait for it. The stored due
+ * time is honored as-is — a restart must not reset the clock, which is
+ * exactly how the 7-day lint managed never to fire — and a due time already
+ * in the past fires after a short grace instead of immediately. The grace is
+ * clamped to the interval so millisecond-interval tests are not held to a
+ * 30-second floor. No stored time means the schedule is starting fresh: one
+ * full interval from now.
+ */
+export function scheduleDelay(
+  storedDueAt: number | undefined,
+  now: number,
+  intervalMs: number,
+): { dueAt: number; delayMs: number } {
+  const dueAt = storedDueAt ?? now + intervalMs;
+  const delayMs = dueAt > now ? dueAt - now : Math.min(OVERDUE_GRACE_MS, intervalMs);
+  return { dueAt, delayMs };
+}
+
+/**
+ * The next sync due time after a pass. A pass that ingested and still left a
+ * backlog chains after `drainMs`; every other outcome — idle, skipped,
+ * error — waits the full interval, so failure is backed off rather than
+ * retried hot and a signed-out provider is not re-checked every two minutes.
+ */
+export function nextSyncDue(
+  now: number,
+  settings: Pick<SyncSettings, "intervalMs" | "drainMs">,
+  lastStatus: SyncPassSummary["status"] | undefined,
+  pending: number,
+): number {
+  const drain = lastStatus === "ingested" && pending > 0;
+  return now + (drain ? settings.drainMs : settings.intervalMs);
 }
 
 /** Reported by `status`; rendered by Settings (US-015). */
@@ -233,7 +285,9 @@ export class SyncEngine {
   /** the pass in flight, if any — a second one is refused, not queued */
   private running: "sync" | "lint" | null = null;
   private aborter: AbortController | null = null;
-  private timers: ReturnType<typeof setInterval>[] = [];
+  private scheduled: Partial<Record<"sync" | "lint", ReturnType<typeof setTimeout>>> = {};
+  /** bumped by stopTimers, so a pass in flight cannot re-arm a stopped schedule */
+  private timerEpoch = 0;
 
   constructor(deps: SyncEngineDeps) {
     this.memory = deps.memory;
@@ -251,26 +305,77 @@ export class SyncEngine {
    * Starts the scheduled passes. Not called from the constructor: tests and
    * one-shot uses construct an engine to run a pass on demand and must not
    * inherit a timer with it.
+   *
+   * The schedule is persisted, not held in a timer: each pass's next due time
+   * lives in sync-state.json and a launch resumes it. This is what makes the
+   * 7-day lint reachable at all on a machine that restarts the app daily, and
+   * what closes the restart hole where every launch pushed sync a full
+   * interval out while captures piled up.
    */
   startTimers(): void {
     this.stopTimers();
-    const every = (ms: number, run: () => Promise<unknown>, what: string) => {
-      if (ms <= 0) return;
-      const timer = setInterval(() => {
-        run().catch((err: unknown) => this.log(`scheduled ${what} failed:`, err));
-      }, ms);
-      // The brain exits when stdin closes; a timer must never be what keeps it
-      // alive (stop() covers the orderly path, this covers the rest).
-      timer.unref?.();
-      this.timers.push(timer);
-    };
-    every(this.settings.intervalMs, () => this.tick("sync"), "sync");
-    every(this.settings.lintIntervalMs, () => this.tick("lint"), "lint");
+    this.arm("sync");
+    this.arm("lint");
   }
 
   stopTimers(): void {
-    for (const timer of this.timers) clearInterval(timer);
-    this.timers = [];
+    this.timerEpoch++;
+    for (const timer of Object.values(this.scheduled)) clearTimeout(timer);
+    this.scheduled = {};
+  }
+
+  /** Schedules one pass from its persisted due time, establishing one if absent. */
+  private arm(pass: "sync" | "lint"): void {
+    const intervalMs = pass === "sync" ? this.settings.intervalMs : this.settings.lintIntervalMs;
+    if (intervalMs <= 0) return;
+    const stored = pass === "sync" ? this.state.nextSyncAt : this.state.nextLintAt;
+    const { dueAt, delayMs } = scheduleDelay(stored, this.clock().getTime(), intervalMs);
+    if (stored !== dueAt) {
+      if (pass === "sync") this.state.nextSyncAt = dueAt;
+      else this.state.nextLintAt = dueAt;
+      saveSyncState(this.statePath, this.state);
+    }
+    const epoch = this.timerEpoch;
+    const timer = setTimeout(() => {
+      void this.tick(pass)
+        .catch((err: unknown): boolean => {
+          this.log(`scheduled ${pass} failed:`, err);
+          return true;
+        })
+        .then((ran) => this.rearm(pass, epoch, ran));
+    }, delayMs);
+    // The brain exits when stdin closes; a timer must never be what keeps it
+    // alive (stop() covers the orderly path, this covers the rest).
+    timer.unref?.();
+    this.scheduled[pass] = timer;
+  }
+
+  /**
+   * After a pass: persist when the next one is due, then schedule it. A tick
+   * that never ran (the other pass held the lock) retries after `drainMs`
+   * rather than a full interval — otherwise a lint due that collides with a
+   * running sync would be pushed a whole week without having run.
+   */
+  private rearm(pass: "sync" | "lint", epoch: number, ran: boolean): void {
+    if (epoch !== this.timerEpoch) return;
+    const now = this.clock().getTime();
+    if (!ran) {
+      const retryAt = now + this.settings.drainMs;
+      if (pass === "sync") this.state.nextSyncAt = retryAt;
+      else this.state.nextLintAt = retryAt;
+    } else if (pass === "sync") {
+      const pending = snapshotBacklog(this.dataDir, this.state.watermark).pending;
+      this.state.nextSyncAt = nextSyncDue(
+        now,
+        this.settings,
+        this.state.lastSync?.status,
+        pending,
+      );
+    } else {
+      this.state.nextLintAt = now + this.settings.lintIntervalMs;
+    }
+    saveSyncState(this.statePath, this.state);
+    this.arm(pass);
   }
 
   /** Cancels a pass in flight (used by `abort` and at shutdown). */
@@ -278,14 +383,18 @@ export class SyncEngine {
     this.aborter?.abort();
   }
 
-  /** A scheduled pass: same work as an on-demand one, minus the complaints. */
-  private async tick(pass: "sync" | "lint"): Promise<void> {
+  /**
+   * A scheduled pass: same work as an on-demand one, minus the complaints.
+   * Returns whether it actually ran, so `rearm` can retry a skipped one soon.
+   */
+  private async tick(pass: "sync" | "lint"): Promise<boolean> {
     if (this.running !== null) {
       this.log(`scheduled ${pass} skipped: a ${this.running} pass is running`);
-      return;
+      return false;
     }
     const result = pass === "sync" ? await this.runSync() : await this.runLint();
     this.log(`scheduled ${pass}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`);
+    return true;
   }
 
   status(): SyncStatus {

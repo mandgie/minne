@@ -14,12 +14,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { FileCredentialStore } from "./credentials";
-import { SyncBusyError, SyncEngine, renderBatch, type ModelResolution } from "./ingest";
+import {
+  OVERDUE_GRACE_MS,
+  SyncBusyError,
+  SyncEngine,
+  nextSyncDue,
+  renderBatch,
+  scheduleDelay,
+  type ModelResolution,
+} from "./ingest";
 import { Memory } from "./memory";
 import { mockProvider, mockStreamCalls, resetMockStreamCalls, MOCK_LOGIN_CODE } from "./mock-provider";
 import type { BrainEvent } from "./protocol";
 import { readSnapshotsAfter, snapshotBacklog } from "./sources";
-import { loadSyncState, saveSyncState, syncStatePath } from "./sync-state";
+import { loadSyncState, saveSyncState, syncStatePath, type SyncState } from "./sync-state";
 import { BrainSession, hello, seedSnapshotIndex, type TestSnapshot } from "./test-support";
 import { bootstrapWiki, loadWikiTree } from "./wiki";
 import { lintWiki } from "./wiki-lint";
@@ -96,10 +104,20 @@ function makeEngine(
     settings?: ConstructorParameters<typeof SyncEngine>[0]["settings"];
     resolveModel?: () => Promise<ModelResolution>;
     snapshots?: TestSnapshot[];
+    /** sync-state.json a previous run left behind, written before the engine loads it */
+    state?: Partial<SyncState>;
   } = {},
 ): Harness {
   const dir = scratch();
   const memoryRoot = join(dir, "memory");
+  if (options.state !== undefined) {
+    saveSyncState(syncStatePath(dir), {
+      watermark: 0,
+      lastSync: null,
+      lastLint: null,
+      ...options.state,
+    });
+  }
   if (options.snapshots !== undefined) {
     seedSnapshotIndex(dir, options.snapshots);
     seedSourceFiles(memoryRoot, options.snapshots);
@@ -447,6 +465,102 @@ describe("ingestion pass", () => {
     expect(engine.status().lastSync).toMatchObject({ status: "idle", snapshots: 0 });
     expect(mockStreamCalls()).toBe(0);
   });
+});
+
+describe("pass scheduling", () => {
+  test("scheduleDelay: fresh, future and overdue due times", () => {
+    const now = 1_000_000;
+    // No stored time: the schedule starts one full interval from now.
+    expect(scheduleDelay(undefined, now, 1_800_000)).toEqual({
+      dueAt: now + 1_800_000,
+      delayMs: 1_800_000,
+    });
+    // A stored future due time survives a restart as-is — the clock is not reset.
+    expect(scheduleDelay(now + 600_000, now, 1_800_000)).toEqual({
+      dueAt: now + 600_000,
+      delayMs: 600_000,
+    });
+    // An overdue pass fires after the grace, not an interval later — this is
+    // the 7-day lint becoming reachable on a machine that restarts daily.
+    expect(scheduleDelay(now - 5_000, now, 7 * 24 * 3_600_000).delayMs).toBe(OVERDUE_GRACE_MS);
+    // The grace never exceeds the interval itself.
+    expect(scheduleDelay(now - 5_000, now, 20).delayMs).toBe(20);
+  });
+
+  test("nextSyncDue: only an ingested pass with a backlog chains fast", () => {
+    const settings = { intervalMs: 1_800_000, drainMs: 120_000 };
+    expect(nextSyncDue(0, settings, "ingested", 5)).toBe(120_000);
+    expect(nextSyncDue(0, settings, "ingested", 0)).toBe(1_800_000);
+    // Skipped and failed passes back off a full interval — a signed-out
+    // provider must not be re-polled every drain hop.
+    expect(nextSyncDue(0, settings, "skipped", 5)).toBe(1_800_000);
+    expect(nextSyncDue(0, settings, "error", 5)).toBe(1_800_000);
+    expect(nextSyncDue(0, settings, undefined, 5)).toBe(1_800_000);
+  });
+
+  test("startTimers persists the due times a restart will resume", () => {
+    const { dir, engine } = makeEngine({
+      settings: { intervalMs: 600_000, lintIntervalMs: 700_000 },
+    });
+    engine.startTimers();
+    try {
+      const state = loadSyncState(syncStatePath(dir));
+      expect(state.nextSyncAt).toBeGreaterThan(Date.now() + 590_000);
+      expect(state.nextLintAt).toBeGreaterThan(Date.now() + 690_000);
+    } finally {
+      engine.stopTimers();
+    }
+  });
+
+  test("a stored future due time is honored across a restart, not reset", async () => {
+    // A previous run scheduled sync an hour out; despite a 20 ms interval this
+    // launch must not fire early. Under the old setInterval scheduling the
+    // inverse also held: a stored *overdue* time was ignored and every restart
+    // pushed the pass a full interval out.
+    const { engine } = makeEngine({
+      settings: { intervalMs: 20 },
+      state: { nextSyncAt: Date.now() + 3_600_000 },
+    });
+    engine.startTimers();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(engine.status().lastSync).toBeNull();
+    } finally {
+      engine.stopTimers();
+    }
+  });
+
+  test("an ingesting pass that leaves a backlog chains after drainMs, then settles", async () => {
+    const citation = (n: number) => `sources/2026-08-17/1400-mail.md#${n}`;
+    const { dir, engine } = makeEngine({
+      snapshots: [
+        snapshot(1, digestScript("Oslo migration", citation(1))),
+        snapshot(2, digestScript("Oslo migration", citation(2))),
+      ],
+      // One snapshot per pass, so the seeded two need two passes: the first
+      // ends with a backlog and must chain after drainMs (30 ms), not after
+      // the 10-minute interval; the second drains it and settles.
+      settings: { intervalMs: 600_000, drainMs: 30, batchSize: 1, maxBatches: 1 },
+      state: { nextSyncAt: Date.now() + 30 },
+    });
+    engine.startTimers();
+    try {
+      const deadline = Date.now() + 10_000;
+      let state = loadSyncState(syncStatePath(dir));
+      while (
+        Date.now() < deadline &&
+        !(state.watermark === 2 && (state.nextSyncAt ?? 0) > Date.now() + 300_000)
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        state = loadSyncState(syncStatePath(dir));
+      }
+      expect(state.watermark).toBe(2);
+      // Drained: the next pass is a full interval out, not another drain hop.
+      expect((state.nextSyncAt ?? 0) - Date.now()).toBeGreaterThan(300_000);
+    } finally {
+      engine.stopTimers();
+    }
+  }, 20000);
 });
 
 describe("lint pass", () => {

@@ -88,6 +88,15 @@ export interface SyncState {
    * the same "## Standing guidance" section as the steers.
    */
   edits?: Record<string, EditState>;
+  /**
+   * When the next scheduled sync/lint pass is due, epoch ms. Persisted so a
+   * restart resumes the schedule instead of resetting it: an in-memory timer
+   * alone meant every launch pushed sync one full interval out (a 9-hour
+   * ingestion hole on a restart-heavy day), and the 7-day lint could never
+   * fire at all on a machine that restarts the app daily.
+   */
+  nextSyncAt?: number;
+  nextLintAt?: number;
 }
 
 export const EMPTY_SYNC_STATE: SyncState = { watermark: 0, lastSync: null, lastLint: null };
@@ -119,6 +128,14 @@ export function loadSyncState(path: string): SyncState {
   if (steers !== null) state.steers = steers;
   const edits = sanitizeEdits(raw["edits"]);
   if (edits !== null) state.edits = edits;
+  const nextSyncAt = raw["nextSyncAt"];
+  if (typeof nextSyncAt === "number" && Number.isInteger(nextSyncAt) && nextSyncAt > 0) {
+    state.nextSyncAt = nextSyncAt;
+  }
+  const nextLintAt = raw["nextLintAt"];
+  if (typeof nextLintAt === "number" && Number.isInteger(nextLintAt) && nextLintAt > 0) {
+    state.nextLintAt = nextLintAt;
+  }
   return state;
 }
 
