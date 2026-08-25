@@ -11,6 +11,14 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  createAssistantMessageEventStream,
+  type Api,
+  type AssistantMessage,
+  type AssistantMessageEventStream,
+  type Model,
+  type ToolCall,
+} from "@earendil-works/pi-ai";
+import {
   MAX_WINDOW_CHARS,
   buildDraftPrompt,
   cleanDraft,
@@ -18,6 +26,7 @@ import {
   findMemoryPages,
   findStylePage,
   memoryIndexMap,
+  runDraft,
   type DraftContext,
 } from "./draft";
 import { Memory } from "./memory";
@@ -507,6 +516,96 @@ describe("draft requests are validated", () => {
         decodeRequest(JSON.stringify({ type: "draft", id: "d1", mode: "infer", ...bad })),
       ).toMatchObject({ ok: false, error: { code: "invalid_request" } });
     }
+  });
+});
+
+describe("runDraft", () => {
+  /**
+   * The mock provider never writes prose alongside a scripted tool call, so
+   * the protocol tests cannot see this: a real model narrates its tool use
+   * ("I'll read the style page…") in the assistant messages *before* the final
+   * one. Those sentences were once concatenated into the inserted draft
+   * (`drafting.I'll` seams and all). This streamFn does what the real model
+   * does, and the assertion is the property that broke: only the final
+   * message's text is the draft.
+   */
+  const MODEL: Model<Api> = {
+    id: "fake-model",
+    name: "Fake model",
+    api: "openai-completions",
+    provider: "fake",
+    baseUrl: "http://localhost:1/v1",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 8192,
+    maxTokens: 4096,
+  };
+
+  function turn(content: AssistantMessage["content"], stopReason: "toolUse" | "stop") {
+    const message: AssistantMessage = {
+      role: "assistant",
+      content,
+      api: MODEL.api,
+      provider: MODEL.provider,
+      model: MODEL.id,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason,
+      timestamp: Date.now(),
+    };
+    const stream = createAssistantMessageEventStream();
+    stream.push({ type: "start", partial: { ...message, stopReason: "pending" } });
+    content.forEach((part, index) => {
+      if (part.type === "text") {
+        stream.push({ type: "text_start", contentIndex: index, partial: message });
+        stream.push({
+          type: "text_delta",
+          contentIndex: index,
+          delta: part.text,
+          partial: message,
+        });
+        stream.push({ type: "text_end", contentIndex: index, content: part.text, partial: message });
+      } else if (part.type === "toolCall") {
+        stream.push({ type: "toolcall_start", contentIndex: index, partial: message });
+        stream.push({ type: "toolcall_end", contentIndex: index, toolCall: part, partial: message });
+      }
+    });
+    stream.push({ type: "done", reason: stopReason === "toolUse" ? "toolUse" : "stop", message });
+    return stream;
+  }
+
+  test("tool-turn commentary is never part of the draft", async () => {
+    const root = scratch();
+    const memory = new Memory({ root, dataDir: root });
+    const search: ToolCall = {
+      type: "toolCall",
+      id: "call-1",
+      name: "search_memory",
+      arguments: { query: "Ingrid" },
+    };
+    let turns = 0;
+    const streamFn = (): AssistantMessageEventStream => {
+      turns++;
+      return turns === 1
+        ? turn([{ type: "text", text: "I'll check what memory holds about Ingrid first." }, search], "toolUse")
+        : turn([{ type: "text", text: "Torsdag passer fint. — M." }], "stop");
+    };
+
+    const result = await runDraft(context({ windowText: "From: Ingrid" }), {
+      memory,
+      model: MODEL,
+      streamFn,
+    });
+    expect(turns).toBe(2);
+    expect(result.text).toBe("Torsdag passer fint. — M.");
+    expect(result.text).not.toContain("I'll check");
   });
 });
 

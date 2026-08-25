@@ -41,6 +41,10 @@ import { buildRegistry, ollamaProviderFrom, type Registry } from "./providers";
  * A turn can span several assistant messages (one per tool round trip), so
  * this is not `messages.at(-1)` — prose written before a tool call belongs to
  * the answer too.
+ *
+ * This rule is chat's alone. A draft (draft.ts) deliberately takes the final
+ * message only: its text is inserted verbatim into the user's field, where
+ * pre-tool commentary must never land.
  */
 function assistantText(messages: readonly AgentMessage[]): string {
   let text = "";

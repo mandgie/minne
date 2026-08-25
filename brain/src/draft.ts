@@ -507,12 +507,15 @@ export async function runDraft(
     throw new DraftFailedError(last.errorMessage ?? "draft aborted");
   }
 
+  // The final assistant message's text alone. Earlier assistant messages are
+  // the model narrating its tool use ("I'll read the style page…") — in chat
+  // that prose belongs to the answer (service.ts's `assistantText`), but a
+  // draft is inserted verbatim into the user's field, where it must never
+  // land. A turn that ends without text (the turn cap hit mid-tool-call)
+  // fails the draft rather than inserting commentary.
   let text = "";
-  for (const message of agent.state.messages) {
-    if (message.role !== "assistant") continue;
-    for (const part of message.content) {
-      if (part.type === "text") text += part.text;
-    }
+  for (const part of last.content) {
+    if (part.type === "text") text += part.text;
   }
   const draft = cleanDraft(text);
   if (draft === "") throw new DraftFailedError("the model returned an empty draft");
