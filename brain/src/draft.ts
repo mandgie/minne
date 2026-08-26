@@ -11,8 +11,9 @@
 // LLM feature that can actually be tested: `buildDraftPrompt` takes values and
 // returns a string, and `draft.test.ts` reads that string.
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { StreamFn } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { Type, type TSchema } from "typebox";
 import { NotFoundError, type Memory } from "./memory";
 import { readOnlyMemoryTools } from "./memory-tools";
 import { EmptyQueryError } from "./sources";
@@ -131,9 +132,12 @@ const DRAFT_SYSTEM_PROMPT = `You are Minne's drafting key. The user pressed a ke
 field somewhere on their Mac and you are writing the text that will be inserted
 into that field, in their voice.
 
-Your entire reply is inserted verbatim. So:
+Deliver the draft by calling submit_draft with exactly the text to insert —
+that text alone reaches the field, verbatim. Nothing else you write is ever
+shown to the user, so think in plain text as freely as you like, then submit.
+So:
 
-- Write only the text that belongs in the field. No preamble, no "here is a
+- Submit only the text that belongs in the field. No preamble, no "here is a
   draft", no explanation, no sign-off from you, no surrounding quotes and no
   markdown code fences.
 - Match the register of where it is going. A chat message is not an email; a
@@ -314,7 +318,7 @@ function reworkLines(context: DraftContext): string[] {
     "You already wrote the draft below and the user has steered it. Revise " +
       "that draft: change what the guidance asks for and keep everything it " +
       "did not object to — the wording, the facts and the length that were " +
-      "not mentioned are fine as they are. Return the revised text only.",
+      "not mentioned are fine as they are. Submit the revised text.",
   );
   lines.push(...block("The draft so far", previous));
   lines.push(
@@ -358,7 +362,7 @@ export function buildDraftPrompt(
     case "rewrite":
       lines.push(
         "Rewrite the selected passage below. Keep what it means and who it is " +
-          "from; improve how it reads. Return the replacement passage only.",
+          "from; improve how it reads. Submit the replacement passage.",
       );
       lines.push(...block("Selected passage", selection));
       if (field.trim() !== "" && field.trim() !== selection.trim()) {
@@ -368,7 +372,7 @@ export function buildDraftPrompt(
     case "instruction":
       lines.push(
         "The field currently holds an instruction to you, not text the user " +
-          "wants to keep. Carry it out and return what should replace it.",
+          "wants to keep. Carry it out and submit what should replace it.",
       );
       lines.push(...block("Instruction", field));
       break;
@@ -376,7 +380,7 @@ export function buildDraftPrompt(
       lines.push(
         "The field is empty. Write what the user would plausibly type here " +
           "next, inferred from what is on screen around it and from your " +
-          "memory of them. Return that text only.",
+          "memory of them. Submit that text.",
       );
       break;
   }
@@ -423,6 +427,34 @@ export function buildDraftPrompt(
 }
 
 /**
+ * The delivery channel: the draft is what the model passes to this tool, and
+ * nothing else. Free text turned out to be an unreliable deliverable — the
+ * model reasons in prose exactly on the hard drafts ("Now I have the style.
+ * … Let me check what he'd credibly claim", 2026-08-26, into a live X reply
+ * box), and a prompt can only discourage that, not prevent it. A tool call
+ * is a hard boundary: commentary stays commentary, and only the submitted
+ * text can reach the field.
+ */
+function submitDraftTool(receive: (text: string) => void): AgentTool<TSchema, unknown> {
+  const definition: AgentTool<ReturnType<typeof Type.Object>, unknown> = {
+    name: "submit_draft",
+    label: "Submit draft",
+    description:
+      "Deliver the finished draft. The `text` you pass is inserted into the user's field " +
+      "verbatim, and it is the only thing that ever is — call this exactly once, when the " +
+      "draft is ready.",
+    parameters: Type.Object({
+      text: Type.String({ description: "The exact text to insert into the field." }),
+    }),
+    execute: async (_id, params) => {
+      receive(params["text"] as string);
+      return { content: [{ type: "text", text: "Draft received." }], details: {} };
+    },
+  };
+  return definition as unknown as AgentTool<TSchema, unknown>;
+}
+
+/**
  * Everything a model wraps a draft in that the field must not receive: a
  * markdown fence, or the whole answer in quotes. Only stripped when it wraps
  * the *entire* reply — a draft that legitimately opens with a quotation keeps
@@ -463,14 +495,25 @@ export async function runDraft(
     pages: findMemoryPages(deps.memory, context.recipient),
   };
   let turns = 0;
+  let submitted: string | null = null;
   const agent = new Agent({
     initialState: {
       systemPrompt: DRAFT_SYSTEM_PROMPT,
       model: deps.model,
-      tools: readOnlyMemoryTools(deps.memory),
+      tools: [
+        ...readOnlyMemoryTools(deps.memory),
+        submitDraftTool((text) => {
+          submitted = text;
+        }),
+      ],
     },
     streamFn: deps.streamFn,
-    shouldStopAfterTurn: () => ++turns >= MAX_DRAFT_TURNS,
+    // The turn that submits is the last one — the draft is delivered, and
+    // another turn could only spend tokens or resubmit.
+    shouldStopAfterTurn: () => {
+      turns++;
+      return submitted !== null || turns >= MAX_DRAFT_TURNS;
+    },
   });
   if (deps.onTool !== undefined) {
     const onTool = deps.onTool;
@@ -495,9 +538,13 @@ export async function runDraft(
   }
 
   // Provider failures do not reject `prompt()`; they arrive as a final
-  // assistant message with stopReason "error" (GOTCHAS, US-004).
-  const last = agent.state.messages.at(-1);
-  if (last === undefined || !("role" in last) || last.role !== "assistant") {
+  // assistant message with stopReason "error" (GOTCHAS, US-004). When the
+  // loop stopped right after a submit, the transcript ends on that tool's
+  // result instead, so the assistant message is found, not assumed last.
+  const last = agent.state.messages.findLast(
+    (message): message is AssistantMessage => "role" in message && message.role === "assistant",
+  );
+  if (last === undefined) {
     throw new DraftFailedError("the model produced no message");
   }
   if (last.stopReason === "error") {
@@ -507,15 +554,18 @@ export async function runDraft(
     throw new DraftFailedError(last.errorMessage ?? "draft aborted");
   }
 
-  // The final assistant message's text alone. Earlier assistant messages are
-  // the model narrating its tool use ("I'll read the style page…") — in chat
-  // that prose belongs to the answer (service.ts's `assistantText`), but a
-  // draft is inserted verbatim into the user's field, where it must never
-  // land. A turn that ends without text (the turn cap hit mid-tool-call)
-  // fails the draft rather than inserting commentary.
-  let text = "";
-  for (const part of last.content) {
-    if (part.type === "text") text += part.text;
+  // The draft is what the model submitted — the tool is the only channel into
+  // the field, so plan prose can never ride along with the draft. A model
+  // that answered in plain text instead falls back to its final message's
+  // text alone: never the earlier tool-turn narration (in chat that prose
+  // belongs to the answer — service.ts's `assistantText` — but a draft is
+  // inserted verbatim where it must never land), and a turn with neither a
+  // submission nor text fails the draft rather than inserting commentary.
+  let text: string = submitted ?? "";
+  if (text === "") {
+    for (const part of last.content) {
+      if (part.type === "text") text += part.text;
+    }
   }
   const draft = cleanDraft(text);
   if (draft === "") throw new DraftFailedError("the model returned an empty draft");

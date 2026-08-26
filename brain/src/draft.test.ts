@@ -607,6 +607,39 @@ describe("runDraft", () => {
     expect(result.text).toBe("Torsdag passer fint. — M.");
     expect(result.text).not.toContain("I'll check");
   });
+
+  /**
+   * The second leak shape (2026-08-26): plan prose in the *same* message as
+   * the delivery — "Now I have the style. …" straight into a live reply box.
+   * submit_draft is the only channel into the field, so text riding alongside
+   * the call must never be inserted; the loop also stops on delivery instead
+   * of spending the remaining turns.
+   */
+  test("only the submitted text is the draft — prose beside the call never is", async () => {
+    const root = scratch();
+    const memory = new Memory({ root, dataDir: root });
+    const submit: ToolCall = {
+      type: "toolCall",
+      id: "call-1",
+      name: "submit_draft",
+      arguments: { text: "Torsdag passer fint." },
+    };
+    let turns = 0;
+    const streamFn = (): AssistantMessageEventStream => {
+      turns++;
+      return turn(
+        [
+          { type: "text", text: "Now I have the style. Let me check what he'd credibly claim." },
+          submit,
+        ],
+        "toolUse",
+      );
+    };
+
+    const result = await runDraft(context(), { memory, model: MODEL, streamFn });
+    expect(turns).toBe(1);
+    expect(result.text).toBe("Torsdag passer fint.");
+  });
 });
 
 describe("draft over the protocol", () => {
@@ -643,6 +676,30 @@ describe("draft over the protocol", () => {
     expect((await session.request({ type: "configure", id: "cfg", provider: "mock" })).at(-1))
       .toMatchObject({ type: "done" });
   }
+
+  test("a draft delivered through submit_draft inserts the submitted text only", async () => {
+    const { session } = makeSession({
+      MINNE_MOCK_SCRIPT: 'TOOL: submit_draft {"text":"Torsdag passer fint."}',
+    });
+    await hello(session);
+    await signIn(session);
+
+    const events = await session.request({
+      type: "draft",
+      id: "d1",
+      mode: "infer",
+      windowText: "From: Ingrid",
+      app: "Mail",
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "tool_call", id: "d1", name: "submit_draft" }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      id: "d1",
+      result: { mode: "infer", text: "Torsdag passer fint." },
+    });
+  });
 
   test("a draft comes back whole, with no deltas to insert half of", async () => {
     const { session } = makeSession({ MINNE_MOCK_REPLY: "Torsdag passer fint. — M." });
