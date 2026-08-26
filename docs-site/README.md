@@ -85,11 +85,15 @@ A second Worker on the same Cloudflare account as `site/`
 
 ```sh
 cd docs-site
-bun run build
-npx -y wrangler@4.86.0 deploy
+bun run deploy   # build + wrangler deploy + IndexNow ping
 ```
 
 → https://docs.minne.sh
+
+The IndexNow ping (`../scripts/indexnow.mjs`) tells Bing the URLs changed;
+the key lives in `scripts/indexnow.key` at the repo root and the build writes
+it into `dist/` as the key file IndexNow verifies against. A failed ping never
+fails the deploy.
 
 Three things that will bite you:
 

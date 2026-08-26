@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.mjs",
-    "serve": "bun scripts/build.mjs && python3 -m http.server 8766 --directory dist"
+    "serve": "bun scripts/build.mjs && python3 -m http.server 8766 --directory dist",
+    "deploy": "bun scripts/build.mjs && npx -y wrangler@4.86.0 deploy && bun ../scripts/indexnow.mjs dist https://docs.minne.sh"
   },
   "devDependencies": {
     "marked": "16.4.0"

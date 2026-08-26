@@ -9,7 +9,8 @@
 //   dist/<slug>.md           the same page as raw markdown, for AI clients
 //   dist/search-index.json   headings + text, for the ⌘K search
 import { Marked } from "marked";
-import { mkdir, readFile, writeFile, rm, cp } from "node:fs/promises";
+import { execSync } from "node:child_process";
+import { mkdir, readFile, writeFile, rm, cp, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -161,9 +162,12 @@ function pager(flat, i) {
   return `<nav class="pager" aria-label="Previous and next page">${link(prev, "prev", "Previous")}${link(next, "next", "Next")}</nav>`;
 }
 
-function shell({ title, description, slug, body, headings, nav, flat, index }) {
+function shell({ title, description, slug, body, headings, nav, flat, index, jsonld }) {
   const url = slug === "" ? SITE + "/" : `${SITE}/${slug}`;
-  const pageTitle = slug === "" ? "Minne docs" : `${title} — Minne docs`;
+  const pageTitle =
+    slug === ""
+      ? "Minne documentation — a memory for your Mac that writes where you type"
+      : `${title} — Minne docs`;
   const depth = slug === "" ? 0 : slug.split("/").length;
   return `<!doctype html>
 <html lang="en">
@@ -182,8 +186,10 @@ function shell({ title, description, slug, body, headings, nav, flat, index }) {
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${url}">
 <meta property="og:site_name" content="Minne docs">
-<meta name="twitter:card" content="summary">
-<link rel="alternate" type="text/markdown" href="${slug === "" ? "/index.md" : "/" + slug + ".md"}">
+<meta property="og:image" content="${SITE}/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="${SITE}/assets/og.png">
+<link rel="alternate" type="text/markdown" href="${slug === "" ? "/index.md" : "/" + slug + ".md"}">${jsonld ? "\n" + jsonld : ""}
 <link rel="stylesheet" href="/assets/docs.css">
 <script>
   // Before first paint, so the page never flashes the wrong ground.
@@ -265,6 +271,46 @@ ${toc(headings)}
 `;
 }
 
+// The date a page's source last changed, for <lastmod>. Git is the truth;
+// mtime is the fallback for a tree without history.
+async function lastmod(rel) {
+  try {
+    const d = execSync(`git log -1 --format=%cs -- "${rel}"`, { cwd: ROOT, encoding: "utf8" }).trim();
+    if (d) return d;
+  } catch {}
+  return (await stat(join(ROOT, rel))).mtime.toISOString().slice(0, 10);
+}
+
+// Markdown, flattened to the plain text a FAQPage answer wants.
+function mdToText(md) {
+  return md
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/:::\w*\n?/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`>#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// The FAQ is a genuine FAQ — one H2 per question — so it gets FAQPage schema,
+// generated from the same markdown the page is.
+function faqJsonld(md) {
+  const sections = md.split(/^## +/m).slice(1);
+  const mainEntity = sections.map((s) => {
+    const [q, ...rest] = s.split("\n");
+    return {
+      "@type": "Question",
+      name: mdToText(q),
+      acceptedAnswer: { "@type": "Answer", text: mdToText(rest.join("\n")) },
+    };
+  });
+  return `<script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity,
+  })}</script>`;
+}
+
 /* ── build ───────────────────────────────────────────────────────── */
 
 const nav = JSON.parse(await readFile(join(ROOT, "nav.json"), "utf8"));
@@ -286,11 +332,23 @@ for (const [i, page] of flat.entries()) {
   const headings = [];
   const html = makeMarked(headings).parse(md);
 
+  page.lastmod = await lastmod(join("content", page.file));
+
   const out = page.slug === "" ? join(OUT, "index.html") : join(OUT, page.slug, "index.html");
   await mkdir(dirname(out), { recursive: true });
   await writeFile(
     out,
-    shell({ title, description, slug: page.slug, body: html, headings, nav, flat, index: i }),
+    shell({
+      title,
+      description,
+      slug: page.slug,
+      body: html,
+      headings,
+      nav,
+      flat,
+      index: i,
+      jsonld: page.slug === "faq" ? faqJsonld(md) : "",
+    }),
   );
 
   // The same page as plain markdown, at /<slug>.md — paste the URL into any
@@ -342,9 +400,17 @@ await writeFile(
 await writeFile(
   join(OUT, "sitemap.xml"),
   `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${flat
-    .map((p) => `  <url><loc>${p.slug === "" ? SITE + "/" : SITE + "/" + p.slug}</loc></url>`)
+    .map(
+      (p) =>
+        `  <url><loc>${p.slug === "" ? SITE + "/" : SITE + "/" + p.slug}</loc><lastmod>${p.lastmod}</lastmod></url>`,
+    )
     .join("\n")}\n</urlset>\n`,
 );
+
+// IndexNow host verification — the deploy script pings api.indexnow.org with
+// this key after every deploy (scripts/indexnow.mjs at the repo root).
+const indexnowKey = (await readFile(join(ROOT, "..", "scripts", "indexnow.key"), "utf8")).trim();
+await writeFile(join(OUT, `${indexnowKey}.txt`), indexnowKey);
 
 // A 404 that still gets you somewhere.
 await writeFile(
