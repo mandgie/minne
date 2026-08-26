@@ -1,0 +1,178 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Minne — learn pages
+   Loaded after styles.css, which owns the tokens, the nav, the buttons
+   and the footer. This file only knows how to set an article of prose.
+   ───────────────────────────────────────────────────────────────────── */
+
+.learn__main {
+  padding-top: clamp(110px, 14vw, 150px);
+}
+
+.learn__article {
+  max-width: calc(46rem + 2 * clamp(20px, 5vw, 40px));
+  padding-bottom: clamp(64px, 8vw, 110px);
+}
+
+/* ── head ────────────────────────────────────────────────────────── */
+
+.learn__head {
+  margin-bottom: clamp(30px, 4vw, 44px);
+}
+
+.learn__title {
+  font-family: var(--display);
+  font-weight: 600;
+  color: var(--chalk);
+  font-size: clamp(2.1rem, 4.6vw, 3.3rem);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  margin: 0.9rem 0 0;
+  max-width: 21ch;
+}
+
+.learn__byline {
+  margin: 1.1rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--mute);
+}
+.learn__byline a {
+  color: var(--mute);
+}
+.learn__byline a:hover {
+  color: var(--chalk);
+}
+
+/* ── prose ───────────────────────────────────────────────────────── */
+
+.learn__article h2 {
+  font-family: var(--display);
+  font-weight: 600;
+  color: var(--chalk);
+  font-size: clamp(1.42rem, 2.2vw, 1.72rem);
+  line-height: 1.18;
+  letter-spacing: -0.022em;
+  margin: clamp(2.6rem, 4.5vw, 3.4rem) 0 0.9rem;
+  scroll-margin-top: 90px;
+}
+
+.learn__article h3 {
+  font-family: var(--display);
+  font-weight: 600;
+  color: var(--chalk);
+  font-size: 1.12rem;
+  letter-spacing: -0.015em;
+  margin: 2rem 0 0.6rem;
+}
+
+.learn__article p {
+  margin: 0 0 1.1rem;
+}
+
+.learn__article ul,
+.learn__article ol {
+  margin: 0 0 1.2rem;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.55rem;
+}
+.learn__article li::marker {
+  color: var(--mute);
+}
+.learn__article strong {
+  color: var(--chalk);
+  font-weight: 600;
+}
+
+/* The one citable sentence on the page, set apart the way the demo's
+   footnote is — a rule, not a speech bubble. */
+.learn__article blockquote {
+  margin: clamp(1.8rem, 3vw, 2.4rem) 0;
+  padding: 0.2rem 0 0.2rem 1.3rem;
+  border-left: 2px solid var(--spark);
+  font-size: clamp(1.12rem, 1.5vw, 1.26rem);
+  line-height: 1.6;
+  color: var(--chalk);
+}
+.learn__article blockquote p {
+  margin: 0;
+}
+
+.learn__article code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  color: var(--chalk);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  padding: 0.08em 0.36em;
+}
+
+.learn__article pre {
+  margin: 1.4rem 0 1.6rem;
+  padding: 1rem 1.2rem;
+  background: #0b0e14;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+.learn__article pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--prose);
+}
+
+/* tables — the egress ledger's manners, in table form */
+
+.table-wrap {
+  margin: 1.5rem 0 1.7rem;
+  overflow-x: auto;
+}
+.learn__article table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.learn__article th {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: left;
+  color: var(--spark-lift);
+  padding: 0.55rem 1rem 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.learn__article td {
+  vertical-align: top;
+  padding: 0.7rem 1rem 0.7rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.learn__article td:first-child {
+  color: var(--chalk);
+  white-space: nowrap;
+}
+
+/* ── foot of the article ─────────────────────────────────────────── */
+
+.learn__checked {
+  margin: clamp(2.2rem, 3.5vw, 3rem) 0 0;
+  padding-left: 1.1rem;
+  border-left: 2px solid var(--line);
+  color: var(--mute);
+  font-size: 0.9rem;
+}
+
+.learn__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: clamp(2.6rem, 4vw, 3.4rem);
+}
+.learn__article .closing__note {
+  text-align: left;
+}

@@ -1,11 +1,34 @@
 # minne.site
 
-The product page. Plain static files — no build, no framework, no CDN, no
-runtime network calls of any kind. Serve the directory and it works:
+The product page, plus the learn pages. The homepage is plain static files —
+`index.html` and `styles.css`, hand-written, no framework, no CDN, no runtime
+network calls of any kind. The learn pages (`/rewind-alternative` and friends)
+are markdown in `pages/`, rendered by a small build script in the docs-site's
+image:
 
 ```sh
-cd site && python3 -m http.server 8765   # or: bun run serve
+cd site
+bun install     # marked, build-time only
+bun run build   # homepage copied through + pages/*.md rendered -> dist/
+bun run serve   # builds, then serves dist/ on :8765
 ```
+
+## The learn pages
+
+One markdown file per page in `pages/`, frontmatter carrying `slug`, `title`
+(the tag), `h1`, `description`, and optionally `byline` (shows the author),
+`checked` (comparison pages: renders the "facts checked on <date>" note) and
+`definedTerm` (adds DefinedTerm JSON-LD). Every page must be listed in `PAGES`
+in `scripts/build.mjs` — that list is the footer's Learn block, the sitemap
+and `llms.txt`, so an unlisted page does not exist. The homepage footer's
+Learn block is the same list by hand; change one, change both.
+
+Each page ships as `dist/<slug>.html` (Cloudflare serves it at `/<slug>`) and
+as raw markdown at `/<slug>.md` for AI clients, and carries Article JSON-LD.
+The build also emits `robots.txt`, `sitemap.xml` (lastmod from git),
+`llms.txt` and the IndexNow key file (`scripts/indexnow.key` at the repo
+root). Comparison pages state only facts verified from the competitor's own
+site — re-verify and bump `checked` quarterly.
 
 ## The page is the demo
 
@@ -57,17 +80,19 @@ account (`2fc8e8ea8ca52f166fdd1d6a033b51a6`), pinned in `wrangler.toml`.
 
 ```sh
 cd site
-rm -rf dist && mkdir -p dist && cp index.html styles.css dist/ && cp -R assets dist/assets
-npx -y wrangler@4.86.0 deploy
+bun run deploy   # build + wrangler deploy + IndexNow ping
 ```
 
 → https://minne.sh
 
-Two things that will bite you:
+`bun run deploy` is `bun scripts/build.mjs && npx -y wrangler@4.86.0 deploy &&
+bun ../scripts/indexnow.mjs dist https://minne.sh`. The build replaces `dist/`
+wholesale, and the IndexNow ping tells Bing (whose index feeds ChatGPT search)
+that the URLs changed — a failed ping never fails the deploy. Deploy from a
+committed tree: sitemap `<lastmod>` dates come from git.
 
-- **`rm -rf dist` matters.** Without it, `cp -R assets dist/assets` copies *into*
-  the existing directory and you ship `dist/assets/assets/` as well — every font
-  and image twice.
+One thing that will bite you:
+
 - **The wrangler version is pinned on purpose.** wrangler 4.87+ requires Node
   >= 22 and this machine runs Node 20; `npx wrangler` unpinned fails with
   "Wrangler requires at least Node.js v22.0.0". 4.86.0 needs only >= 20.3.0.

@@ -19,6 +19,7 @@
 <meta name="twitter:description" content="Minne remembers what you work on and writes from it. One key, anywhere you type, on your Mac only.">
 <meta name="twitter:image" content="https://minne.sh/assets/og.png">
 <link rel="stylesheet" href="styles.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","name":"Minne","url":"https://minne.sh/","description":"Minne remembers what you work on and writes from it. Tap right-Option in any text field on your Mac and the reply, the summary or the answer is already there — in your words, on your machine.","operatingSystem":"macOS 14.0 or later","applicationCategory":"ProductivityApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://github.com/mandgie/minne/blob/main/LICENSE","downloadUrl":"https://github.com/mandgie/minne/releases/latest/download/Minne.dmg","sameAs":["https://github.com/mandgie/minne"],"author":{"@type":"Person","name":"Magnus Friberg","url":"https://github.com/mandgie"}},{"@type":"WebSite","name":"Minne","url":"https://minne.sh/"}]}</script>
 <!-- Reveals and the demo are opt-in: without this class the page is simply readable. -->
 <script>document.documentElement.classList.add("js");</script>
 </head>
@@ -341,6 +342,21 @@
 </main>
 
 <footer class="foot">
+  <!-- The learn cluster — mirrored in site/scripts/build.mjs (PAGES): change one, change both. -->
+  <div class="wrap foot__learn">
+    <p class="foot__head">learn</p>
+    <nav class="foot__links foot__links--learn" aria-label="Learn">
+      <a href="/rewind-alternative">Rewind alternative</a>
+      <a href="/local-ai-writing">Local AI writing</a>
+      <a href="/email-replies">Email replies</a>
+      <a href="/what-is-ai-memory">What is an AI memory?</a>
+      <a href="/ai-without-screen-recording">No screen recording</a>
+      <a href="/second-brain">Second brain</a>
+      <a href="/status-updates">Status updates</a>
+      <a href="/vs/elephas">Minne vs Elephas</a>
+      <a href="/vs/raycast-ai">Minne vs Raycast AI</a>
+    </nav>
+  </div>
   <div class="wrap foot__inner">
     <p class="foot__mark">
       <svg class="spark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.5c.6 4.6 1.8 6.9 4.3 8.2 1.4.7 3.2 1.2 6.2 1.6v1.4c-3 .4-4.8.9-6.2 1.6-2.5 1.3-3.7 3.6-4.3 8.2h-1.4c-.6-4.6-1.8-6.9-4.3-8.2-1.4-.7-3.2-1.2-6.2-1.6v-1.4c3-.4 4.8-.9 6.2-1.6C8.8 8.4 10 6.1 10.6 1.5Z"/></svg>

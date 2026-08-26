@@ -1279,6 +1279,28 @@ html:not(.js) .composer__label {
   border-top: 1px solid var(--line-soft);
   padding-block: 2.4rem 3rem;
 }
+.foot__learn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem 2rem;
+  padding-bottom: 1.6rem;
+  margin-bottom: 1.8rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.foot__head {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.73rem;
+  letter-spacing: 0.02em;
+  color: var(--mute);
+}
+.foot__links--learn {
+  gap: 0.5rem 1.1rem;
+}
+.foot__links--learn span[aria-current] {
+  color: var(--chalk);
+}
 .foot__inner {
   display: flex;
   flex-wrap: wrap;
