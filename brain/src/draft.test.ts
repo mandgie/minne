@@ -603,10 +603,79 @@ describe("runDraft", () => {
       model: MODEL,
       streamFn,
     });
-    expect(turns).toBe(2);
+    // Turn 3 is the recovery nudge a plain-text answer earns for skipping
+    // submit_draft; this model answers plainly again, and the fallback then
+    // honors its finished message.
+    expect(turns).toBe(3);
     expect(result.text).toBe("Torsdag passer fint. — M.");
     expect(result.text).not.toContain("I'll check");
   });
+
+  /**
+   * The third leak shape (2026-08-26 18:17): a draft that spent every turn
+   * reading memory was cut off mid-plan, and the fallback inserted that plan
+   * — "Let me check the snapshots between 17:58 and now" — into a live field.
+   * A cut-off draft gets exactly one recovery turn to submit; delivering
+   * there is fine, and anything else fails the draft rather than inserting
+   * reasoning.
+   */
+  test("a draft cut off by the turn cap recovers by submitting, or fails — never inserts its plan", async () => {
+    const exploring = (n: number) =>
+      turn(
+        [
+          { type: "text", text: `Let me check the snapshots between 17:58 and now (${n}).` },
+          {
+            type: "toolCall",
+            id: `call-${n}`,
+            name: "search_memory",
+            arguments: { query: "snapshots" },
+          } as ToolCall,
+        ],
+        "toolUse",
+      );
+
+    // Recovery turn submits: the draft is the submitted text, on turn 11.
+    {
+      const root = scratch();
+      const memory = new Memory({ root, dataDir: root });
+      let turns = 0;
+      const streamFn = (): AssistantMessageEventStream => {
+        turns++;
+        return turns <= 10
+          ? exploring(turns)
+          : turn(
+              [
+                {
+                  type: "toolCall",
+                  id: "call-submit",
+                  name: "submit_draft",
+                  arguments: { text: "Torsdag passer fint." },
+                } as ToolCall,
+              ],
+              "toolUse",
+            );
+      };
+      const result = await runDraft(context(), { memory, model: MODEL, streamFn });
+      expect(turns).toBe(11);
+      expect(result.text).toBe("Torsdag passer fint.");
+    }
+
+    // Recovery turn keeps exploring instead: the draft fails, and the plan
+    // prose is never the result.
+    {
+      const root = scratch();
+      const memory = new Memory({ root, dataDir: root });
+      let turns = 0;
+      const streamFn = (): AssistantMessageEventStream => {
+        turns++;
+        return exploring(turns);
+      };
+      await expect(runDraft(context(), { memory, model: MODEL, streamFn })).rejects.toThrow(
+        "never submitted",
+      );
+      expect(turns).toBe(11);
+    }
+  }, 20000);
 
   /**
    * The second leak shape (2026-08-26): plan prose in the *same* message as

@@ -530,9 +530,29 @@ export async function runDraft(
   if (process.env["MINNE_LOG_DRAFT_PROMPT"] === "1") {
     deps.log?.(`draft prompt as sent:\n${prompt}`);
   }
+  const lastAssistant = () =>
+    agent.state.messages.findLast(
+      (message): message is AssistantMessage => "role" in message && message.role === "assistant",
+    );
+  let beforeRecovery: AssistantMessage | undefined;
   try {
     deps.signal?.throwIfAborted();
     await agent.prompt(prompt);
+    beforeRecovery = lastAssistant();
+    // No submission yet — the model finished talking without the tool, or the
+    // turn cap cut it off mid-exploration. One recovery turn: with the cap
+    // already spent, shouldStopAfterTurn ends the loop after exactly one more
+    // model reply, so this is a single bounded round trip, not a second loop.
+    // The recovery reply itself is never a fallback text source — only a
+    // submission from it counts, else the pre-recovery message decides.
+    if (submitted === null && !["error", "aborted"].includes(beforeRecovery?.stopReason ?? "")) {
+      deps.signal?.throwIfAborted();
+      await agent.prompt(
+        "You have not called submit_draft, so nothing has reached the user's " +
+          "field. Call submit_draft now with exactly the final text to insert, " +
+          "written from what you already know — no other tools, no prose.",
+      );
+    }
   } finally {
     deps.signal?.removeEventListener("abort", stop);
   }
@@ -541,9 +561,7 @@ export async function runDraft(
   // assistant message with stopReason "error" (GOTCHAS, US-004). When the
   // loop stopped right after a submit, the transcript ends on that tool's
   // result instead, so the assistant message is found, not assumed last.
-  const last = agent.state.messages.findLast(
-    (message): message is AssistantMessage => "role" in message && message.role === "assistant",
-  );
+  const last = lastAssistant();
   if (last === undefined) {
     throw new DraftFailedError("the model produced no message");
   }
@@ -555,15 +573,21 @@ export async function runDraft(
   }
 
   // The draft is what the model submitted — the tool is the only channel into
-  // the field, so plan prose can never ride along with the draft. A model
-  // that answered in plain text instead falls back to its final message's
-  // text alone: never the earlier tool-turn narration (in chat that prose
-  // belongs to the answer — service.ts's `assistantText` — but a draft is
-  // inserted verbatim where it must never land), and a turn with neither a
-  // submission nor text fails the draft rather than inserting commentary.
+  // the field, so plan prose can never ride along with the draft. Without a
+  // submission, a plain-text answer is honored only from the message the
+  // model *finished* before the recovery nudge (stopReason "stop"): that
+  // message is its answer. A draft still mid-tool-use there ran out of turns,
+  // and its text is a plan, not a draft — "Let me check the snapshots between
+  // 17:58 and now" went into a live field that way (2026-08-26) — so it
+  // fails instead of inserting reasoning.
   let text: string = submitted ?? "";
   if (text === "") {
-    for (const part of last.content) {
+    if (beforeRecovery === undefined || beforeRecovery.stopReason !== "stop") {
+      throw new DraftFailedError(
+        "the draft spent all its turns reading memory and never submitted any text",
+      );
+    }
+    for (const part of beforeRecovery.content) {
       if (part.type === "text") text += part.text;
     }
   }
