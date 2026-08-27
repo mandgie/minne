@@ -159,6 +159,12 @@ enum BrainRequest: Encodable, Sendable {
     /// this often is cheap — and never errors: offline simply answers what the
     /// cache last knew.
     case updateCheck(id: String)
+    /// The app rebuilt the search index: every row on disk now counts as
+    /// already digested, and the brain must move its sync watermark to the
+    /// rebuilt ids or its next pass would re-ingest the entire history (it
+    /// reads `max(id) < watermark` as "the index was wiped"). `done`'s result
+    /// is `{watermark}`; a running pass answers `busy`.
+    case syncMark(id: String, watermark: Int)
 
     var id: String {
         switch self {
@@ -176,6 +182,7 @@ enum BrainRequest: Encodable, Sendable {
         case .memoryRecent(let id): return id
         case .status(let id): return id
         case .updateCheck(let id): return id
+        case .syncMark(let id, _): return id
         }
     }
 
@@ -185,6 +192,7 @@ enum BrainRequest: Encodable, Sendable {
         case fieldText, selection, windowText, app, bundleId, windowTitle, url, recipient
         case previousDraft, guidance, regenerate
         case draftId, outcome, edited, generated
+        case watermark
     }
 
     func encode(to encoder: Encoder) throws {
@@ -261,6 +269,9 @@ enum BrainRequest: Encodable, Sendable {
             try container.encode("status", forKey: .type)
         case .updateCheck:
             try container.encode("update_check", forKey: .type)
+        case let .syncMark(_, watermark):
+            try container.encode("sync_mark", forKey: .type)
+            try container.encode(watermark, forKey: .watermark)
         }
     }
 }

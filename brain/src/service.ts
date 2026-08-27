@@ -23,6 +23,7 @@ import {
   type DraftOutcomeRequest,
   type DraftRequest,
   type IngestRequest,
+  type SyncMarkRequest,
   type LoginRequest,
   type LogoutRequest,
   type SearchSourcesRequest,
@@ -241,6 +242,8 @@ export class MinneBrain {
         return this.handleDraftOutcome(request);
       case "ingest":
         return this.handleIngest(request);
+      case "sync_mark":
+        return this.handleSyncMark(request);
       case "abort": {
         const aborter = this.aborters.get(request.targetId);
         aborter?.abort();
@@ -573,6 +576,24 @@ export class MinneBrain {
       this.send(errorEvent(request.id, "internal", message));
     } finally {
       this.aborters.delete(request.id);
+    }
+  }
+
+  /**
+   * The app rebuilt the index; adopt its watermark. `busy` while a pass runs
+   * — the app retries after its next handshake, and until it lands a restart
+   * of this process would re-ingest history, so the refusal is loud.
+   */
+  private handleSyncMark(request: SyncMarkRequest): void {
+    try {
+      this.send(doneEvent(request.id, this.sync.markIngested(request.watermark)));
+    } catch (err) {
+      if (err instanceof SyncBusyError) {
+        this.send(errorEvent(request.id, "busy", err.message));
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      this.send(errorEvent(request.id, "internal", message));
     }
   }
 

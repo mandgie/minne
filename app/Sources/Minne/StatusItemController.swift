@@ -32,6 +32,9 @@ final class StatusItemController: NSObject {
     /// "Update Available" was clicked; the argument is the release page URL
     /// the brain reported, when it reported one.
     var onOpenUpdate: (@MainActor (String?) -> Void)?
+    /// The storage alarm row was clicked; opens Settings → Memory, where the
+    /// rebuild and export live.
+    var onOpenStorageSettings: (@MainActor () -> Void)?
 
     /// Current pause state, with an expired timed pause already collapsed.
     var pauseState: PauseState { pause.resolved(now: Date()) }
@@ -42,6 +45,8 @@ final class StatusItemController: NSObject {
     private let updateItem: NSMenuItem
     private let statusRow: NSMenuItem
     private let accountRow: NSMenuItem
+    private let storageRow: NSMenuItem
+    private let storageAlertItem: NSMenuItem
     private let hintItem: NSMenuItem
     private let pauseItem: NSMenuItem
     private let resumeItem: NSMenuItem
@@ -56,6 +61,8 @@ final class StatusItemController: NSObject {
     /// Last `update_check` answer; nil until one lands (or after checks are
     /// turned off), which simply hides the row.
     private var updateInfo: UpdateInfo?
+    /// Last storage health the app pushed; nil until the store reports.
+    private var storage: StorageHealth?
     /// Last list the brain sent; the submenu renders this while a refresh flies.
     private var recentPages: [RecentMemoryPage] = []
     private var resumeTimer: Timer?
@@ -68,6 +75,8 @@ final class StatusItemController: NSObject {
         self.updateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         self.statusRow = NSMenuItem(title: "Brain: starting…", action: nil, keyEquivalent: "")
         self.accountRow = NSMenuItem(title: "Account: checking…", action: nil, keyEquivalent: "")
+        self.storageRow = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        self.storageAlertItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         self.hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         self.pauseItem = NSMenuItem(title: "Pause Capture", action: nil, keyEquivalent: "")
         self.resumeItem = NSMenuItem(title: "Resume Now", action: nil, keyEquivalent: "")
@@ -99,6 +108,13 @@ final class StatusItemController: NSObject {
     /// The brain answered `update_check`. Nil clears the row (checks off).
     func update(update: UpdateInfo?) {
         self.updateInfo = update
+        applyAppearance()
+    }
+
+    /// The app's store reported its condition (after every persist, sweep,
+    /// rebuild and wipe — cheap, and it keeps the menu honest).
+    func update(storage: StorageHealth?) {
+        self.storage = storage
         applyAppearance()
     }
 
@@ -154,6 +170,19 @@ final class StatusItemController: NSObject {
 
         accountRow.isEnabled = false
         menu.addItem(accountRow)
+
+        storageRow.isEnabled = false
+        storageRow.isHidden = true
+        menu.addItem(storageRow)
+
+        // The alarm row: memory is not being saved, or search broke. Clicking
+        // lands on Settings → Memory, where the rebuild and export live.
+        storageAlertItem.action = #selector(openStorageSettingsAction)
+        storageAlertItem.target = self
+        storageAlertItem.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)
+        storageAlertItem.isHidden = true
+        menu.addItem(storageAlertItem)
 
         hintItem.action = #selector(openOnboardingAction)
         hintItem.target = self
@@ -248,7 +277,7 @@ final class StatusItemController: NSObject {
     private func applyAppearance() {
         let appearance = MenuModel.appearance(
             connection: connection, permission: permission, pause: pause, account: account,
-            appVersion: AppVersion.current, update: updateInfo, now: Date())
+            appVersion: AppVersion.current, update: updateInfo, storage: storage, now: Date())
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: appearance.symbolName, accessibilityDescription: "Minne")
@@ -260,6 +289,10 @@ final class StatusItemController: NSObject {
         updateItem.isHidden = appearance.updateText == nil
         statusRow.title = appearance.statusText
         accountRow.title = appearance.accountText
+        storageRow.title = appearance.storageText ?? ""
+        storageRow.isHidden = appearance.storageText == nil
+        storageAlertItem.title = appearance.storageAlertText ?? ""
+        storageAlertItem.isHidden = appearance.storageAlertText == nil
         hintItem.title = appearance.hintText ?? ""
         hintItem.isHidden = appearance.hintText == nil
         pauseItem.title = appearance.pauseItemTitle
@@ -294,6 +327,10 @@ final class StatusItemController: NSObject {
 
     @objc private func openUpdateAction() {
         onOpenUpdate?(updateInfo?.url)
+    }
+
+    @objc private func openStorageSettingsAction() {
+        onOpenStorageSettings?()
     }
 
     @objc private func openSettingsAction() {

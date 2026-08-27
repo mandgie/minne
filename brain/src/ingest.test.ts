@@ -467,6 +467,39 @@ describe("ingestion pass", () => {
   });
 });
 
+describe("sync_mark", () => {
+  test("markIngested moves the watermark and persists it for the next launch", () => {
+    const { dir, engine } = makeEngine({ state: { watermark: 9000 } });
+    expect(engine.markIngested(42)).toEqual({ watermark: 42 });
+    // The app just rebuilt the index; a brain restarted now must not read the
+    // old 9000 back and reset itself into a full re-ingestion.
+    expect(loadSyncState(syncStatePath(dir)).watermark).toBe(42);
+    expect(engine.status().watermark).toBe(42);
+  });
+
+  test("refused while a pass runs, accepted once it settles", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { engine } = makeEngine({
+      snapshots: [snapshot(1, "pending capture")],
+      // Parks the pass after the backlog check, exactly where a real pass
+      // would be spending model time.
+      resolveModel: async () => {
+        await gate;
+        return { unavailable: "gated" };
+      },
+    });
+    const pass = engine.runSync();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(() => engine.markIngested(5)).toThrow(SyncBusyError);
+    release();
+    await pass;
+    expect(engine.markIngested(5)).toEqual({ watermark: 5 });
+  });
+});
+
 describe("pass scheduling", () => {
   test("scheduleDelay: fresh, future and overdue due times", () => {
     const now = 1_000_000;

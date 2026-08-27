@@ -52,22 +52,40 @@ final class SourceStore {
 
     let paths: MemoryPaths
     private let document: SourceDocument
-    private let index: SnapshotIndex
+    private let timeZone: TimeZone
+    /// nil while the index is unavailable — the store then degrades to
+    /// "writing markdown, no search" rather than refusing to persist at all.
+    /// A corrupt derived file must never hold the ground truth hostage.
+    private var index: SnapshotIndex?
+    /// Why the index is unavailable, when it is.
+    private var indexFailure: String?
+    /// The last markdown write that failed, until a write succeeds again.
+    private var lastWriteFailure: String?
+    private var lastCaptureAt: Date?
     private let fileManager: FileManager
     /// Next section number per source file, so a repeat capture into the same
     /// hour does not re-read the file it just appended to.
     private var nextSection: [String: Int] = [:]
 
-    /// Creates the memory root if missing and opens the index.
+    /// Creates the memory root if missing and opens the index. Only an
+    /// unusable memory root throws; a failed index open is a degraded store.
     init(
         paths: MemoryPaths = .resolved(), timeZone: TimeZone = .current,
         fileManager: FileManager = .default
     ) throws {
         self.paths = paths
+        self.timeZone = timeZone
         self.document = SourceDocument(timeZone: timeZone)
         self.fileManager = fileManager
         let created = try MemorySeed.seed(paths, fileManager: fileManager)
-        self.index = try SnapshotIndex(url: paths.database)
+        do {
+            self.index = try SnapshotIndex(url: paths.database)
+        } catch {
+            self.index = nil
+            self.indexFailure = StorageHealth.describe(error)
+            BrainClient.log(
+                "search index unavailable — capturing without search until a rebuild: \(error)")
+        }
         if !created.isEmpty {
             BrainClient.log(
                 "memory root \(paths.memoryRoot.path): seeded \(created.joined(separator: ", "))")
@@ -75,15 +93,142 @@ final class SourceStore {
     }
 
     /// Appends a snapshot to its hour's source file and indexes it.
+    ///
+    /// The markdown write self-heals once: a memory root deleted or replaced
+    /// mid-run (the folder moved, a backup restored) invalidates the cached
+    /// section numbers and possibly the whole tree, so on any write failure the
+    /// root is re-seeded and the write retried before the failure is reported.
     @discardableResult
     func record(_ snapshot: CaptureSnapshot) throws -> Reference {
         let relativePath = document.relativePath(for: snapshot)
         let url = paths.memoryRoot.appendingPathComponent(relativePath)
+        let section: Int
+        do {
+            section = try write(snapshot, to: url, relativePath: relativePath)
+        } catch {
+            nextSection[relativePath] = nil
+            do {
+                _ = try MemorySeed.seed(paths, fileManager: fileManager)
+                section = try write(snapshot, to: url, relativePath: relativePath)
+                BrainClient.log("memory root healed — re-seeded and the capture retried")
+            } catch {
+                lastWriteFailure = StorageHealth.describe(error)
+                throw error
+            }
+        }
+        lastWriteFailure = nil
+        lastCaptureAt = snapshot.capturedAt
+        if let index {
+            do {
+                try index.insert(snapshot, sourcePath: relativePath, section: section)
+            } catch {
+                // The capture is safe on disk; only search degrades. Close the
+                // handle so the state is unambiguous until a rebuild.
+                index.close()
+                self.index = nil
+                indexFailure = StorageHealth.describe(error)
+                BrainClient.log("index write failed — degraded until a rebuild: \(error)")
+            }
+        }
+        return Reference(path: relativePath, section: section)
+    }
+
+    /// The markdown half of `record`, one attempt.
+    private func write(_ snapshot: CaptureSnapshot, to url: URL, relativePath: String) throws
+        -> Int
+    {
         let section = try nextSectionNumber(for: relativePath, at: url, snapshot: snapshot)
         try append(document.section(number: section, for: snapshot), to: url)
         nextSection[relativePath] = section + 1
-        try index.insert(snapshot, sourcePath: relativePath, section: section)
-        return Reference(path: relativePath, section: section)
+        return section
+    }
+
+    // MARK: - Health
+
+    /// The store's condition, for the menu bar and Settings. Snapshot count
+    /// comes from the index (the only place it is cheap); a degraded store
+    /// reports the reason instead.
+    func health() -> StorageHealth {
+        if let lastWriteFailure { return .failing(reason: lastWriteFailure) }
+        guard let index else {
+            return .degraded(
+                reason: indexFailure ?? "the search index is unavailable",
+                lastCaptureAt: lastCaptureAt)
+        }
+        let count = (try? index.count()) ?? 0
+        return .healthy(snapshots: count, lastCaptureAt: lastCaptureAt)
+    }
+
+    // MARK: - Rebuilding the index
+
+    struct RebuildReport: Equatable, Sendable {
+        var files = 0
+        var snapshots = 0
+        var skippedSections = 0
+        /// Highest rowid in the rebuilt index — what the brain's sync
+        /// watermark must be moved to, since the rebuild renumbered every row.
+        var maxId: Int64 = 0
+    }
+
+    /// Builds a fresh index at `stagingURL` from every file under `sources/`.
+    ///
+    /// Static and self-contained on purpose: it touches nothing of the live
+    /// store, so it can run off the main actor while capture continues, and
+    /// a crash mid-build leaves only a staging file. `adoptIndex` does the
+    /// swap. The staging database is checkpointed and closed before this
+    /// returns, so the file is complete and sidecar-free.
+    static func buildIndex(
+        paths: MemoryPaths, timeZone: TimeZone, at stagingURL: URL,
+        fileManager: FileManager = .default, progress: ((_ files: Int) -> Void)? = nil
+    ) throws -> RebuildReport {
+        try? fileManager.removeItem(at: stagingURL)
+        let staging = try SnapshotIndex(url: stagingURL)
+        defer { staging.close() }
+        let parser = SourceFileParser(timeZone: timeZone)
+        var report = RebuildReport()
+        let days =
+            (try? fileManager.contentsOfDirectory(atPath: paths.sources.path))?.sorted() ?? []
+        for day in days {
+            let directory = paths.sources.appendingPathComponent(day, isDirectory: true)
+            let files =
+                (try? fileManager.contentsOfDirectory(atPath: directory.path))?.sorted() ?? []
+            for name in files where name.hasSuffix(".md") {
+                let url = directory.appendingPathComponent(name)
+                guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+                    continue
+                }
+                let parsed = parser.parse(contents)
+                let relativePath = "sources/\(day)/\(name)"
+                // Sections in file order: ids then follow capture order within
+                // the file, and the watermark stays meaningful.
+                for entry in parsed.snapshots.sorted(by: { $0.section < $1.section }) {
+                    let id = try staging.insert(
+                        entry.snapshot, sourcePath: relativePath, section: entry.section)
+                    report.maxId = max(report.maxId, id)
+                    report.snapshots += 1
+                }
+                report.skippedSections += parsed.skippedSections
+                report.files += 1
+                progress?(report.files)
+            }
+        }
+        try staging.checkpointTruncate()
+        return report
+    }
+
+    /// Swaps a freshly built index into place and reopens it. The old file and
+    /// its WAL sidecars only go once the staging file is ready to move, and the
+    /// brain — which opens the database per query, read-only — simply sees the
+    /// new file on its next search.
+    func adoptIndex(from stagingURL: URL) throws {
+        index?.close()
+        index = nil
+        for url in MemoryWipe.derivedFiles(paths).prefix(3) {  // db, -wal, -shm
+            try? fileManager.removeItem(at: url)
+        }
+        try fileManager.moveItem(at: stagingURL, to: paths.database)
+        index = try SnapshotIndex(url: paths.database)
+        indexFailure = nil
     }
 
     /// Deletes raw sources and index rows older than `policy` allows. Whole day
@@ -103,17 +248,37 @@ final class SourceStore {
             nextSection = nextSection.filter { !$0.key.hasPrefix("sources/\(day)/") }
             report.removedDays.append(day)
         }
-        report.removedSnapshots = try index.deleteSnapshots(before: cutoff)
+        // A degraded store still prunes files; the stale index rows go with
+        // the rebuild that ends the degradation.
+        report.removedSnapshots = try index?.deleteSnapshots(before: cutoff) ?? 0
         return report
+    }
+
+    enum StoreError: Error, CustomStringConvertible {
+        case indexUnavailable(reason: String)
+
+        var description: String {
+            switch self {
+            case .indexUnavailable(let reason): return "search index unavailable: \(reason)"
+            }
+        }
     }
 
     /// Read path for tests and diagnostics; the brain serves search in
     /// production, reading the same database read-only.
     func search(matching expression: String, limit: Int = 20) throws -> [SnapshotIndex.Hit] {
-        try index.search(matching: expression, limit: limit)
+        guard let index else {
+            throw StoreError.indexUnavailable(reason: indexFailure ?? "not open")
+        }
+        return try index.search(matching: expression, limit: limit)
     }
 
-    func indexedCount() throws -> Int { try index.count() }
+    func indexedCount() throws -> Int {
+        guard let index else {
+            throw StoreError.indexUnavailable(reason: indexFailure ?? "not open")
+        }
+        return try index.count()
+    }
 
     // MARK: - Appending
 
@@ -123,8 +288,18 @@ final class SourceStore {
     private func nextSectionNumber(for relativePath: String, at url: URL, snapshot: CaptureSnapshot)
         throws -> Int
     {
-        if let cached = nextSection[relativePath] { return cached }
+        // The cache is only as good as the file it describes: a memory root
+        // deleted mid-run used to wedge every append until the hour rolled
+        // over, because the cached number skipped the exists-check below.
+        if let cached = nextSection[relativePath], fileManager.fileExists(atPath: url.path) {
+            return cached
+        }
+        nextSection[relativePath] = nil
         guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+            // Creating a file is the moment to notice a vanished root: seeding
+            // is four stat calls when everything exists, and rebuilds
+            // SCHEMA.md and the wiki when the folder was deleted mid-run.
+            _ = try MemorySeed.seed(paths, fileManager: fileManager)
             try fileManager.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try document.header(for: snapshot).write(to: url, atomically: true, encoding: .utf8)

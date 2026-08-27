@@ -132,6 +132,24 @@ partial version: no "delete captures only", no "delete the wiki only".
 Shows the path to `~/Minne/wiki` and opens it with **Open Wiki Folder**. (The
 menu bar's **Open Memory Folder** opens the root, one level up.)
 
+### Health
+
+One status line about the capture store: how many snapshots are indexed and
+when the last capture landed. If captures stop being saved (disk full, folder
+missing) or search breaks, the line turns into a warning here and a matching
+row appears in the menu bar — storage failures are never silent.
+
+**Rebuild Search Index** rebuilds the search database from the markdown under
+`~/Minne/sources/` — the index is derived data, so a corrupt or deleted
+`minne.db` costs a rebuild, never your memory. Everything on disk afterwards
+counts as already digested: captures made before the rebuild are not
+re-summarized into the wiki.
+
+**Export Memory…** zips the whole `~/Minne` folder to a destination you pick
+(`Minne-backup-YYYY-MM-DD.zip`), pausing capture writes during the copy so the
+backup is consistent. The search index is not included — restoring is unzipping
+the folder back into place and rebuilding the index.
+
 ### Syncing
 
 > Minne digests what it captured into wiki pages on a schedule. You can run a

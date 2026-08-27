@@ -62,6 +62,30 @@ final class SettingsModel {
         case failed(String)
     }
 
+    /// What "Rebuild search index" is doing. `running`'s text carries coarse
+    /// progress ("Re-indexing… 120 files") — a big history takes a while.
+    enum ReindexPhase: Equatable, Sendable {
+        case idle
+        case running(String)
+        case finished(String)
+        case failed(String)
+
+        var isRunning: Bool {
+            if case .running = self { return true }
+            return false
+        }
+    }
+
+    /// What "Export memory…" is doing.
+    enum ExportPhase: Equatable, Sendable {
+        case idle
+        case running
+        case finished(String)
+        case failed(String)
+
+        var isRunning: Bool { self == .running }
+    }
+
     let auth: AuthModel
     let paths: MemoryPaths
     private var store: SettingsStore
@@ -73,6 +97,10 @@ final class SettingsModel {
     private(set) var permission: CapturePermissionState
     private(set) var syncPhase: SyncPhase = .idle
     private(set) var wipePhase: WipePhase = .idle
+    private(set) var reindexPhase: ReindexPhase = .idle
+    private(set) var exportPhase: ExportPhase = .idle
+    /// The store's condition, pushed by the app alongside the menu bar's copy.
+    private(set) var storage: StorageHealth?
 
     var backend: (any SettingsBackend)?
 
@@ -97,6 +125,21 @@ final class SettingsModel {
     var onUpdateCheckChange: (@MainActor (Bool) -> Void)?
     /// Applies a Minne key trigger change to the running controller, live.
     var onMinneKeyChange: (@MainActor (MinneKeyTrigger) -> Void)?
+    /// Rebuilds the search index from `sources/`. The app owns it (it owns the
+    /// open database handle); progress and the outcome come back through the
+    /// two closures, on the main actor.
+    var onReindex:
+        (@MainActor (
+            _ progress: @escaping @MainActor (String) -> Void,
+            _ completion: @escaping @MainActor (Result<String, any Error>) -> Void
+        ) -> Void)?
+    /// Zips the memory root to the chosen destination, with capture writes
+    /// held for the duration — a live copy drifts.
+    var onExport:
+        (@MainActor (
+            _ destination: URL,
+            _ completion: @escaping @MainActor (Result<String, any Error>) -> Void
+        ) -> Void)?
 
     private var observers = ObserverRegistry<SettingsModel>()
 
@@ -405,6 +448,93 @@ final class SettingsModel {
 
     func openWikiFolder() {
         onOpenFolder?(paths.wiki)
+    }
+
+    // MARK: - Memory: storage health
+
+    func adopt(storage: StorageHealth?) {
+        guard storage != self.storage else { return }
+        self.storage = storage
+        notify()
+    }
+
+    /// One line about the store, for the Memory section's status row.
+    var storageLine: String {
+        switch storage {
+        case nil:
+            return "Waiting for the capture store…"
+        case .healthy(let snapshots, let lastCaptureAt):
+            var line = "\(snapshots) snapshot\(snapshots == 1 ? "" : "s") indexed"
+            if let lastCaptureAt {
+                line +=
+                    " · last capture \(StorageHealth.relative(lastCaptureAt, now: Date()))"
+            }
+            return line + "."
+        case .degraded(let reason, _):
+            return "Captures are being saved, but search is broken — \(reason). "
+                + "Rebuild the search index below."
+        case .failing(let reason):
+            return "Captures are NOT being saved — \(reason)."
+        case .unavailable(let reason):
+            return "The memory folder could not be opened — \(reason)."
+        }
+    }
+
+    /// True while the store's condition warrants the alarming color.
+    var storageIsCritical: Bool { storage?.isCritical ?? false }
+
+    // MARK: - Memory: rebuild the search index
+
+    var canReindex: Bool {
+        onReindex != nil && !reindexPhase.isRunning && !exportPhase.isRunning
+            && !syncPhase.isRunning
+    }
+
+    /// Rebuilds `minne.db` from the markdown under `sources/`. Everything on
+    /// disk afterwards counts as already digested — the brain's watermark moves
+    /// with the rebuilt ids — so captures made before the rebuild are not
+    /// re-summarized into the wiki.
+    func reindexNow() {
+        guard let onReindex, canReindex else { return }
+        reindexPhase = .running("Re-indexing…")
+        notify()
+        onReindex(
+            { [weak self] progress in
+                guard let self, self.reindexPhase.isRunning else { return }
+                self.reindexPhase = .running(progress)
+                self.notify()
+            },
+            { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let summary): self.reindexPhase = .finished(summary)
+                case .failure(let error):
+                    self.reindexPhase = .failed(
+                        "Rebuild failed — \(StorageHealth.describe(error))")
+                }
+                self.notify()
+            })
+    }
+
+    // MARK: - Memory: export
+
+    var canExport: Bool {
+        onExport != nil && !exportPhase.isRunning && !reindexPhase.isRunning
+    }
+
+    func exportMemory(to destination: URL) {
+        guard let onExport, canExport else { return }
+        exportPhase = .running
+        notify()
+        onExport(destination) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let summary): self.exportPhase = .finished(summary)
+            case .failure(let error):
+                self.exportPhase = .failed("Export failed — \(StorageHealth.describe(error))")
+            }
+            self.notify()
+        }
     }
 
     // MARK: - Delete all memory

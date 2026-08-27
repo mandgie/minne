@@ -384,6 +384,20 @@ export class SyncEngine {
   }
 
   /**
+   * The app rebuilt the index and every row on disk now counts as digested:
+   * move the watermark to the rebuilt max id. Refused while a pass runs — the
+   * pass advances the same watermark, and last-writer-wins between the two
+   * would silently re-ingest or skip a batch.
+   */
+  markIngested(watermark: number): { watermark: number } {
+    if (this.running !== null) throw new SyncBusyError(this.running);
+    this.state.watermark = watermark;
+    saveSyncState(this.statePath, this.state);
+    this.log(`watermark moved to ${watermark} (index rebuilt by the app)`);
+    return { watermark };
+  }
+
+  /**
    * A scheduled pass: same work as an on-demand one, minus the complaints.
    * Returns whether it actually ran, so `rearm` can retry a skipped one soon.
    */

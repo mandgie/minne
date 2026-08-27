@@ -70,6 +70,30 @@ final class SnapshotIndex {
         if let handle { sqlite3_close_v2(handle) }
     }
 
+    /// Closes the database explicitly — required before its file is swapped or
+    /// deleted, since `deinit` runs whenever ARC gets around to it.
+    func close() {
+        if let handle { sqlite3_close_v2(handle) }
+        handle = nil
+    }
+
+    /// Folds the WAL back into the main file. A rebuilt index is checkpointed
+    /// before its file is moved into place, so the move carries every row and
+    /// leaves no `-wal` sidecar behind.
+    func checkpointTruncate() throws {
+        try execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    }
+
+    /// Highest rowid in the index; 0 when empty. The brain's sync watermark
+    /// counts in these ids, which is why a rebuild reports it.
+    func maxId() throws -> Int64 {
+        var maxId: Int64 = 0
+        try query("SELECT coalesce(max(id), 0) FROM snapshots") { statement in
+            maxId = sqlite3_column_int64(statement, 0)
+        }
+        return maxId
+    }
+
     /// `text` is the first column because `snippet()` is asked for column 0 —
     /// the captured text is what a search result should quote.
     static let schemaSQL = """

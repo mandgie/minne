@@ -433,4 +433,73 @@ final class SettingsModelTests: XCTestCase {
         }
         XCTAssertTrue(message.contains("permission denied"))
     }
+
+    // MARK: - Storage health, rebuild, export
+
+    func testStorageLinesRenderEachState() {
+        let model = makeModel()
+        XCTAssertEqual(model.storageLine, "Waiting for the capture store…")
+        model.adopt(storage: .healthy(snapshots: 1, lastCaptureAt: nil))
+        XCTAssertEqual(model.storageLine, "1 snapshot indexed.")
+        XCTAssertFalse(model.storageIsCritical)
+        model.adopt(storage: .degraded(reason: "the search index rejected a write",
+            lastCaptureAt: nil))
+        XCTAssertTrue(model.storageLine.contains("search is broken"))
+        XCTAssertTrue(model.storageLine.contains("Rebuild"))
+        XCTAssertFalse(model.storageIsCritical, "degraded still saves captures")
+        model.adopt(storage: .failing(reason: "the disk is full"))
+        XCTAssertTrue(model.storageLine.contains("NOT being saved"))
+        XCTAssertTrue(model.storageIsCritical)
+    }
+
+    func testReindexDrivesItsPhasesThroughTheAppClosure() {
+        let model = makeModel()
+        var heldCompletion: (@MainActor (Result<String, any Error>) -> Void)?
+        var heldProgress: (@MainActor (String) -> Void)?
+        model.onReindex = { progress, completion in
+            heldProgress = progress
+            heldCompletion = completion
+        }
+        XCTAssertTrue(model.canReindex)
+        model.reindexNow()
+        XCTAssertTrue(model.reindexPhase.isRunning)
+        XCTAssertFalse(model.canReindex, "no second rebuild while one runs")
+        XCTAssertFalse(model.canExport, "and no export over a file swap")
+        heldProgress?("Re-indexing… 50 files")
+        XCTAssertEqual(model.reindexPhase, .running("Re-indexing… 50 files"))
+        heldCompletion?(.success("Re-indexed 812 snapshots from 40 files."))
+        XCTAssertEqual(
+            model.reindexPhase, .finished("Re-indexed 812 snapshots from 40 files."))
+        XCTAssertTrue(model.canReindex)
+    }
+
+    func testAFailedReindexReportsAHumanReason() {
+        let model = makeModel()
+        model.onReindex = { _, completion in
+            completion(.failure(CocoaError(.fileWriteOutOfSpace)))
+        }
+        model.reindexNow()
+        guard case .failed(let reason) = model.reindexPhase else {
+            return XCTFail("expected failed, got \(model.reindexPhase)")
+        }
+        XCTAssertEqual(reason, "Rebuild failed — the disk is full")
+    }
+
+    func testExportDrivesItsPhasesAndBlocksAConcurrentRun() {
+        let model = makeModel()
+        var destinations: [URL] = []
+        var heldCompletion: (@MainActor (Result<String, any Error>) -> Void)?
+        model.onExport = { destination, completion in
+            destinations.append(destination)
+            heldCompletion = completion
+        }
+        let url = URL(fileURLWithPath: "/tmp/backup.zip")
+        model.exportMemory(to: url)
+        XCTAssertEqual(destinations, [url])
+        XCTAssertTrue(model.exportPhase.isRunning)
+        model.exportMemory(to: url)
+        XCTAssertEqual(destinations.count, 1, "a running export refuses a second")
+        heldCompletion?(.success("Backed up."))
+        XCTAssertEqual(model.exportPhase, .finished("Backed up."))
+    }
 }

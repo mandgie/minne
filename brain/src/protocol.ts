@@ -243,6 +243,22 @@ export interface UpdateCheckRequest {
   id: string;
 }
 
+/**
+ * The app rebuilt the search index from `sources/`, renumbering every row:
+ * everything on disk now counts as already digested, and the sync watermark
+ * must move to the rebuilt ids. Without this the next pass reads
+ * `max(id) < watermark` as "the index was wiped", resets to zero, and
+ * re-ingests the entire history at full model cost. Terminates with `done`
+ * whose result is `{ watermark }`; a pass in flight answers `busy` (the app
+ * retries after its next handshake).
+ */
+export interface SyncMarkRequest {
+  type: "sync_mark";
+  id: string;
+  /** highest rowid in the rebuilt index; 0 for an empty one */
+  watermark: number;
+}
+
 export type BrainRequest =
   | HelloRequest
   | ChatRequest
@@ -257,7 +273,8 @@ export type BrainRequest =
   | DraftOutcomeRequest
   | MemoryRecentRequest
   | StatusRequest
-  | UpdateCheckRequest;
+  | UpdateCheckRequest
+  | SyncMarkRequest;
 
 // ---- Events (brain -> app) ----
 
@@ -598,6 +615,13 @@ export function decodeRequest(line: string): DecodeResult {
       return ok({ type: "status", id });
     case "update_check":
       return ok({ type: "update_check", id });
+    case "sync_mark": {
+      const watermark = parsed["watermark"];
+      if (typeof watermark !== "number" || !Number.isInteger(watermark) || watermark < 0) {
+        return fail(id, "invalid_request", "sync_mark requires a non-negative integer `watermark`");
+      }
+      return ok({ type: "sync_mark", id, watermark });
+    }
     default:
       return fail(id, "invalid_request", `unknown request type "${type}"`);
   }

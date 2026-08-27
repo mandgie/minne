@@ -30,6 +30,14 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var updateTimer: Timer?
     /// Last persistence failure logged, so a broken disk cannot flood stderr.
     private var lastStoreError: String?
+    /// Why the store failed to open, for the health row; nil once it opens.
+    private var storeInitFailure: String?
+    /// True while a rebuild or export runs: captures during that window are
+    /// dropped (logged) rather than raced against the file swap or the copy.
+    private var maintenanceInProgress = false
+    /// A rebuilt index's max id the brain has not been told about yet — sent
+    /// after the next handshake if the brain was down when the rebuild ended.
+    private var pendingSyncMark: Int?
 
     static func main() {
         let app = NSApplication.shared
@@ -73,6 +81,8 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         controller.onOpenUpdate = { url in
             NSWorkspace.shared.open(url.flatMap(URL.init(string:)) ?? AppVersion.releasesURL)
         }
+        // The storage alarm row lands where the rebuild and export live.
+        controller.onOpenStorageSettings = { [weak self] in self?.showSettings(section: .memory) }
         controller.onPauseChange = { [weak self] pause in
             self?.capture?.update(pause: pause)
             self?.settingsModel?.adopt(pause: pause)
@@ -121,6 +131,12 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         model.onHotKeyChange = { [weak self] enabled in self?.updateChatHotKey(enabled: enabled) }
         model.onUpdateCheckChange = { [weak self] _ in self?.startUpdateChecks() }
         model.onMinneKeyChange = { [weak self] trigger in self?.minneKey?.apply(trigger: trigger) }
+        model.onReindex = { [weak self] progress, completion in
+            self?.rebuildIndex(progress: progress, completion: completion)
+        }
+        model.onExport = { [weak self] destination, completion in
+            self?.exportMemory(to: destination, completion: completion)
+        }
         model.onWipe = { [weak self] paths in
             guard let self else { return MemoryWipe.wipe(paths: paths) }
             return self.wipeMemory(paths: paths)
@@ -151,7 +167,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private func wipeMemory(paths: MemoryPaths) -> MemoryWipe.Report {
         store = nil
         let report = MemoryWipe.wipe(paths: paths)
-        startStore()
+        startStore()  // also pushes fresh storage health
         return report
     }
 
@@ -394,8 +410,9 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         do {
             let store = try SourceStore()
             self.store = store
+            storeInitFailure = nil
             BrainClient.log(
-                "memory root \(store.paths.memoryRoot.path) ready — \(try store.indexedCount()) snapshots indexed"
+                "memory root \(store.paths.memoryRoot.path) ready — \((try? store.indexedCount()).map(String.init) ?? "unindexed") snapshots indexed"
             )
             sweepRetention()
             // Sources age out while the app just sits there, so the sweep also
@@ -406,11 +423,19 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             RunLoop.main.add(timer, forMode: .common)
             retentionTimer = timer
         } catch {
+            storeInitFailure = StorageHealth.describe(error)
             BrainClient.log("memory root unavailable — captures will not be persisted: \(error)")
         }
+        pushStorageHealth()
     }
 
     private func persist(_ snapshot: CaptureSnapshot) {
+        // A rebuild is swapping the index file, an export needs a still copy —
+        // one dropped 15-second capture is the cheaper side of both races.
+        guard !maintenanceInProgress else {
+            BrainClient.log("capture skipped — memory maintenance in progress")
+            return
+        }
         guard let store else { return }
         do {
             let reference = try store.record(snapshot)
@@ -418,10 +443,36 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             BrainClient.log("stored \(reference.citation)")
         } catch {
             let message = "\(error)"
-            guard message != lastStoreError else { return }
-            lastStoreError = message
-            BrainClient.log("failed to store capture: \(message)")
+            if message != lastStoreError {
+                lastStoreError = message
+                BrainClient.log("failed to store capture: \(message)")
+            }
         }
+        pushStorageHealth()
+    }
+
+    /// One place computes the health everything renders: the menu bar and the
+    /// Memory section always agree. `-simulateStorageFailure write|index|gone`
+    /// forces a state, which is the only way to screenshot the alarms without
+    /// breaking a real store.
+    private func pushStorageHealth() {
+        let health: StorageHealth
+        switch UserDefaults.standard.string(forKey: "simulateStorageFailure") {
+        case "write":
+            health = .failing(reason: "the disk is full")
+        case "index":
+            health = .degraded(
+                reason: "the search index could not be opened",
+                lastCaptureAt: Date().addingTimeInterval(-120))
+        case "gone":
+            health = .unavailable(reason: "the memory folder is missing")
+        default:
+            health =
+                store?.health()
+                ?? .unavailable(reason: storeInitFailure ?? "the capture store never opened")
+        }
+        statusController?.update(storage: health)
+        settingsModel?.adopt(storage: health)
     }
 
     private func sweepRetention(policy: RetentionPolicy = .fromUserDefaults()) {
@@ -432,8 +483,115 @@ final class MinneApp: NSObject, NSApplicationDelegate {
             BrainClient.log(
                 "retention: pruned \(report.removedSnapshots) snapshots from \(report.removedDays.count) day(s)"
             )
+            pushStorageHealth()
         } catch {
             BrainClient.log("retention sweep failed: \(error)")
+        }
+    }
+
+    // MARK: - Rebuild and export
+
+    /// Rebuilds `minne.db` from the markdown under `sources/`: build a staging
+    /// index off the main actor, swap it in, then move the brain's sync
+    /// watermark to the rebuilt ids — without that last step the brain reads
+    /// the smaller max id as "the index was wiped" and re-ingests the whole
+    /// history at full model cost.
+    private func rebuildIndex(
+        progress: @escaping @MainActor (String) -> Void,
+        completion: @escaping @MainActor (Result<String, any Error>) -> Void
+    ) {
+        guard let store, !maintenanceInProgress else {
+            completion(.failure(SourceStore.StoreError.indexUnavailable(reason: "store not open")))
+            return
+        }
+        maintenanceInProgress = true
+        let paths = store.paths
+        let staging = paths.appSupport.appendingPathComponent(
+            "minne.db.rebuild-\(UUID().uuidString)")
+        Task { [weak self] in
+            let built = await Task.detached(priority: .utility) {
+                Result {
+                    try SourceStore.buildIndex(paths: paths, timeZone: .current, at: staging) {
+                        files in
+                        guard files % 25 == 0 else { return }
+                        Task { @MainActor in progress("Re-indexing… \(files) files") }
+                    }
+                }
+            }.value
+            guard let self else { return }
+            self.maintenanceInProgress = false
+            switch built {
+            case .failure(let error):
+                try? FileManager.default.removeItem(at: staging)
+                BrainClient.log("index rebuild failed: \(error)")
+                completion(.failure(error))
+            case .success(let report):
+                do {
+                    try store.adoptIndex(from: staging)
+                } catch {
+                    try? FileManager.default.removeItem(at: staging)
+                    BrainClient.log("rebuilt index could not be adopted: \(error)")
+                    completion(.failure(error))
+                    self.pushStorageHealth()
+                    return
+                }
+                BrainClient.log(
+                    "index rebuilt: \(report.snapshots) snapshots from \(report.files) files"
+                        + (report.skippedSections > 0
+                            ? ", \(report.skippedSections) unreadable sections skipped" : ""))
+                self.sendSyncMark(watermark: Int(report.maxId))
+                self.pushStorageHealth()
+                completion(
+                    .success(
+                        "Re-indexed \(report.snapshots) snapshot\(report.snapshots == 1 ? "" : "s") "
+                            + "from \(report.files) file\(report.files == 1 ? "" : "s")."))
+            }
+        }
+    }
+
+    /// Tells the brain where the rebuilt ids end. Best effort now, retried
+    /// after the next handshake if the brain is down or mid-pass — until it
+    /// lands, a brain restart would re-ingest history.
+    private func sendSyncMark(watermark: Int) {
+        pendingSyncMark = watermark
+        guard let client = brainClient else { return }
+        Task { [weak self] in
+            do {
+                _ = try await client.request(.syncMark(id: UUID().uuidString, watermark: watermark))
+                if self?.pendingSyncMark == watermark { self?.pendingSyncMark = nil }
+                BrainClient.log("sync watermark moved to \(watermark) after rebuild")
+            } catch {
+                BrainClient.log("sync_mark failed (will retry on reconnect): \(error)")
+            }
+        }
+    }
+
+    /// Zips the memory root with capture writes held — the copy must be a
+    /// consistent snapshot, not a moving target.
+    private func exportMemory(
+        to destination: URL,
+        completion: @escaping @MainActor (Result<String, any Error>) -> Void
+    ) {
+        guard !maintenanceInProgress else {
+            completion(.failure(MemoryExport.ExportError.failed("maintenance already running")))
+            return
+        }
+        maintenanceInProgress = true
+        let memoryRoot = MemoryPaths.resolved().memoryRoot
+        Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                Result { try MemoryExport.export(memoryRoot: memoryRoot, to: destination) }
+            }.value
+            guard let self else { return }
+            self.maintenanceInProgress = false
+            switch result {
+            case .success(let report):
+                BrainClient.log("memory exported to \(report.destination.path)")
+                completion(.success(report.summary))
+            case .failure(let error):
+                BrainClient.log("memory export failed: \(error)")
+                completion(.failure(error))
+            }
         }
     }
 
@@ -547,6 +705,11 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 self?.authModel.refresh()
                 self?.startAutoSignIn()
                 self?.startUpdateChecks()
+                // A rebuild that ended while the brain was down still owes it
+                // the new watermark.
+                if let watermark = self?.pendingSyncMark {
+                    self?.sendSyncMark(watermark: watermark)
+                }
             } catch {
                 BrainClient.log("handshake failed: \(error)")
             }

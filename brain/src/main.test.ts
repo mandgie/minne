@@ -114,6 +114,25 @@ describe("brain subprocess", () => {
     expect(events[4]).toMatchObject({ type: "done", id: "s1" });
   });
 
+  test("sync_mark moves the watermark over the wire, and validates its input", async () => {
+    const { events, exitCode } = await runBrain([
+      { type: "hello", id: "h1", protocolVersion: PROTOCOL_VERSION, client: "bun-test" },
+      { type: "sync_mark", id: "m1", watermark: 42 },
+      { type: "sync_mark", id: "m2", watermark: -1 },
+      { type: "sync_mark", id: "m3" },
+      { type: "status", id: "s1" },
+    ]);
+    expect(exitCode).toBe(0);
+    expect(events[1]).toMatchObject({ type: "done", id: "m1", result: { watermark: 42 } });
+    expect(events[2]).toMatchObject({ type: "error", id: "m2", code: "invalid_request" });
+    expect(events[3]).toMatchObject({ type: "error", id: "m3", code: "invalid_request" });
+    const status = events[4]!;
+    expect(status.type).toBe("done");
+    if (status.type === "done") {
+      expect(status.result).toMatchObject({ sync: { watermark: 42 } });
+    }
+  });
+
   test("responds while stdin is still open (no EOF buffering)", async () => {
     // Regression: Bun 1.2.x stdin async iterators buffer piped stdin until
     // EOF, deadlocking request/response. The brain must answer promptly.

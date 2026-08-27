@@ -177,4 +177,69 @@ final class MenuModelTests: XCTestCase {
         XCTAssertNil(UpdateInfo.parse(.object(["version": .string("0.1.9")])))
         XCTAssertNil(UpdateInfo.parse(nil))
     }
+
+    // MARK: - Storage health
+
+    func testHealthyStorageShowsTheSummaryRowAndNoAlarm() {
+        let appearance = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            storage: .healthy(snapshots: 4812, lastCaptureAt: now.addingTimeInterval(-120)),
+            now: now)
+        XCTAssertEqual(appearance.storageText, "Memory: 4812 snapshots · last capture 2 min ago")
+        XCTAssertNil(appearance.storageAlertText)
+        XCTAssertEqual(appearance.symbolName, "brain")
+    }
+
+    func testNoStorageReportYetShowsNoRows() {
+        let appearance = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            now: now)
+        XCTAssertNil(appearance.storageText)
+        XCTAssertNil(appearance.storageAlertText)
+    }
+
+    func testDegradedStorageAlarmsWithTheReasonButKeepsTheCalmIcon() {
+        let appearance = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            storage: .degraded(
+                reason: "the search index could not be opened", lastCaptureAt: nil),
+            now: now)
+        XCTAssertEqual(appearance.storageText, "Memory: capturing, search offline")
+        XCTAssertEqual(
+            appearance.storageAlertText,
+            "Search broken — the search index could not be opened. Rebuild…")
+        XCTAssertEqual(appearance.symbolName, "brain", "captures are safe; no triangle")
+    }
+
+    func testFailingStorageIsTheAlarmingStateIconIncluded() {
+        let appearance = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            storage: .failing(reason: "the disk is full"), now: now)
+        XCTAssertEqual(appearance.storageText, "Memory: not being saved")
+        XCTAssertEqual(
+            appearance.storageAlertText, "Memory not being saved — the disk is full…")
+        XCTAssertEqual(appearance.symbolName, "exclamationmark.triangle")
+    }
+
+    func testFailingStorageOutranksPauseButNotADownBrainForTheIcon() {
+        let paused = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted,
+            pause: .paused(until: nil), storage: .failing(reason: "the disk is full"), now: now)
+        XCTAssertEqual(paused.symbolName, "exclamationmark.triangle")
+        let down = MenuModel.appearance(
+            connection: .failed(reason: "boom"), permission: .granted, pause: .active,
+            storage: .failing(reason: "the disk is full"), now: now)
+        XCTAssertEqual(down.symbolName, "brain")
+        XCTAssertTrue(down.appearsDisabled)
+    }
+
+    func testRelativeCaptureTimesReadNaturally() {
+        XCTAssertEqual(StorageHealth.relative(now.addingTimeInterval(-30), now: now), "just now")
+        XCTAssertEqual(
+            StorageHealth.relative(now.addingTimeInterval(-300), now: now), "5 min ago")
+        XCTAssertEqual(
+            StorageHealth.relative(now.addingTimeInterval(-7200), now: now), "2 h ago")
+        XCTAssertEqual(
+            StorageHealth.relative(now.addingTimeInterval(-3 * 86_400), now: now), "3 days ago")
+    }
 }

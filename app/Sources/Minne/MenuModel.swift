@@ -45,6 +45,12 @@ struct MenuAppearance: Equatable {
     let statusText: String
     /// Disabled row naming the signed-in provider and model.
     let accountText: String
+    /// Disabled row summarizing the capture store ("Memory: 4 812 snapshots ·
+    /// last capture 2 min ago"); `nil` before the store has reported.
+    let storageText: String?
+    /// Clickable alarm row when memory is not being saved or search is broken;
+    /// opens Settings → Memory. `nil` while storage is healthy.
+    let storageAlertText: String?
     /// Title of the "Pause Capture" submenu parent item.
     let pauseItemTitle: String
     /// Persistent hint row shown while capture cannot run; `nil` hides it.
@@ -58,6 +64,7 @@ enum MenuModel {
     static func appearance(
         connection: BrainConnectionState, permission: CapturePermissionState, pause: PauseState,
         account: AuthState? = nil, appVersion: String? = nil, update: UpdateInfo? = nil,
+        storage: StorageHealth? = nil,
         now: Date
     ) -> MenuAppearance {
         let pause = pause.resolved(now: now)
@@ -115,12 +122,42 @@ enum MenuModel {
                 : "Capture Paused (<1 min left)"
         }
 
-        // Precedence, most urgent first: a down brain (dimmed icon) outranks a
-        // missing permission, which outranks a user-chosen pause.
+        // What the storage rows say. The summary row is always there once the
+        // store has reported (memory should be visibly alive, not silently
+        // assumed); the alarm row only exists when something needs the user.
+        var storageText: String?
+        var storageAlertText: String?
+        switch storage {
+        case nil:
+            break
+        case .healthy(let snapshots, let lastCaptureAt):
+            var line = "Memory: \(snapshots) snapshot\(snapshots == 1 ? "" : "s")"
+            if let lastCaptureAt {
+                line += " · last capture \(StorageHealth.relative(lastCaptureAt, now: now))"
+            }
+            storageText = line
+        case .degraded(let reason, let lastCaptureAt):
+            var line = "Memory: capturing, search offline"
+            if let lastCaptureAt {
+                line += " · last capture \(StorageHealth.relative(lastCaptureAt, now: now))"
+            }
+            storageText = line
+            storageAlertText = "Search broken — \(reason). Rebuild…"
+        case .failing(let reason):
+            storageText = "Memory: not being saved"
+            storageAlertText = "Memory not being saved — \(reason)…"
+        case .unavailable(let reason):
+            storageText = "Memory: unavailable"
+            storageAlertText = "Memory unavailable — \(reason)…"
+        }
+
+        // Precedence, most urgent first: a down brain (dimmed icon) outranks
+        // broken storage, which outranks a missing permission, which outranks
+        // a user-chosen pause.
         let symbolName: String
         if disconnected {
             symbolName = "brain"
-        } else if !permission.isGranted {
+        } else if storage?.isCritical == true || !permission.isGranted {
             symbolName = "exclamationmark.triangle"
         } else if pause.isPaused {
             symbolName = "pause.circle"
@@ -135,6 +172,8 @@ enum MenuModel {
             updateText: updateText,
             statusText: statusText,
             accountText: "Account: \(account?.accountSummary ?? "checking…")",
+            storageText: storageText,
+            storageAlertText: storageAlertText,
             pauseItemTitle: pauseItemTitle,
             hintText: permission.isGranted
                 ? nil : "Capture off — grant Accessibility access…")

@@ -351,6 +351,14 @@ final class PrivacySectionView: NSView {
 final class MemorySectionView: NSView {
     private let model: SettingsModel
     private let pathLabel = NSTextField(wrappingLabelWithString: "")
+    private let healthIcon = NSImageView()
+    private let healthLabel = NSTextField(wrappingLabelWithString: "")
+    private let reindexButton = NSButton(title: "Rebuild Search Index", target: nil, action: nil)
+    private let reindexSpinner = NSProgressIndicator()
+    private let reindexResult = NSTextField(wrappingLabelWithString: "")
+    private let exportButton = NSButton(title: "Export Memory…", target: nil, action: nil)
+    private let exportSpinner = NSProgressIndicator()
+    private let exportResult = NSTextField(wrappingLabelWithString: "")
     private let lastSyncLabel = NSTextField(wrappingLabelWithString: "")
     private let pendingLabel = NSTextField(wrappingLabelWithString: "")
     private let resultLabel = NSTextField(wrappingLabelWithString: "")
@@ -368,6 +376,41 @@ final class MemorySectionView: NSView {
         let openButton = NSButton(
             title: "Open Wiki Folder", target: self, action: #selector(openWikiClicked))
         openButton.bezelStyle = .rounded
+
+        healthIcon.setContentHuggingPriority(.required, for: .horizontal)
+        healthLabel.font = .systemFont(ofSize: 12)
+        healthLabel.preferredMaxLayoutWidth = width - 30
+        let healthRow = NSStackView(views: [healthIcon, healthLabel])
+        healthRow.orientation = .horizontal
+        healthRow.spacing = 8
+        healthRow.alignment = .centerY
+
+        reindexButton.bezelStyle = .rounded
+        reindexButton.controlSize = .small
+        reindexButton.target = self
+        reindexButton.action = #selector(reindexClicked)
+        reindexSpinner.style = .spinning
+        reindexSpinner.controlSize = .small
+        reindexSpinner.isHidden = true
+        exportButton.bezelStyle = .rounded
+        exportButton.controlSize = .small
+        exportButton.target = self
+        exportButton.action = #selector(exportClicked)
+        exportSpinner.style = .spinning
+        exportSpinner.controlSize = .small
+        exportSpinner.isHidden = true
+        let maintenanceRow = NSStackView(views: [
+            reindexButton, reindexSpinner, exportButton, exportSpinner,
+        ])
+        maintenanceRow.orientation = .horizontal
+        maintenanceRow.spacing = 8
+        maintenanceRow.alignment = .centerY
+        for label in [reindexResult, exportResult] {
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            label.preferredMaxLayoutWidth = width
+            label.isHidden = true
+        }
 
         lastSyncLabel.font = .systemFont(ofSize: 12)
         lastSyncLabel.preferredMaxLayoutWidth = width
@@ -399,6 +442,17 @@ final class MemorySectionView: NSView {
                 pathLabel,
                 openButton,
                 separator(width: width),
+                SettingsStyle.heading("Health"),
+                healthRow,
+                SettingsStyle.caption(
+                    "The search index is derived from your captures and can always be rebuilt. "
+                        + "Export zips the whole memory folder for a backup; captures made before "
+                        + "a rebuild are not re-summarized into the wiki.",
+                    width: width),
+                maintenanceRow,
+                reindexResult,
+                exportResult,
+                separator(width: width),
                 SettingsStyle.heading("Syncing"),
                 SettingsStyle.caption(
                     "Minne digests what it captured into wiki pages on a schedule. You can run a pass now.",
@@ -425,6 +479,25 @@ final class MemorySectionView: NSView {
 
     private func render(_ model: SettingsModel) {
         pathLabel.stringValue = model.paths.wiki.path
+
+        let critical = model.storageIsCritical
+        let degraded: Bool
+        if case .degraded = model.storage { degraded = true } else { degraded = false }
+        healthIcon.image = NSImage(
+            systemSymbolName: critical || degraded
+                ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+            accessibilityDescription: nil)
+        healthIcon.contentTintColor = critical ? .systemRed : degraded ? .systemOrange : .systemGreen
+        healthLabel.stringValue = model.storageLine
+        healthLabel.textColor = critical ? .systemRed : .labelColor
+
+        reindexButton.isEnabled = model.canReindex
+        exportButton.isEnabled = model.canExport
+        render(phase: reindexPhaseParts(model.reindexPhase), spinner: reindexSpinner,
+            label: reindexResult)
+        render(phase: exportPhaseParts(model.exportPhase), spinner: exportSpinner,
+            label: exportResult)
+
         lastSyncLabel.stringValue = model.lastSyncLine
         pendingLabel.stringValue = model.pendingLine
         let running = model.syncPhase.isRunning
@@ -445,8 +518,66 @@ final class MemorySectionView: NSView {
         }
     }
 
+    /// (running text, result text, failed) — the shared shape both maintenance
+    /// phases render through.
+    private func reindexPhaseParts(_ phase: SettingsModel.ReindexPhase)
+        -> (running: String?, result: String?, failed: Bool)
+    {
+        switch phase {
+        case .idle: return (nil, nil, false)
+        case .running(let progress): return (progress, nil, false)
+        case .finished(let summary): return (nil, summary, false)
+        case .failed(let reason): return (nil, reason, true)
+        }
+    }
+
+    private func exportPhaseParts(_ phase: SettingsModel.ExportPhase)
+        -> (running: String?, result: String?, failed: Bool)
+    {
+        switch phase {
+        case .idle: return (nil, nil, false)
+        case .running: return ("Exporting…", nil, false)
+        case .finished(let summary): return (nil, summary, false)
+        case .failed(let reason): return (nil, reason, true)
+        }
+    }
+
+    private func render(
+        phase: (running: String?, result: String?, failed: Bool),
+        spinner: NSProgressIndicator, label: NSTextField
+    ) {
+        spinner.isHidden = phase.running == nil
+        if phase.running != nil { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        let text = phase.running ?? phase.result
+        label.isHidden = text == nil
+        label.stringValue = text ?? ""
+        label.textColor = phase.failed ? .systemRed : .secondaryLabelColor
+    }
+
     @objc private func openWikiClicked() {
         model.openWikiFolder()
+    }
+
+    @objc private func reindexClicked() {
+        model.reindexNow()
+    }
+
+    /// The save panel is the view's business (it needs a window); everything
+    /// after the choice is the model's.
+    @objc private func exportClicked() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = MemoryExport.defaultFilename()
+        panel.canCreateDirectories = true
+        panel.title = "Export Memory"
+        let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.model.exportMemory(to: url)
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: complete)
+        } else {
+            complete(panel.runModal())
+        }
     }
 
     @objc private func syncClicked() {
