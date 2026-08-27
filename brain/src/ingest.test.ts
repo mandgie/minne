@@ -539,13 +539,16 @@ describe("pass scheduling", () => {
       ],
       // One snapshot per pass, so the seeded two need two passes: the first
       // ends with a backlog and must chain after drainMs (30 ms), not after
-      // the 10-minute interval; the second drains it and settles.
+      // the 10-minute interval; the second drains it and settles. The seeded
+      // due time sits 500 ms out: it must still be in the future when the
+      // engine arms, or the overdue path's 30 s grace applies instead — on a
+      // slow CI runner a 30 ms margin is already gone by then.
       settings: { intervalMs: 600_000, drainMs: 30, batchSize: 1, maxBatches: 1 },
-      state: { nextSyncAt: Date.now() + 30 },
+      state: { nextSyncAt: Date.now() + 500 },
     });
     engine.startTimers();
     try {
-      const deadline = Date.now() + 10_000;
+      const deadline = Date.now() + 15_000;
       let state = loadSyncState(syncStatePath(dir));
       while (
         Date.now() < deadline &&
