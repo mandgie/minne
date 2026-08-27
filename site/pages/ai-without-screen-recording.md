@@ -66,7 +66,9 @@ recording is what you actually want.
 
 For the rest — the threads, the decisions, the people, the things you would
 [ask your memory about](/what-is-ai-memory) or want
-[written into a reply](/email-replies) — the words are enough. Minne is
+[written into a reply](/email-replies) — the words are enough. Minne is not
+alone in thinking so: [Goldfish](/vs/goldfish), its closest neighbour, takes
+the same text-not-pixels approach. Minne is
 [free and open source](https://github.com/mandgie/minne), so "only the words"
 is a claim you can check against the code. More first questions are answered
 in [the FAQ](https://docs.minne.sh/faq).

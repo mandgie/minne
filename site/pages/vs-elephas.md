@@ -75,4 +75,5 @@ No scores and no winner: the honest summary is that Elephas is the safer
 choice today and Minne is the more radical bet on what a memory should be.
 If Minne's bet appeals, it is
 [a two-minute install](https://docs.minne.sh/start/install) on macOS 14+.
-See also [Minne and Raycast AI](/vs/raycast-ai).
+See also [Minne and Goldfish](/vs/goldfish) and
+[Minne and Raycast AI](/vs/raycast-ai).

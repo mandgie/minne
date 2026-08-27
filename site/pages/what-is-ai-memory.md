@@ -78,4 +78,6 @@ markdown, yes, yes, and
 [text through the Accessibility APIs, masked before disk](https://docs.minne.sh/privacy)
 — and because it is [free and open source](https://github.com/mandgie/minne),
 you can check the answers against the code rather than take this page's word
-for it.
+for it. For the same checklist applied to named neighbours, see
+[Minne and Goldfish](/vs/goldfish), [Minne and Elephas](/vs/elephas) and
+[Minne and Raycast AI](/vs/raycast-ai).

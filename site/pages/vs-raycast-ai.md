@@ -71,5 +71,6 @@ encrypted cloud sync.
 They also simply coexist: nothing about a launcher conflicts with a memory.
 If the memory half is the gap in your setup, Minne is
 [a free download](https://github.com/mandgie/minne/releases/latest/download/Minne.dmg)
-for macOS 14+. See also [Minne and Elephas](/vs/elephas), and — if you came
-from a screen-recording tool — [the Rewind alternative page](/rewind-alternative).
+for macOS 14+. See also [Minne and Goldfish](/vs/goldfish) — the closest
+comparison there is — [Minne and Elephas](/vs/elephas), and, if you came from
+a screen-recording tool, [the Rewind alternative page](/rewind-alternative).

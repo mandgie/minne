@@ -31,6 +31,7 @@ const PAGES = [
   { file: "ai-without-screen-recording.md", label: "No screen recording" },
   { file: "second-brain.md", label: "Second brain" },
   { file: "status-updates.md", label: "Status updates" },
+  { file: "vs-goldfish.md", label: "Minne vs Goldfish" },
   { file: "vs-elephas.md", label: "Minne vs Elephas" },
   { file: "vs-raycast-ai.md", label: "Minne vs Raycast AI" },
 ];
