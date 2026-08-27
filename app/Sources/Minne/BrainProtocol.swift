@@ -153,6 +153,12 @@ enum BrainRequest: Encodable, Sendable {
     /// pages without a date last; an empty memory answers an empty list.
     case memoryRecent(id: String)
     case status(id: String)
+    /// Is a newer Minne released? `done`'s result is `{version,
+    /// updateAvailable, latest?, url?, checkedAt?}`. The brain answers from
+    /// its cache unless its persisted daily due time has passed — so poking
+    /// this often is cheap — and never errors: offline simply answers what the
+    /// cache last knew.
+    case updateCheck(id: String)
 
     var id: String {
         switch self {
@@ -169,6 +175,7 @@ enum BrainRequest: Encodable, Sendable {
         case .draftOutcome(let id, _, _, _, _): return id
         case .memoryRecent(let id): return id
         case .status(let id): return id
+        case .updateCheck(let id): return id
         }
     }
 
@@ -252,6 +259,8 @@ enum BrainRequest: Encodable, Sendable {
             try container.encode("memory_recent", forKey: .type)
         case .status:
             try container.encode("status", forKey: .type)
+        case .updateCheck:
+            try container.encode("update_check", forKey: .type)
         }
     }
 }

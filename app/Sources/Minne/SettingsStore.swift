@@ -95,6 +95,20 @@ struct SettingsStore {
         defaults.set(trigger.installsTap, forKey: Self.minneKeyKey)
     }
 
+    // MARK: - Update check
+
+    static let updateCheckKey = "updateCheckEnabled"
+
+    /// On unless the user turned it off — the check is one anonymous request
+    /// a day for the latest release tag, carrying nothing about the user.
+    var updateCheckEnabled: Bool {
+        defaults.object(forKey: Self.updateCheckKey) as? Bool ?? true
+    }
+
+    func setUpdateCheckEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.updateCheckKey)
+    }
+
     // MARK: - Retention
 
     var retention: RetentionPolicy { .fromUserDefaults(defaults) }

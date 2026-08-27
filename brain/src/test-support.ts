@@ -27,6 +27,8 @@ function spawnBrain(dataDir: string, env?: Record<string, string | undefined>) {
       // whatever the test seeded, at a moment no assertion is expecting.
       MINNE_SYNC_INTERVAL_MS: "0",
       MINNE_LINT_INTERVAL_MS: "0",
+      // Nor a real update check: a subprocess test must never reach GitHub.
+      MINNE_UPDATE_INTERVAL_MS: "0",
       ...env,
     },
   });

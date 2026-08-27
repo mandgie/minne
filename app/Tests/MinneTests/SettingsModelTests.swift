@@ -194,6 +194,29 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertTrue(line.contains("no Minne server"))
         XCTAssertTrue(line.contains("no telemetry"))
         XCTAssertTrue(line.contains("Ollama"))
+        // The one network path that is not the provider: the daily anonymous
+        // version check, named honestly and with its off switch.
+        XCTAssertTrue(line.contains("GitHub"))
+        XCTAssertTrue(line.contains("turn it off"))
+    }
+
+    // MARK: - Update check
+
+    func testUpdateCheckToggleIsAppliedLiveAndRemembered() {
+        let model = makeModel()
+        var applied: [Bool] = []
+        model.onUpdateCheckChange = { applied.append($0) }
+        XCTAssertTrue(model.updateCheckEnabled, "on unless the user turns it off")
+        XCTAssertTrue(model.updateCheckLine.contains("anonymous"))
+
+        model.setUpdateCheckEnabled(false)
+        XCTAssertEqual(applied, [false])
+        XCTAssertFalse(reloaded().updateCheckEnabled)
+        XCTAssertTrue(model.updateCheckLine.contains("never checks"))
+
+        model.setUpdateCheckEnabled(true)
+        XCTAssertEqual(applied, [false, true])
+        XCTAssertTrue(reloaded().updateCheckEnabled)
     }
 
     // MARK: - Shortcuts

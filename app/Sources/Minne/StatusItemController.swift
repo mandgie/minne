@@ -29,12 +29,17 @@ final class StatusItemController: NSObject {
     /// the answer lands via `update(recentPages:)` — NSMenu re-renders a live
     /// submenu, so usually while this open is still up, at worst for the next.
     var onRefreshRecentPages: (@MainActor () -> Void)?
+    /// "Update Available" was clicked; the argument is the release page URL
+    /// the brain reported, when it reported one.
+    var onOpenUpdate: (@MainActor (String?) -> Void)?
 
     /// Current pause state, with an expired timed pause already collapsed.
     var pauseState: PauseState { pause.resolved(now: Date()) }
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
+    private let versionRow: NSMenuItem
+    private let updateItem: NSMenuItem
     private let statusRow: NSMenuItem
     private let accountRow: NSMenuItem
     private let hintItem: NSMenuItem
@@ -48,6 +53,9 @@ final class StatusItemController: NSObject {
     private var permission: CapturePermissionState
     private var pause: PauseState = .active
     private var account: AuthState?
+    /// Last `update_check` answer; nil until one lands (or after checks are
+    /// turned off), which simply hides the row.
+    private var updateInfo: UpdateInfo?
     /// Last list the brain sent; the submenu renders this while a refresh flies.
     private var recentPages: [RecentMemoryPage] = []
     private var resumeTimer: Timer?
@@ -56,6 +64,8 @@ final class StatusItemController: NSObject {
         self.permission = permission
         self.debugActions = debugActions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.versionRow = NSMenuItem(title: "Minne", action: nil, keyEquivalent: "")
+        self.updateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         self.statusRow = NSMenuItem(title: "Brain: starting…", action: nil, keyEquivalent: "")
         self.accountRow = NSMenuItem(title: "Account: checking…", action: nil, keyEquivalent: "")
         self.hintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -83,6 +93,12 @@ final class StatusItemController: NSObject {
     /// The brain's auth state changed (a login, a logout, a provider switch).
     func update(account: AuthState?) {
         self.account = account
+        applyAppearance()
+    }
+
+    /// The brain answered `update_check`. Nil clears the row (checks off).
+    func update(update: UpdateInfo?) {
+        self.updateInfo = update
         applyAppearance()
     }
 
@@ -119,6 +135,19 @@ final class StatusItemController: NSObject {
     private func buildMenu() {
         menu.autoenablesItems = false
         menu.delegate = self
+
+        versionRow.isEnabled = false
+        menu.addItem(versionRow)
+
+        // Hidden until an update_check reports a newer release; clicking
+        // opens its release page. No auto-download — updating stays a
+        // deliberate drag-to-Applications.
+        updateItem.action = #selector(openUpdateAction)
+        updateItem.target = self
+        updateItem.image = NSImage(
+            systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        updateItem.isHidden = true
+        menu.addItem(updateItem)
 
         statusRow.isEnabled = false
         menu.addItem(statusRow)
@@ -219,13 +248,16 @@ final class StatusItemController: NSObject {
     private func applyAppearance() {
         let appearance = MenuModel.appearance(
             connection: connection, permission: permission, pause: pause, account: account,
-            now: Date())
+            appVersion: AppVersion.current, update: updateInfo, now: Date())
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: appearance.symbolName, accessibilityDescription: "Minne")
             button.appearsDisabled = appearance.appearsDisabled
             button.toolTip = appearance.hintText
         }
+        versionRow.title = appearance.versionText
+        updateItem.title = appearance.updateText ?? ""
+        updateItem.isHidden = appearance.updateText == nil
         statusRow.title = appearance.statusText
         accountRow.title = appearance.accountText
         hintItem.title = appearance.hintText ?? ""
@@ -258,6 +290,10 @@ final class StatusItemController: NSObject {
 
     @objc private func openChatAction() {
         onOpenChat?()
+    }
+
+    @objc private func openUpdateAction() {
+        onOpenUpdate?(updateInfo?.url)
     }
 
     @objc private func openSettingsAction() {

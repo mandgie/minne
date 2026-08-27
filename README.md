@@ -44,6 +44,10 @@ or key:
 - **Sign-in:** an OAuth exchange with that provider's own auth endpoints
   (Anthropic: `claude.ai` / `platform.claude.com`; OpenAI: `auth.openai.com`),
   or nothing at all for an API key, which is stored locally.
+- **Update check:** once a day, one anonymous GET to `api.github.com` for the
+  latest release tag — no account, no identifier, nothing about you or your
+  memory in the request. A newer version shows as a row in the menu bar;
+  nothing downloads itself. Settings → General turns the check off entirely.
 
 Model requests go to the provider's public API host — `api.anthropic.com`,
 `chatgpt.com/backend-api`, `api.openai.com` — or, for the local provider, to

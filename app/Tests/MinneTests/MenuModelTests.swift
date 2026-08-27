@@ -114,4 +114,67 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(appearance.appearsDisabled)
         XCTAssertEqual(appearance.statusText, "Brain: stopped")
     }
+
+    // MARK: - Version row
+
+    func testVersionRowNamesTheBundleVersion() {
+        let appearance = MenuModel.appearance(
+            connection: .connecting, permission: .granted, pause: .active,
+            appVersion: "0.1.9", now: now)
+        XCTAssertEqual(appearance.versionText, "Minne v0.1.9")
+    }
+
+    func testVersionRowFallsBackToTheConnectedBrain() {
+        // The bare dev executable has no bundle version; the brain reports the
+        // same VERSION file over `hello`, so a connected brain fills the row.
+        let appearance = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            appVersion: nil, now: now)
+        XCTAssertEqual(appearance.versionText, "Minne v0.1.9")
+    }
+
+    func testVersionRowWithNothingToSayIsJustTheName() {
+        let appearance = MenuModel.appearance(
+            connection: .connecting, permission: .granted, pause: .active, now: now)
+        XCTAssertEqual(appearance.versionText, "Minne")
+    }
+
+    // MARK: - Update row
+
+    func testUpdateRowHiddenWithoutACheckOrWhenCurrent() {
+        let none = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            now: now)
+        XCTAssertNil(none.updateText)
+        let current = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            update: UpdateInfo(updateAvailable: false, latest: "0.1.9", url: nil), now: now)
+        XCTAssertNil(current.updateText)
+    }
+
+    func testUpdateRowNamesTheNewerVersion() {
+        let appearance = MenuModel.appearance(
+            connection: .connected(brainVersion: "0.1.9"), permission: .granted, pause: .active,
+            update: UpdateInfo(
+                updateAvailable: true, latest: "0.2.0",
+                url: "https://github.com/mandgie/minne/releases/tag/v0.2.0"),
+            now: now)
+        XCTAssertEqual(appearance.updateText, "Update Available — v0.2.0…")
+    }
+
+    func testUpdateInfoParsesTheBrainsAnswer() {
+        let result = JSONValue.object([
+            "version": .string("0.1.9"),
+            "updateAvailable": .bool(true),
+            "latest": .string("0.2.0"),
+            "url": .string("https://example.test/releases/v0.2.0"),
+        ])
+        XCTAssertEqual(
+            UpdateInfo.parse(result),
+            UpdateInfo(
+                updateAvailable: true, latest: "0.2.0",
+                url: "https://example.test/releases/v0.2.0"))
+        XCTAssertNil(UpdateInfo.parse(.object(["version": .string("0.1.9")])))
+        XCTAssertNil(UpdateInfo.parse(nil))
+    }
 }

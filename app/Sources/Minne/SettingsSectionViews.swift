@@ -459,6 +459,8 @@ final class MemorySectionView: NSView {
 final class GeneralSectionView: NSView {
     private let model: SettingsModel
     private let launchCheckbox: NSButton
+    private let updateCheckbox: NSButton
+    private let updateNote = NSTextField(wrappingLabelWithString: "")
     private let hotKeyCheckbox: NSButton
     private let hotKeyNote = NSTextField(wrappingLabelWithString: "")
     private let minneKeyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -468,12 +470,16 @@ final class GeneralSectionView: NSView {
         self.model = model
         launchCheckbox = NSButton(
             checkboxWithTitle: "Launch Minne at login", target: nil, action: nil)
+        updateCheckbox = NSButton(
+            checkboxWithTitle: "Check for new versions", target: nil, action: nil)
         hotKeyCheckbox = NSButton(
             checkboxWithTitle: "Open chat with ⌥Space", target: nil, action: nil)
         super.init(frame: .zero)
 
         launchCheckbox.target = self
         launchCheckbox.action = #selector(launchToggled)
+        updateCheckbox.target = self
+        updateCheckbox.action = #selector(updateCheckToggled)
         hotKeyCheckbox.target = self
         hotKeyCheckbox.action = #selector(hotKeyToggled)
         // A popup rather than a checkbox: on international (AltGr) layouts
@@ -482,7 +488,7 @@ final class GeneralSectionView: NSView {
         minneKeyPopup.addItems(withTitles: MinneKeyTrigger.allCases.map(\.title))
         minneKeyPopup.target = self
         minneKeyPopup.action = #selector(minneKeyChanged)
-        for note in [hotKeyNote, minneKeyNote] {
+        for note in [updateNote, hotKeyNote, minneKeyNote] {
             note.font = .systemFont(ofSize: 11)
             note.textColor = .secondaryLabelColor
             note.preferredMaxLayoutWidth = width
@@ -492,6 +498,10 @@ final class GeneralSectionView: NSView {
             [
                 SettingsStyle.heading("Startup"),
                 launchCheckbox,
+                separator(width: width),
+                SettingsStyle.heading("Updates"),
+                updateCheckbox,
+                updateNote,
                 separator(width: width),
                 SettingsStyle.heading("Shortcuts"),
                 shortcutRow("Open chat", "⌥Space", width: width),
@@ -549,6 +559,8 @@ final class GeneralSectionView: NSView {
         launchCheckbox.toolTip =
             LaunchAtLogin.isSupported
             ? nil : "Only available when running from Minne.app (build with scripts/build.sh)"
+        updateCheckbox.state = model.updateCheckEnabled ? .on : .off
+        updateNote.stringValue = model.updateCheckLine
         hotKeyCheckbox.state = model.hotKeyEnabled ? .on : .off
         hotKeyNote.stringValue = model.hotKeyLine
         if let index = MinneKeyTrigger.allCases.firstIndex(of: model.minneKeyTrigger) {
@@ -564,6 +576,10 @@ final class GeneralSectionView: NSView {
             BrainClient.log("launch at login toggle failed: \(error)")
         }
         render(model)
+    }
+
+    @objc private func updateCheckToggled() {
+        model.setUpdateCheckEnabled(updateCheckbox.state == .on)
     }
 
     @objc private func hotKeyToggled() {

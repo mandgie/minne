@@ -95,8 +95,11 @@ Or right-click the app and choose **Open** once; the exception sticks.
 
 ## Updating
 
-There is no auto-updater. Download the new disk image, quit Minne, and drag
-the new copy over the old one.
+Minne checks GitHub once a day for a newer release — one anonymous request
+carrying nothing about you; Settings → General turns it off — and shows
+**Update Available** in its menu bar menu when there is one. Nothing downloads
+itself: click the row to open the release page, download the new disk image,
+quit Minne, and drag the new copy over the old one.
 
 Your memory is untouched by this: it lives in `~/Minne` and
 `~/Library/Application Support/Minne`, neither of which is inside the app

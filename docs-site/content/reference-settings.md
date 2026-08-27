@@ -155,6 +155,14 @@ login-item service, so the checkbox reflects what launchd actually thinks. It
 is disabled, with an explanatory tooltip, when Minne is running as a bare
 executable rather than from `Minne.app`.
 
+### Updates
+
+**Check for new versions** — on by default. Once a day the brain asks GitHub
+for the latest release tag; a newer one shows as **Update Available** in the
+menu bar, which opens the release page. The request is anonymous — nothing
+about you or your memory rides on it — and nothing ever downloads itself.
+Turning the checkbox off stops the check entirely and clears the row.
+
 ### Shortcuts
 
 Four rows stating what is bound to what — see
@@ -186,6 +194,7 @@ only.
 | --- | --- |
 | `blacklistBundleIdentifiers`, `blacklistDomains` | the shipped lists |
 | `chatHotKeyEnabled` | `true` |
+| `updateCheckEnabled` | `true` |
 | `minneKeyTrigger` | `rightOption` |
 | `retentionDays` | `90` |
 | `onboardingSeen` | `false` |

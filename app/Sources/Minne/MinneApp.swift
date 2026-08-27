@@ -24,6 +24,10 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     private var capture: CaptureEngine?
     private var store: SourceStore?
     private var retentionTimer: Timer?
+    /// Slow poke at `update_check`; the brain holds the real (daily,
+    /// persisted) cadence, so this only decides how promptly an answer that
+    /// is already due gets fetched and rendered.
+    private var updateTimer: Timer?
     /// Last persistence failure logged, so a broken disk cannot flood stderr.
     private var lastStoreError: String?
 
@@ -60,7 +64,15 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         controller.onOpenRecentPage = { path in
             NSWorkspace.shared.open(memoryRoot.appendingPathComponent(path))
         }
-        controller.onRefreshRecentPages = { [weak self] in self?.refreshRecentPages() }
+        controller.onRefreshRecentPages = { [weak self] in
+            self?.refreshRecentPages()
+            // The menu opening is also a natural moment to surface an update
+            // that has become due; between due times this is a cache read.
+            self?.checkForUpdates()
+        }
+        controller.onOpenUpdate = { url in
+            NSWorkspace.shared.open(url.flatMap(URL.init(string:)) ?? AppVersion.releasesURL)
+        }
         controller.onPauseChange = { [weak self] pause in
             self?.capture?.update(pause: pause)
             self?.settingsModel?.adopt(pause: pause)
@@ -107,6 +119,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
         // point is to look inside the wiki (or drag it onto Obsidian).
         model.onOpenFolder = { url in NSWorkspace.shared.open(url) }
         model.onHotKeyChange = { [weak self] enabled in self?.updateChatHotKey(enabled: enabled) }
+        model.onUpdateCheckChange = { [weak self] _ in self?.startUpdateChecks() }
         model.onMinneKeyChange = { [weak self] trigger in self?.minneKey?.apply(trigger: trigger) }
         model.onWipe = { [weak self] paths in
             guard let self else { return MemoryWipe.wipe(paths: paths) }
@@ -533,6 +546,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                     "handshake OK: protocol \(hello.protocolVersion), brain v\(hello.brainVersion)")
                 self?.authModel.refresh()
                 self?.startAutoSignIn()
+                self?.startUpdateChecks()
             } catch {
                 BrainClient.log("handshake failed: \(error)")
             }
@@ -572,6 +586,51 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 BrainClient.log("search results: \(String(describing: result))")
             } catch {
                 BrainClient.log("search failed: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Update check
+
+    /// Arms the update poke: once shortly after the handshake, then every six
+    /// hours. The network cadence lives in the brain (persisted, daily —
+    /// `UpdateChecker` in brain/src/update.ts), so these pokes are cache reads
+    /// except the first one each day. Off means off: no request is ever sent,
+    /// and the menu row clears.
+    private func startUpdateChecks() {
+        updateTimer?.invalidate()
+        updateTimer = nil
+        guard settingsModel?.updateCheckEnabled ?? true else {
+            statusController?.update(update: nil)
+            BrainClient.log("update check off in Settings")
+            return
+        }
+        let timer = Timer(timeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkForUpdates() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+        // Not in the launch stampede, and after the brain has settled in.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            self?.checkForUpdates()
+        }
+    }
+
+    /// One poke. The brain never answers this with an error state worth
+    /// showing — offline just returns its cache — so the only failure here is
+    /// transport, which costs a log line and the row staying as it was.
+    private func checkForUpdates() {
+        guard settingsModel?.updateCheckEnabled ?? true, let client = brainClient else { return }
+        Task { [weak self] in
+            do {
+                let result = try await client.request(.updateCheck(id: UUID().uuidString))
+                guard let info = UpdateInfo.parse(result) else { return }
+                self?.statusController?.update(update: info)
+                if info.updateAvailable {
+                    BrainClient.log("update available: v\(info.latest ?? "?")")
+                }
+            } catch {
+                BrainClient.log("update check failed: \(error)")
             }
         }
     }
@@ -634,6 +693,7 @@ final class MinneApp: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         capture?.stop()
         retentionTimer?.invalidate()
+        updateTimer?.invalidate()
         guard let client = brainClient else { return }
         // Best effort: let the brain exit cleanly on stdin close before we die.
         let semaphore = DispatchSemaphore(value: 0)

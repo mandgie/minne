@@ -308,15 +308,16 @@
       <h3 class="egress__title">What leaves your Mac, exactly</h3>
       <p class="egress__intro">
         The only network traffic Minne makes is requests to the AI provider you signed in
-        with — your account, your key. There is no Minne server to talk to, and no
-        telemetry. This is what each feature sends that provider, and nothing else goes
-        anywhere:
+        with — your account, your key — plus one anonymous version check a day against
+        GitHub, which you can turn off. There is no Minne server to talk to, and no
+        telemetry. This is what each feature sends, and nothing else goes anywhere:
       </p>
       <dl class="egress__ledger">
         <div><dt>draft</dt><dd>the field you are writing in, the window around it, and the notes Minne recalls — one model request.</dd></div>
         <div><dt>chat</dt><dd>your question, and the notes the answer needs.</dd></div>
         <div><dt>sync</dt><dd>recent captures, in batches, already masked, to be distilled into notes.</dd></div>
         <div><dt>sign-in</dt><dd>one OAuth exchange with that same provider. An API key stays on your Mac and is shown to no one else.</dd></div>
+        <div><dt>updates</dt><dd>once a day, an anonymous ask to GitHub for the latest version number — nothing of yours attached, and Settings can turn it off.</dd></div>
         <div><dt>never</dt><dd>the folder itself. No backup, no cloud sync, no upload path in the code.</dd></div>
       </dl>
       <p class="egress__note">Want even that to stay home? Point Minne at Ollama on your own machine and model traffic never leaves it.</p>

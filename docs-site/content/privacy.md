@@ -24,6 +24,11 @@ and nowhere else.
 | **Memory sync** | Recent raw captures, in batches, so the agent can distil them into wiki pages. Masking happens before a capture touches disk, so what is sent is already masked. |
 | **Sign-in** | One OAuth exchange with that provider's own auth endpoints, or nothing at all for an API key. |
 
+One request does not go to your provider: once a day, the brain asks GitHub
+for the latest release tag so the menu bar can say **Update Available** — an
+anonymous GET with no account, no identifier and nothing of yours in it.
+Settings → General turns it off.
+
 And the one that matters most:
 
 | Never sent | |
@@ -40,6 +45,9 @@ Model requests go to the provider's public API host:
 
 Sign-in adds those providers' own auth endpoints: `claude.ai` and
 `platform.claude.com` for Anthropic, `auth.openai.com` for OpenAI.
+
+The daily version check goes to `api.github.com` — and stops entirely when
+you switch it off in Settings → General.
 
 :::tip
 Want even the model traffic to stay home? Point Minne at Ollama on your own

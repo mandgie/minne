@@ -230,6 +230,19 @@ export interface StatusRequest {
   id: string;
 }
 
+/**
+ * Is a newer Minne released? Terminates with `done` whose result is
+ * `{ version, updateAvailable, latest?, url?, checkedAt? }` — see
+ * `UpdateReport` in update.ts. The brain answers from its cache unless the
+ * persisted daily due time has passed, in which case it asks the release host
+ * first (one anonymous GET, nothing about the user in it). Never an error:
+ * an unreachable host answers whatever the cache last knew.
+ */
+export interface UpdateCheckRequest {
+  type: "update_check";
+  id: string;
+}
+
 export type BrainRequest =
   | HelloRequest
   | ChatRequest
@@ -243,7 +256,8 @@ export type BrainRequest =
   | DraftRequest
   | DraftOutcomeRequest
   | MemoryRecentRequest
-  | StatusRequest;
+  | StatusRequest
+  | UpdateCheckRequest;
 
 // ---- Events (brain -> app) ----
 
@@ -582,6 +596,8 @@ export function decodeRequest(line: string): DecodeResult {
       return ok({ type: "memory_recent", id });
     case "status":
       return ok({ type: "status", id });
+    case "update_check":
+      return ok({ type: "update_check", id });
     default:
       return fail(id, "invalid_request", `unknown request type "${type}"`);
   }

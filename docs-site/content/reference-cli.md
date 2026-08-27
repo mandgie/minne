@@ -104,6 +104,9 @@ of — tool calling is not optional.
 | `MINNE_SYNC_MAX_BATCHES` | Turns per pass; the rest waits for the next one. | `4` |
 | `MINNE_SYNC_SNAPSHOT_CHARS` | Characters of each capture sent to the model. | `4000` |
 | `MINNE_SYNC_MAX_TURNS` | Tool round trips the agent gets per batch. | `12` |
+| `MINNE_UPDATE_INTERVAL_MS` | How often the daily version check may hit the network. `0` disables it. | `86400000` (24 hours) |
+| `MINNE_UPDATE_CHECK_URL` | Where the latest release is asked for. | GitHub's `releases/latest` API |
+| `MINNE_UPDATE_TIMEOUT_MS` | Deadline for that request. | `10000` |
 | `MINNE_BRAIN_PATH` | Read by the **app**: which brain to launch. A path ending `.ts` is run through `bun run`. | — |
 
 An empty value counts as unset.

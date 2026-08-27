@@ -32,6 +32,7 @@ import { EmptyQueryError, searchSources } from "./sources";
 import { Memory } from "./memory";
 import { memoryTools } from "./memory-tools";
 import { buildRegistry, ollamaProviderFrom, type Registry } from "./providers";
+import { UpdateChecker, updateSettingsFromEnv } from "./update";
 
 /**
  * Everything the assistant said across the messages one turn produced: its
@@ -116,6 +117,7 @@ export class MinneBrain {
   private readonly store: FileCredentialStore;
   private readonly memory: Memory;
   private readonly sync: SyncEngine;
+  private readonly updates: UpdateChecker;
   private config: MinneConfig;
   private registry: Registry;
 
@@ -162,6 +164,12 @@ export class MinneBrain {
       resolveModel: () => this.resolveModel(),
       streamFn: this.registry.models.streamSimple.bind(this.registry.models),
       settings: settingsFromEnv(process.env),
+    });
+    this.updates = new UpdateChecker({
+      dataDir: deps.dataDir,
+      version: deps.brainVersion,
+      log: deps.log,
+      settings: updateSettingsFromEnv(process.env),
     });
   }
 
@@ -211,6 +219,8 @@ export class MinneBrain {
       }
       case "status":
         return this.handleStatus(request.id);
+      case "update_check":
+        return this.handleUpdateCheck(request.id);
       case "chat":
         return this.handleChat(request);
       case "login":
@@ -807,6 +817,15 @@ export class MinneBrain {
         sync: this.sync.status(),
       }),
     );
+  }
+
+  /**
+   * Is a newer Minne out? `UpdateChecker.check` owns the cadence (persisted,
+   * daily) and never fails — a poke between due times, or with the host
+   * unreachable, answers whatever the cache last knew.
+   */
+  private async handleUpdateCheck(id: string): Promise<void> {
+    this.send(doneEvent(id, await this.updates.check()));
   }
 
   private async handleConfigure(request: ConfigureRequest): Promise<void> {

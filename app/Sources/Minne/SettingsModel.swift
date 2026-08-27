@@ -93,6 +93,8 @@ final class SettingsModel {
     var onOpenFolder: (@MainActor (URL) -> Void)?
     /// Registers or unregisters the ⌥Space hotkey, live.
     var onHotKeyChange: (@MainActor (Bool) -> Void)?
+    /// Starts or stops the daily update check, live.
+    var onUpdateCheckChange: (@MainActor (Bool) -> Void)?
     /// Applies a Minne key trigger change to the running controller, live.
     var onMinneKeyChange: (@MainActor (MinneKeyTrigger) -> Void)?
 
@@ -110,6 +112,7 @@ final class SettingsModel {
         self.retentionDays = store.retention.days
         self.hotKeyEnabled = store.chatHotKeyEnabled
         self.minneKeyTrigger = store.minneKeyTrigger
+        self.updateCheckEnabled = store.updateCheckEnabled
         // Account state is live in Settings for the same reason it is live in
         // the menu bar: one model, rendered wherever it is shown.
         auth.observe(self) { [weak self] _ in self?.notify() }
@@ -235,9 +238,35 @@ final class SettingsModel {
             + "The only network connections Minne makes are to the AI provider you chose, "
             + "using your own account or key: drafts, chat and the sync pass send it "
             + "excerpts of your captures and notes to think about, and sign-in exchanges "
-            + "credentials with that same provider. Nothing else is sent to anyone — "
+            + "credentials with that same provider. Once a day Minne also asks GitHub "
+            + "whether a newer version exists — an anonymous request that sends nothing "
+            + "about you, and General can turn it off. Nothing else is sent to anyone — "
             + "no telemetry, no analytics. Choose the local provider (Ollama) and "
-            + "requests stay on your Mac."
+            + "model requests stay on your Mac."
+    }
+
+    // MARK: - General: the update check
+
+    /// Whether Minne asks the release host, once a day, if a newer version
+    /// exists. The request is anonymous — nothing about the user rides on it —
+    /// but it is still a network call, so it has a switch.
+    private(set) var updateCheckEnabled: Bool
+
+    func setUpdateCheckEnabled(_ enabled: Bool) {
+        guard enabled != updateCheckEnabled else { return }
+        updateCheckEnabled = enabled
+        store.setUpdateCheckEnabled(enabled)
+        onUpdateCheckChange?(enabled)
+        notify()
+    }
+
+    var updateCheckLine: String {
+        updateCheckEnabled
+            ? "Once a day Minne asks GitHub for the latest release number — an anonymous "
+                + "request that sends nothing about you. An update shows in the menu bar; "
+                + "installing it stays up to you."
+            : "Minne never checks for updates. New releases are announced at "
+                + "github.com/mandgie/minne/releases."
     }
 
     // MARK: - General: the chat hotkey

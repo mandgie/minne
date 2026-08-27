@@ -37,6 +37,10 @@ struct MenuAppearance: Equatable {
     let symbolName: String
     /// Dimmed icon (NSStatusBarButton.appearsDisabled) when the brain is down.
     let appearsDisabled: Bool
+    /// Disabled first row naming the app and its version.
+    let versionText: String
+    /// Clickable "Update Available" row under it; `nil` hides it.
+    let updateText: String?
     /// Disabled status row at the top of the menu.
     let statusText: String
     /// Disabled row naming the signed-in provider and model.
@@ -53,9 +57,28 @@ enum MenuModel {
     /// has answered yet, which is a different thing from being signed out.
     static func appearance(
         connection: BrainConnectionState, permission: CapturePermissionState, pause: PauseState,
-        account: AuthState? = nil, now: Date
+        account: AuthState? = nil, appVersion: String? = nil, update: UpdateInfo? = nil,
+        now: Date
     ) -> MenuAppearance {
         let pause = pause.resolved(now: now)
+
+        // The bundle's version when there is one; the bare dev executable has
+        // no Info.plist, so fall back to the connected brain's version — the
+        // same VERSION file by the other route.
+        let versionText: String
+        if let appVersion {
+            versionText = "Minne v\(appVersion)"
+        } else if case .connected(let brainVersion) = connection {
+            versionText = "Minne v\(brainVersion)"
+        } else {
+            versionText = "Minne"
+        }
+
+        var updateText: String?
+        if let update, update.updateAvailable {
+            updateText =
+                update.latest.map { "Update Available — v\($0)…" } ?? "Update Available…"
+        }
 
         let statusText: String
         let disconnected: Bool
@@ -108,6 +131,8 @@ enum MenuModel {
         return MenuAppearance(
             symbolName: symbolName,
             appearsDisabled: disconnected,
+            versionText: versionText,
+            updateText: updateText,
             statusText: statusText,
             accountText: "Account: \(account?.accountSummary ?? "checking…")",
             pauseItemTitle: pauseItemTitle,
