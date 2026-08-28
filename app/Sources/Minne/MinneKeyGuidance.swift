@@ -11,9 +11,9 @@ import AppKit
 ///
 /// The field wraps and grows. A steer is often a sentence, and a single line
 /// scrolled the words out of view exactly while they were being judged — so the
-/// field grows with its content to four lines and then scrolls inside itself,
-/// and the panel reflows downward to make room. Return still submits; a newline
-/// is asked for with Shift-Return.
+/// field grows with its content to `maxFieldLines` and then scrolls inside
+/// itself, and the panel reflows downward to make room. Return still submits; a
+/// newline is asked for with Shift-Return.
 ///
 /// The chips above it are the steers already in force. They matter because
 /// guidance stacks: after two rounds the draft on screen is the product of
@@ -51,9 +51,9 @@ final class GuidanceRow: NSView {
     /// How many steers are shown before the line starts counting instead.
     nonisolated static let maxChipsShown = 3
     /// How long one steer may be before it is elided in the chip line.
-    nonisolated static let maxChipCharacters = 34
+    nonisolated static let maxChipCharacters = 42
     /// How many lines the field grows to before it scrolls inside itself.
-    nonisolated static let maxFieldLines = 4
+    nonisolated static let maxFieldLines = 6
     /// Air under each line's ink. It exists for one reason beyond looks: glyph
     /// rasters bleed a fraction of a point past the font's own descent, so a
     /// viewport cut exactly at a line's bottom still shows the tips of the
@@ -80,7 +80,7 @@ final class GuidanceRow: NSView {
         return min(max(ceil(content), one), cap)
     }
 
-    private static let fieldFont = NSFont.systemFont(ofSize: 11.5)
+    private static let fieldFont = NSFont.systemFont(ofSize: 12.5)
 
     private let rule = OverlayRule(frame: .zero)
     private let chips = NSTextField(labelWithString: "")
@@ -145,7 +145,7 @@ final class GuidanceRow: NSView {
         // and two lines of identical tertiary ink read as one grey paragraph
         // instead of as two different things. Darker ink and an accent marker
         // per steer is what separates them.
-        chips.font = .systemFont(ofSize: 10.5)
+        chips.font = .systemFont(ofSize: 11)
         chips.lineBreakMode = .byTruncatingTail
         chips.isHidden = true
 
@@ -159,7 +159,7 @@ final class GuidanceRow: NSView {
         placeholder.lineBreakMode = .byTruncatingTail
         placeholder.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        hint.font = .systemFont(ofSize: 10.5)
+        hint.font = .systemFont(ofSize: 11)
         hint.setContentHuggingPriority(.required, for: .horizontal)
 
         // Constraints rather than a stack view: the hint belongs at the far
@@ -311,7 +311,7 @@ final class GuidanceRow: NSView {
         let line = NSMutableAttributedString(
             string: chipLine(guidance),
             attributes: [
-                .font: NSFont.systemFont(ofSize: 10.5),
+                .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: OverlayPalette.inkSecondary,
             ])
         // Walked from the parts rather than found by searching the finished

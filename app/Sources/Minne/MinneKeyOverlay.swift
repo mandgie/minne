@@ -173,7 +173,7 @@ private final class MinneKeyOverlayPanel: NSPanel {
 /// resolved colour and not a dynamic one, so a layer painted once in light mode
 /// keeps that exact white when the Mac turns dark.
 private final class OverlayChromeView: NSView {
-    static let cornerRadius: CGFloat = 14
+    static let cornerRadius: CGFloat = 16
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -252,7 +252,7 @@ final class OverlayRule: NSView {
 /// user's keystrokes through the event tap.
 @MainActor
 final class ThinkingDots: NSView {
-    private static let dotSize: CGFloat = 4.5
+    private static let dotSize: CGFloat = 5
     private static let gap: CGFloat = 4
     private static let period: CFTimeInterval = 0.62
 
@@ -331,8 +331,8 @@ final class ThinkingDots: NSView {
 /// no timer, no redraw, nothing on the thread that is carrying the user's
 /// keystrokes.
 private final class ShimmerLines: NSView {
-    private static let barHeight: CGFloat = 8
-    private static let gap: CGFloat = 8
+    private static let barHeight: CGFloat = 9
+    private static let gap: CGFloat = 9
     /// Ragged ends, so it reads as a paragraph rather than a progress bar.
     private static let widths: [CGFloat] = [1.0, 0.92, 0.56]
     private static let sweep: CFTimeInterval = 1.5
@@ -492,10 +492,10 @@ private final class DraftLabel: NSTextField {
     }
 }
 
-/// The read-only draft, disciplined (US-203): at most twelve lines of it, and
-/// past that the prose scrolls inside its own area rather than growing the
-/// panel — the same cap and the same line slot the draft editor lives under,
-/// so opening the editor on a long draft moves nothing.
+/// The read-only draft, disciplined (US-203): at most `DraftEditor.maxLines`
+/// lines of it, and past that the prose scrolls inside its own area rather
+/// than growing the panel — the same cap and the same line slot the draft
+/// editor lives under, so opening the editor on a long draft moves nothing.
 ///
 /// It is the `DraftLabel` inside a field-like scroll view, not a second text
 /// view: the label already knows how to render the elision note and how to
@@ -514,6 +514,11 @@ private final class DraftArea: NSView {
     private let document = FlippedView()
     private let heightConstraint: NSLayoutConstraint
     private let pitch: CGFloat
+    /// The width the draft wraps and measures at — the panel's grid, kept in
+    /// step with it by `setContentWidth`.
+    private var contentWidth = MinneKeyOverlayView.minContentWidth
+    /// The body as last set, so a width change can re-measure it.
+    private var body = NSAttributedString()
 
     override init(frame frameRect: NSRect) {
         pitch = DraftEditor.linePitch()
@@ -526,7 +531,7 @@ private final class DraftArea: NSView {
         // the panel then reports a fitting size wider than the screen. Telling
         // it the width up front is what makes the draft wrap — and the width is
         // the grid's, since the draft sits on the panel's own surface.
-        label.preferredMaxLayoutWidth = MinneKeyOverlayView.contentWidth
+        label.preferredMaxLayoutWidth = contentWidth
 
         clip.drawsBackground = false
         clip.pitch = pitch
@@ -568,19 +573,32 @@ private final class DraftArea: NSView {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     /// Sets the draft and re-clamps: the area is exactly as tall as the prose
-    /// up to twelve lines, then scrolls — opened at the top, where reading
+    /// up to the line cap, then scrolls — opened at the top, where reading
     /// starts.
     func setBody(_ text: NSAttributedString) {
+        body = text
         label.attributedStringValue = text
+        remeasure()
+        clip.scroll(to: .zero)
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    /// The panel widened — the draft wraps at the new grid and its clamp is
+    /// re-read, without touching where it is scrolled to.
+    func setContentWidth(_ width: CGFloat) {
+        guard width != contentWidth else { return }
+        contentWidth = width
+        label.preferredMaxLayoutWidth = width
+        remeasure()
+    }
+
+    private func remeasure() {
         let bounds = NSRect(
-            x: 0, y: 0,
-            width: MinneKeyOverlayView.contentWidth, height: CGFloat.greatestFiniteMagnitude)
+            x: 0, y: 0, width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
         let content = label.cell?.cellSize(forBounds: bounds).height ?? 0
         heightConstraint.constant = GuidanceRow.fieldHeight(
             content: content, line: pitch, spacing: DraftEditor.lineSpacing,
             maxLines: DraftEditor.maxLines)
-        clip.scroll(to: .zero)
-        scroll.reflectScrolledClipView(clip)
     }
 
     func startSweep() { label.startSweep() }
@@ -628,11 +646,11 @@ private final class OverlayButton: NSButton {
     private let isPrimary: Bool
     private var isHovered = false
 
-    private static let height: CGFloat = 24
-    private static let horizontalPadding: CGFloat = 13
+    private static let height: CGFloat = 26
+    private static let horizontalPadding: CGFloat = 14
     /// A glyph-only capsule is padded a little tighter: a symbol has no side
     /// bearing, so the same padding around one looks wider than around a word.
-    private static let glyphPadding: CGFloat = 10
+    private static let glyphPadding: CGFloat = 11
 
     init(
         label: String, hint: String?, symbol: String? = nil, isPrimary: Bool,
@@ -712,7 +730,7 @@ private final class OverlayButton: NSButton {
             NSAttributedString(
                 string: label,
                 attributes: [
-                    .font: NSFont.systemFont(ofSize: 11.5, weight: isPrimary ? .semibold : .medium),
+                    .font: NSFont.systemFont(ofSize: 12, weight: isPrimary ? .semibold : .medium),
                     .foregroundColor: ink,
                 ]))
         if let hint {
@@ -724,7 +742,7 @@ private final class OverlayButton: NSButton {
                 NSAttributedString(
                     string: "  \(hint)",
                     attributes: [
-                        .font: NSFont.systemFont(ofSize: 11),
+                        .font: NSFont.systemFont(ofSize: 11.5),
                         // Clear, not gone, when the hint is not in force: the
                         // glyphs keep their metrics, so the capsule keeps its
                         // width.
@@ -775,7 +793,7 @@ private final class OverlayButton: NSButton {
                 // the same weight as a letterform reads lighter than it is,
                 // and in the dark it nearly disappears.
                 .withSymbolConfiguration(
-                    NSImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)),
+                    NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)),
             let tinted = image.copy() as? NSImage
         else { return nil }
         // Resolved first: a dynamic colour has no components to read until it
@@ -821,9 +839,11 @@ private final class OverlayButton: NSButton {
 /// there is one, and the buttons that state offers.
 @MainActor
 final class MinneKeyOverlayView: NSView {
-    /// The panel's width, less the column's insets. A wrapping label needs to
-    /// be told the width it may wrap at before it has one.
-    static let contentWidth: CGFloat = 340
+    /// The compact content width — what every press opens at, and the floor
+    /// the panel never narrows past. The width in force is the instance's
+    /// `contentWidth`: a draft can earn a wider panel (`OverlayWidth`), and
+    /// `setContentWidth` moves the whole grid together.
+    static let minContentWidth: CGFloat = OverlayWidth.baseContent
     /// Characters of draft shown before the preview elides. A long draft is
     /// still inserted whole — this is a HUD at someone's caret, not a document
     /// view. Elided by hand rather than by `lineBreakMode`: a wrapping label
@@ -832,7 +852,7 @@ final class MinneKeyOverlayView: NSView {
     /// The one internal grid. Every child of the panel — the spark, the status
     /// line, the draft, the first capsule — starts at `inset.width` from the
     /// panel's border and nothing starts anywhere else; top and bottom are equal.
-    static let inset = NSSize(width: 14, height: 14)
+    static let inset = NSSize(width: 16, height: 16)
 
     var onAction: (@MainActor (MinneKeyAction) -> Void)?
     /// The guidance field's three moments, forwarded to the panel's controller
@@ -899,6 +919,10 @@ final class MinneKeyOverlayView: NSView {
     /// of its capsule) — and the status line has the room.
     private let editHint = NSTextField(labelWithString: "")
     private let column = NSStackView()
+    /// The grid's width in force. Presses open compact; a draft can widen it
+    /// (`setContentWidth`), and these pins are how every row moves together.
+    private(set) var contentWidth = MinneKeyOverlayView.minContentWidth
+    private var widthPins: [NSLayoutConstraint] = []
 
     /// Whether the guidance field is being edited.
     var isGuiding: Bool { guidance.isEditing }
@@ -933,17 +957,17 @@ final class MinneKeyOverlayView: NSView {
     /// The spark, the name, and the app being written into.
     private func buildHeader() {
         spark.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Minne")
-        spark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11.5, weight: .semibold)
+        spark.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)
         spark.contentTintColor = OverlayPalette.blue
         spark.setContentHuggingPriority(.required, for: .horizontal)
         spark.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        title.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = OverlayPalette.ink
-        separator.font = .systemFont(ofSize: 11.5)
+        separator.font = .systemFont(ofSize: 12)
         separator.textColor = OverlayPalette.inkTertiary
         separator.setContentHuggingPriority(.required, for: .horizontal)
-        app.font = .systemFont(ofSize: 11.5)
+        app.font = .systemFont(ofSize: 12)
         app.textColor = OverlayPalette.inkTertiary
         app.lineBreakMode = .byTruncatingTail
         app.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -953,14 +977,14 @@ final class MinneKeyOverlayView: NSView {
         // Outlines rather than `.fill` symbols: an outcome is said in one line
         // of coloured ink and one hairline glyph — the panel never grows a
         // coloured block to say it.
-        outcome.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10.5, weight: .medium)
+        outcome.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         outcome.setContentHuggingPriority(.required, for: .horizontal)
 
-        status.font = .systemFont(ofSize: 11.5)
+        status.font = .systemFont(ofSize: 12)
         status.textColor = OverlayPalette.inkSecondary
         status.lineBreakMode = .byWordWrapping
         status.maximumNumberOfLines = 3
-        status.preferredMaxLayoutWidth = Self.contentWidth - Self.outcomeColumn
+        status.preferredMaxLayoutWidth = contentWidth - Self.outcomeColumn
 
         grounding.font = .systemFont(ofSize: 11)
         grounding.textColor = OverlayPalette.inkTertiary
@@ -975,7 +999,7 @@ final class MinneKeyOverlayView: NSView {
         // ⌘E is the invitation to edit; esc, in the accent, is the way back
         // out — the same one-slot-two-answers pattern as the guidance field's
         // ⇥/↩ hint, and the affordance that says the draft is touchable at all.
-        editHint.font = .systemFont(ofSize: 10.5)
+        editHint.font = .systemFont(ofSize: 11)
         editHint.setContentHuggingPriority(.required, for: .horizontal)
         editHint.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -1019,25 +1043,37 @@ final class MinneKeyOverlayView: NSView {
         // draft, and a little more before the row of capsules. The grounding
         // line hugs the draft it annotates — its spacing is set per state in
         // `show`, because a hidden view collapses its custom spacing with it.
-        column.setCustomSpacing(9, after: header)
-        column.setCustomSpacing(9, after: rule)
-        column.setCustomSpacing(11, after: statusRow)
-        column.setCustomSpacing(13, after: shimmer)
-        column.setCustomSpacing(13, after: draft)
-        column.setCustomSpacing(13, after: draftEditor)
-        column.setCustomSpacing(13, after: grounding)
-        column.setCustomSpacing(12, after: guidance)
-        NSLayoutConstraint.activate([
-            header.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            rule.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            shimmer.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            guidance.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            draftEditor.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            draft.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-            grounding.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth),
+        column.setCustomSpacing(10, after: header)
+        column.setCustomSpacing(10, after: rule)
+        column.setCustomSpacing(12, after: statusRow)
+        column.setCustomSpacing(14, after: shimmer)
+        column.setCustomSpacing(14, after: draft)
+        column.setCustomSpacing(14, after: draftEditor)
+        column.setCustomSpacing(14, after: grounding)
+        column.setCustomSpacing(13, after: guidance)
+        widthPins = [
+            header.widthAnchor.constraint(equalToConstant: contentWidth),
+            rule.widthAnchor.constraint(equalToConstant: contentWidth),
+            shimmer.widthAnchor.constraint(equalToConstant: contentWidth),
+            guidance.widthAnchor.constraint(equalToConstant: contentWidth),
+            draftEditor.widthAnchor.constraint(equalToConstant: contentWidth),
+            draft.widthAnchor.constraint(equalToConstant: contentWidth),
+            grounding.widthAnchor.constraint(lessThanOrEqualToConstant: contentWidth),
             // Full width, not ≤: the edit hint sits at the row's trailing edge.
-            statusRow.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-        ])
+            statusRow.widthAnchor.constraint(equalToConstant: contentWidth),
+        ]
+        NSLayoutConstraint.activate(widthPins)
+    }
+
+    /// Moves the whole grid to a new width — every pinned row, the status
+    /// line's wrap width, and the draft's own measure. Width is decided by the
+    /// controller (`OverlayWidth`), and within a press it only ever grows.
+    func setContentWidth(_ width: CGFloat) {
+        guard width != contentWidth else { return }
+        contentWidth = width
+        for pin in widthPins { pin.constant = width }
+        status.preferredMaxLayoutWidth = width - Self.outcomeColumn
+        draft.setContentWidth(width)
     }
 
     /// What the outcome glyph and its gap take off the status line's width.
@@ -1289,11 +1325,14 @@ final class MinneKeyOverlayView: NSView {
     /// set as an aside: smaller, and in the ink the app's own name uses.
     static func body(_ text: String, elided: Bool) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 3
+        // The editor's own metrics, by name: the label and the editor swap in
+        // place, and two hardcoded copies of the same numbers is how they
+        // would drift apart.
+        paragraph.lineSpacing = DraftEditor.lineSpacing
         let body = NSMutableAttributedString(
             string: text,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 12.5),
+                .font: DraftEditor.font,
                 .foregroundColor: OverlayPalette.ink,
                 .paragraphStyle: paragraph,
             ])
@@ -1306,7 +1345,7 @@ final class MinneKeyOverlayView: NSView {
             let start = separator.upperBound - 1
             body.addAttributes(
                 [
-                    .font: NSFont.systemFont(ofSize: 11),
+                    .font: NSFont.systemFont(ofSize: 11.5),
                     .foregroundColor: OverlayPalette.inkTertiary,
                 ], range: NSRange(location: start, length: body.length - start))
         }
@@ -1469,7 +1508,7 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         panel = MinneKeyOverlayPanel(
             contentRect: NSRect(
                 x: 0, y: 0,
-                width: MinneKeyOverlayView.contentWidth + MinneKeyOverlayView.inset.width * 2,
+                width: MinneKeyOverlayView.minContentWidth + MinneKeyOverlayView.inset.width * 2,
                 height: 44),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -1540,28 +1579,36 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         content.render(guidance: [])
         content.endGuiding()
         _ = content.endDraftEditing()
-        content.render(target, state: state)
         caret = OverlayPlacement.flipped(
             target.anchor.rect, primaryHeight: Self.primaryScreenHeight())
+        // A fresh press starts at the width its opening state deserves —
+        // compact while thinking, wider at once when it opens straight onto a
+        // draft (previews do).
+        let visible = Self.screen(containing: caret).visibleFrame
+        content.setContentWidth(
+            OverlayWidth.content(forDraftCharacters: Self.draftCharacters(state), visible: visible))
+        content.render(target, state: state)
 
         // The geometry is claimed here, once: the size the panel opens at
         // decides its width and which edge is pinned, and every state after
-        // this one only chooses a height.
+        // this one only chooses a height — except a draft earning a wider
+        // panel, which grows the width through `widened` and nothing else.
         panel.contentView?.layoutSubtreeIfNeeded()
         let size = panel.contentView?.fittingSize ?? panel.frame.size
-        geometry = MinneKeyOverlayGeometry.claim(
-            size: size, caret: caret, visible: Self.screen(containing: caret).visibleFrame)
+        geometry = MinneKeyOverlayGeometry.claim(size: size, caret: caret, visible: visible)
         let frame = place(animated: false)
         // A short rise from just below where it settles: it reads as the panel
-        // arriving at the caret rather than being switched on.
-        panel.setFrame(frame.offsetBy(dx: 0, dy: -Self.rise), display: false)
+        // arriving at the caret rather than being switched on. Skipped, along
+        // with every other movement, for a user who asked motion to be reduced.
+        let rise = Self.reduceMotion ? 0 : Self.rise
+        panel.setFrame(frame.offsetBy(dx: 0, dy: -rise), display: false)
         panel.alphaValue = 0
         // `orderFrontRegardless`, never `makeKeyAndOrderFront`: the second would
         // pull focus away from the field the overlay is pointing at, and Minne
         // is an accessory app that is not even active.
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.appearDuration
+            context.duration = Self.duration(Self.appearDuration)
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
             panel.animator().setFrame(frame, display: true)
@@ -1575,12 +1622,36 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         // whatever produced this state acted on the edited text.
         endEditingDraft()
         self.state = state
+        widen(for: state)
         content.render(state)
         // A state with no draft on screen has no field to type into either, so
         // whatever the user had started typing is abandoned along with it —
         // and the keyboard goes back where it came from.
         if !state.isDraftOnScreen { endGuiding() }
         place(animated: true)
+    }
+
+    /// The draft that decides the panel's width, when the state carries one.
+    private static func draftCharacters(_ state: MinneKeyOverlayState) -> Int? {
+        switch state {
+        case .result(let text, _): return text.count
+        case .reworking(_, let previous): return previous.count
+        default: return nil
+        }
+    }
+
+    /// Grows the claimed geometry to the width this state's draft deserves.
+    /// Only ever grows — a rework that came back shorter keeps the width the
+    /// press already earned, so nothing on screen shuffles — and the content
+    /// grid moves with it in the same layout pass.
+    private func widen(for state: MinneKeyOverlayState) {
+        guard let characters = Self.draftCharacters(state), let claimed = geometry else { return }
+        let visible = Self.screen(containing: caret).visibleFrame
+        let wanted = OverlayWidth.content(forDraftCharacters: characters, visible: visible)
+        let panelWidth = wanted + MinneKeyOverlayView.inset.width * 2
+        guard panelWidth > claimed.width else { return }
+        content.setContentWidth(wanted)
+        geometry = claimed.widened(to: panelWidth, visible: visible)
     }
 
     func update(guidance: [String]) {
@@ -1841,7 +1912,7 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         endEditingDraft()
         endGuiding()
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.disappearDuration
+            context.duration = Self.duration(Self.disappearDuration)
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
         } completionHandler: { [panel] in
@@ -1882,7 +1953,7 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
             geometry ?? MinneKeyOverlayGeometry.claim(size: size, caret: caret, visible: visible)
         let frame = geometry.frame(height: size.height, visible: visible)
         guard frame != panel.frame else { return frame }
-        if animated {
+        if animated, !Self.reduceMotion {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Self.resizeDuration
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -1906,10 +1977,27 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
     }
 
     /// The screen the caret is on, so a caret on a second display does not get
-    /// an overlay clamped to the primary one.
+    /// an overlay clamped to the primary one. The pick itself is pure
+    /// (`MinneKeyOverlayGeometry.screenIndex`): midpoint-contains, which is
+    /// deterministic for a caret on the shared edge between two displays and
+    /// testable without a window server — see the comment there.
     private static func screen(containing rect: CGRect) -> NSScreen {
-        NSScreen.screens.first { $0.frame.intersects(rect) }
-            ?? NSScreen.main
-            ?? NSScreen.screens[0]
+        let screens = NSScreen.screens
+        if let index = MinneKeyOverlayGeometry.screenIndex(
+            containing: rect, frames: screens.map(\.frame))
+        {
+            return screens[index]
+        }
+        return NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    /// Whether the user asked the system to reduce motion — the panel then
+    /// appears, resizes and leaves without animating.
+    private static var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    private static func duration(_ base: TimeInterval) -> TimeInterval {
+        reduceMotion ? 0 : base
     }
 }

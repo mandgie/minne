@@ -60,6 +60,74 @@ struct MinneKeyOverlayGeometry: Equatable, Sendable {
         let y = min(max(wanted, visible.minY), max(visible.minY, visible.maxY - height))
         return CGRect(x: x, y: y, width: width, height: height)
     }
+
+    /// The claimed geometry, wider. Width only ever grows within a press — a
+    /// draft that earned a wide panel keeps it through guiding, editing and
+    /// every rework, so nothing shuffles — and the anchored edge and growth
+    /// direction are untouched. The left edge stays put unless the wider panel
+    /// would leave the screen, and then moves left by the least that keeps it
+    /// on, exactly `claim`'s clamp.
+    func widened(to newWidth: CGFloat, visible: CGRect) -> MinneKeyOverlayGeometry {
+        guard newWidth > width else { return self }
+        var wider = self
+        wider.width = newWidth
+        wider.x = min(max(x, visible.minX), max(visible.minX, visible.maxX - newWidth))
+        return wider
+    }
+
+    /// The screen the caret is on, as an index into `frames` — nil when none
+    /// contains it (the caller falls back to the main screen).
+    ///
+    /// By the caret's *midpoint* rather than by `intersects`. Empirically
+    /// (macOS 15, verified 2026-08-28) `CGRect.intersects` does match a
+    /// zero-width caret rect strictly inside a frame — but a caret ON the
+    /// shared edge between two displays intersects both, and which screen won
+    /// then depended on `NSScreen.screens` order. A midpoint `contains` names
+    /// exactly one screen there, and being pure CoreGraphics it is testable at
+    /// all, which the `NSScreen` version never was. The one-point outset
+    /// catches a caret sitting exactly on the arrangement's outer top or
+    /// right edge, which `contains` excludes.
+    static func screenIndex(containing rect: CGRect, frames: [CGRect]) -> Int? {
+        let point = CGPoint(x: rect.midX, y: rect.midY)
+        return frames.firstIndex { $0.contains(point) }
+            ?? frames.firstIndex { $0.insetBy(dx: -1, dy: -1).contains(point) }
+    }
+}
+
+/// How wide the panel deserves to be, decided from the draft it is showing.
+///
+/// Three tiers rather than a continuous function: a width that tracked the
+/// character count exactly would give every draft its own panel size and no
+/// two presses would look alike. Short drafts keep the compact panel, a
+/// paragraph earns the middle width, and anything approaching the preview cap
+/// gets the widest — clamped so the panel never takes more than a civilised
+/// share of the screen it is on. Pure, so the tiers are testable.
+enum OverlayWidth {
+    /// The compact content width — the panel's floor, and what every press
+    /// opens at before its draft has arrived.
+    static let baseContent: CGFloat = 360
+    static let midContent: CGFloat = 448
+    static let wideContent: CGFloat = 528
+    /// Character counts at which a draft earns the next tier.
+    static let midCharacters = 260
+    static let wideCharacters = 520
+    /// The largest share of a screen's visible width the panel may claim.
+    static let screenShare: CGFloat = 0.45
+
+    /// The content width for a draft of `characters` on a screen of `visible`.
+    /// Nil characters — no draft yet — is the base width.
+    static func content(forDraftCharacters characters: Int?, visible: CGRect) -> CGFloat {
+        let tier: CGFloat
+        switch characters ?? 0 {
+        case ..<midCharacters: tier = baseContent
+        case ..<wideCharacters: tier = midContent
+        default: tier = wideContent
+        }
+        // A small screen caps the tiers rather than the base: the compact
+        // panel fits anywhere a caret does.
+        let cap = max(baseContent, (visible.width * screenShare).rounded(.down))
+        return min(tier, cap)
+    }
 }
 
 /// Where a borrowed field's scroller may come to rest (US-203).

@@ -93,31 +93,34 @@ final class MinneKeyOverlayTests: XCTestCase {
         XCTAssertEqual(GuidanceRow.fieldHeight(content: 42, line: 14), 42)
     }
 
-    /// Past four lines the words scroll inside the field instead of growing
+    /// Past the line cap the words scroll inside the field instead of growing
     /// the panel any further.
-    func testGrowthStopsAtFourLines() {
-        XCTAssertEqual(GuidanceRow.fieldHeight(content: 14 * 4, line: 14), 14 * 4)
-        XCTAssertEqual(GuidanceRow.fieldHeight(content: 14 * 9, line: 14), 14 * 4)
+    func testGrowthStopsAtTheLineCap() {
+        let cap = CGFloat(GuidanceRow.maxFieldLines)
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 14 * cap, line: 14), 14 * cap)
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 14 * (cap + 5), line: 14), 14 * cap)
     }
 
     /// Growth rounds up — a fractional line height that was floored would clip
-    /// the last line's descenders — but the cap is exactly four lines: the cap
+    /// the last line's descenders — but the cap is exactly whole lines: the cap
     /// is the one height at which the field scrolls, and a viewport taller
     /// than its whole lines shows a clipped sliver of the line above.
     func testAFractionalLineHeightRoundsUpButTheCapStaysOnWholeLines() {
+        let cap = CGFloat(GuidanceRow.maxFieldLines)
         XCTAssertEqual(GuidanceRow.fieldHeight(content: 13.4, line: 13.4), 14)
-        XCTAssertEqual(GuidanceRow.fieldHeight(content: 13.4 * 6, line: 13.4), 13.4 * 4)
+        XCTAssertEqual(GuidanceRow.fieldHeight(content: 13.4 * (cap + 2), line: 13.4), 13.4 * cap)
     }
 
     /// The draft editor shares the same clamp with a larger cap: it grows with
-    /// the draft and scrolls inside itself past twelve lines.
-    func testTheDraftEditorGrowsToTwelveLinesThenScrolls() {
+    /// the draft and scrolls inside itself past its own line cap.
+    func testTheDraftEditorGrowsToItsLineCapThenScrolls() {
+        let cap = CGFloat(DraftEditor.maxLines)
         XCTAssertEqual(
             GuidanceRow.fieldHeight(content: 15.5 * 6, line: 15.5, maxLines: DraftEditor.maxLines),
             15.5 * 6)
         XCTAssertEqual(
             GuidanceRow.fieldHeight(content: 15.5 * 30, line: 15.5, maxLines: DraftEditor.maxLines),
-            15.5 * 12)
+            15.5 * cap)
     }
 
     // MARK: - Which key hints tell the truth

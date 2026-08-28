@@ -139,18 +139,18 @@ final class MinneKeyOverlayGeometryTests: XCTestCase {
 
     /// A capped field's largest scroll offset is `content − viewport`; only
     /// because the cap subtracts the trailing line spacing does that land on a
-    /// slot boundary. Guidance: 6 lines in slots of 15 with a 1 pt moat is 89
-    /// of content against a 59 cap — offset 30, exactly two slots.
+    /// slot boundary. Guidance: 8 lines in slots of 15 with a 1 pt moat is 119
+    /// of content against an 89 cap (six lines) — offset 30, exactly two slots.
     func testTheCapPutsTheEndOfFieldRestOnASlotBoundary() {
-        let cap = GuidanceRow.fieldHeight(content: 6 * 15 - 1, line: 15, spacing: 1)
-        XCTAssertEqual(cap, 59)
-        XCTAssertEqual((6 * 15 - 1) - cap, 30)
+        let cap = GuidanceRow.fieldHeight(content: 8 * 15 - 1, line: 15, spacing: 1)
+        XCTAssertEqual(cap, 89)
+        XCTAssertEqual((8 * 15 - 1) - cap, 30)
         // The draft editor: 20 lines in slots of 18 with a 3 pt moat against
-        // its 12-line cap — offset 144, exactly eight slots.
+        // its 14-line cap — offset 108, exactly six slots.
         let editorCap = GuidanceRow.fieldHeight(
             content: 20 * 18 - 3, line: 18, spacing: 3, maxLines: DraftEditor.maxLines)
-        XCTAssertEqual(editorCap, 213)
-        XCTAssertEqual((20 * 18 - 3) - editorCap, 144)
+        XCTAssertEqual(editorCap, 249)
+        XCTAssertEqual((20 * 18 - 3) - editorCap, 108)
     }
 
     /// An empty field is one line of ink tall — the slot less its moat.
@@ -158,5 +158,122 @@ final class MinneKeyOverlayGeometryTests: XCTestCase {
         XCTAssertEqual(GuidanceRow.fieldHeight(content: 0, line: 15, spacing: 1), 14)
         XCTAssertEqual(
             GuidanceRow.fieldHeight(content: 0, line: 18, spacing: 3, maxLines: 12), 15)
+    }
+
+    // MARK: - How wide a draft makes the panel
+
+    func testAShortDraftKeepsTheCompactWidth() {
+        XCTAssertEqual(
+            OverlayWidth.content(forDraftCharacters: 80, visible: screen),
+            OverlayWidth.baseContent)
+        XCTAssertEqual(
+            OverlayWidth.content(forDraftCharacters: nil, visible: screen),
+            OverlayWidth.baseContent)
+    }
+
+    func testAParagraphEarnsTheMiddleWidthAndALongDraftTheWide() {
+        XCTAssertEqual(
+            OverlayWidth.content(forDraftCharacters: 300, visible: screen),
+            OverlayWidth.midContent)
+        XCTAssertEqual(
+            OverlayWidth.content(forDraftCharacters: 600, visible: screen),
+            OverlayWidth.wideContent)
+    }
+
+    /// The tiers are monotonic in the draft's length — the "only grow" rule
+    /// upstream relies on a longer rework never asking for a narrower panel.
+    func testWidthNeverShrinksAsTheDraftGrows() {
+        var last: CGFloat = 0
+        for characters in stride(from: 0, through: 800, by: 20) {
+            let width = OverlayWidth.content(forDraftCharacters: characters, visible: screen)
+            XCTAssertGreaterThanOrEqual(width, last)
+            last = width
+        }
+    }
+
+    /// A small screen caps the wide tiers; the compact base fits anywhere a
+    /// caret does and is never capped away.
+    func testASmallScreenCapsTheWideTiersButNeverTheBase() {
+        let small = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        XCTAssertEqual(OverlayWidth.content(forDraftCharacters: 600, visible: small), 450)
+        let tiny = CGRect(x: 0, y: 0, width: 500, height: 400)
+        XCTAssertEqual(
+            OverlayWidth.content(forDraftCharacters: 600, visible: tiny),
+            OverlayWidth.baseContent)
+    }
+
+    // MARK: - Widening a claimed geometry
+
+    /// A draft arriving widens the panel in place: the anchored edge and the
+    /// left edge hold, only the width grows.
+    func testWideningKeepsTheAnchorAndTheLeftEdge() {
+        let caret = CGRect(x: 400, y: 500, width: 0, height: 18)
+        let claimed = MinneKeyOverlayGeometry.claim(size: opening, caret: caret, visible: screen)
+        let wider = claimed.widened(to: 560, visible: screen)
+        XCTAssertEqual(wider.width, 560)
+        XCTAssertEqual(wider.x, claimed.x)
+        XCTAssertEqual(wider.anchor, claimed.anchor)
+        XCTAssertEqual(wider.growth, claimed.growth)
+    }
+
+    /// Width only grows within a press — a shorter rework keeps the width the
+    /// press already earned.
+    func testWideningNeverNarrows() {
+        let caret = CGRect(x: 400, y: 500, width: 0, height: 18)
+        let claimed = MinneKeyOverlayGeometry.claim(size: opening, caret: caret, visible: screen)
+            .widened(to: 560, visible: screen)
+        XCTAssertEqual(claimed.widened(to: 400, visible: screen), claimed)
+    }
+
+    /// A panel widened near the right edge slides left just enough to stay on
+    /// screen — the same clamp its claim used.
+    func testWideningNearTheRightEdgeSlidesBackOnScreen() {
+        let caret = CGRect(x: 1300, y: 500, width: 0, height: 18)
+        let claimed = MinneKeyOverlayGeometry.claim(size: opening, caret: caret, visible: screen)
+        let wider = claimed.widened(to: 560, visible: screen)
+        let frame = wider.frame(height: 200, visible: screen)
+        XCTAssertEqual(frame.maxX, screen.maxX)
+        XCTAssertTrue(screen.contains(frame))
+    }
+
+    // MARK: - Which screen the caret is on
+
+    /// Zero-width caret rects — every caret rect is one — find their display.
+    func testAZeroWidthCaretOnASecondDisplayFindsThatDisplay() {
+        let frames = [
+            CGRect(x: 0, y: 0, width: 1440, height: 900),
+            CGRect(x: 1440, y: 0, width: 1920, height: 1080),
+        ]
+        let caret = CGRect(x: 2000, y: 600, width: 0, height: 18)
+        XCTAssertEqual(MinneKeyOverlayGeometry.screenIndex(containing: caret, frames: frames), 1)
+        let primary = CGRect(x: 700, y: 300, width: 0, height: 18)
+        XCTAssertEqual(MinneKeyOverlayGeometry.screenIndex(containing: primary, frames: frames), 0)
+    }
+
+    /// A caret on the shared edge between two displays belongs to exactly one
+    /// of them — `intersects` matched both and left the winner to screen
+    /// order, which is the honest reason the pick is midpoint-based.
+    func testACaretOnTheSharedEdgeIsDecidedDeterministically() {
+        let frames = [
+            CGRect(x: 0, y: 0, width: 1440, height: 900),
+            CGRect(x: 1440, y: 0, width: 1920, height: 1080),
+        ]
+        let onEdge = CGRect(x: 1440, y: 450, width: 0, height: 18)
+        XCTAssertTrue(frames[0].intersects(onEdge) || frames[1].intersects(onEdge))
+        XCTAssertEqual(MinneKeyOverlayGeometry.screenIndex(containing: onEdge, frames: frames), 1)
+    }
+
+    /// A caret exactly on a screen's far edge — which `contains` excludes —
+    /// still finds that screen through the one-point outset.
+    func testACaretOnAScreensFarEdgeStillFindsIt() {
+        let frames = [CGRect(x: 0, y: 0, width: 1440, height: 900)]
+        let caret = CGRect(x: 1440, y: 450, width: 0, height: 0)
+        XCTAssertEqual(MinneKeyOverlayGeometry.screenIndex(containing: caret, frames: frames), 0)
+    }
+
+    func testACaretOnNoScreenFindsNothing() {
+        let frames = [CGRect(x: 0, y: 0, width: 1440, height: 900)]
+        let caret = CGRect(x: 4000, y: 4000, width: 0, height: 18)
+        XCTAssertNil(MinneKeyOverlayGeometry.screenIndex(containing: caret, frames: frames))
     }
 }

@@ -147,13 +147,13 @@ final class DraftEditor: NSView {
     /// Where the editor stops growing and starts scrolling inside itself. A
     /// draft is a paragraph or three; past this it is a document, and the panel
     /// is a HUD at someone's caret.
-    nonisolated static let maxLines = 12
+    nonisolated static let maxLines = 14
 
     /// The read-only draft's own type, so the swap moves nothing. Shared with
-    /// `DraftArea`, which clamps the read-only draft to the same twelve lines —
+    /// `DraftArea`, which clamps the read-only draft to the same line cap —
     /// the two must measure with the same metrics or the swap would jump.
-    static let font = NSFont.systemFont(ofSize: 12.5)
-    static let lineSpacing: CGFloat = 3
+    static let font = NSFont.systemFont(ofSize: 13)
+    static let lineSpacing: CGFloat = 3.5
 
     /// One line's slot in the draft's type: line height plus the paragraph
     /// air. The read-only draft area caps itself at `maxLines` of exactly this.
