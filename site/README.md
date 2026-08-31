@@ -33,21 +33,42 @@ site — re-verify and bump `checked` quarterly.
 ## The page is the demo
 
 Everything is arranged around one thing: the stage in `#demo`, which plays the
-same story in four moments — a message to answer, an email that needs a time, a
-blank note with an instruction in it, and a question put straight to your
-memory. The caret waits, right-Option goes down, Minne's panel opens and
-thinks, the draft streams in, Insert lands it in the field.
+same story inside four drawn replicas of real apps — Slack (a DM to answer),
+Gmail (an email that needs a time), X (a public reply that has to be right)
+and Notion (a blank page with an instruction typed into it). The caret waits,
+right-Option goes down, Minne's panel opens and thinks, the draft streams in,
+Insert lands it in the field.
 
-- **Scenes** are markup in `index.html` (`.scene`), one per moment, each
-  carrying its *finished* text. `assets/demo.js` takes a copy of that text,
-  empties the field and plays it back.
+- **Scenes** are markup in `index.html` (`.scene`), one per app, each carrying
+  `data-app` (the name the panel shows), `data-think` (the status line while
+  it thinks), `data-ground` (the notes it read, shown under the draft) and the
+  *finished* text in `.composer__text`. `assets/demo.js` takes a copy of that
+  text, empties the field and plays it back.
+- **The replicas** are CSS, not screenshots (`.app--slack`, `.app--gmail`,
+  `.app--x`, `.app--notion` in styles.css). They mimic the apps' layout and
+  palette closely enough to be recognised at a glance; none of their logos or
+  artwork is copied — icons are generic strokes in the `<symbol>` sprite at the
+  top of `index.html`. Under 760px each replica switches to the app's *phone*
+  layout rather than a squeezed desktop one: Slack's iOS DM screen (back
+  chevron, avatar and name, huddle icon, the message box at the bottom),
+  Gmail's thread view (archive/trash/mail/more bar, quick-reply pill), X's
+  post detail with the compose-sheet reply, Notion's page with back/share/more.
+  Mobile-only elements carry `.m-only`, desktop-only ones `.d-only`; the Mac
+  title bar is hidden at that width.
 - **The overlay** (`#overlay`) is shared by every scene, so Minne's panel is
-  built once.
-- **Adding a moment** means adding a `.scene` and a `.tab` next to it, plus a
+  built once. On desktop it sits over the message box (which is at the bottom
+  of every app) — except in Notion, where it opens under the first line
+  (`.stage[data-app="Notion"] .key`).
+- **Adding an app** means adding a `.scene` and a `.tab` next to it, plus a
   line in `SAYS` in `assets/demo.js`. No other wiring.
 - Without JavaScript the four scenes simply stack, each already finished, and
   the page still reads. Under `prefers-reduced-motion` nothing animates: the
   tabs switch between the same finished states.
+
+Below the stage: `#remembers` (a Finder window on `~/Minne`, also drawn) and
+`#facts` (six facts, and the egress ledger folded into a `<details>` — that
+ledger mirrors `SettingsModel.egressLine` and the README; change one, change
+all three).
 
 ## Layout
 

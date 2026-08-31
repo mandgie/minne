@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Minne — tap one key, get the reply you would have written</title>
-<meta name="description" content="Minne remembers what you work on and writes from it. Tap right-Option in any text field on your Mac and the reply, the summary or the answer is already there — in your words, on your machine.">
+<meta name="description" content="Minne remembers what you work on and writes from it. Tap right-Option in Slack, Gmail, X, Notion — any text field on your Mac — and the reply is already there, in your words, on your machine.">
 <link rel="canonical" href="https://minne.sh/">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
@@ -26,6 +26,53 @@
 <body>
 <a class="skip" href="#demo">Skip to the demo</a>
 
+<!-- Icons for the app replicas. Drawn here, generic and stroke-based — none of
+     them is a copy of an app's own artwork. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 11 12 3.5l8.5 7.5V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 7 8.5 6.5L20.5 7"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3.5h12v17l-6-4.5-6 4.5z"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c1-4 4-6 7.5-6s6.5 2 7.5 6"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M12 4c-4.7 0-8.5 3.1-8.5 7 0 2.2 1.2 4.1 3 5.4L6 20l4-1.7c.6.1 1.3.2 2 .2 4.7 0 8.5-3.1 8.5-7S16.7 4 12 4z"/></symbol>
+    <symbol id="i-repost" viewBox="0 0 24 24"><path d="M4 9V6.5A1.5 1.5 0 0 1 5.5 5H17l-3-3M20 15v2.5a1.5 1.5 0 0 1-1.5 1.5H7l3 3"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V12M12 20V4M19 20v-6"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m6-7-7 7 7 7"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 14h5l1.5 2h3L15 14h5"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9L6.7 20l1.1-6L3.4 9.8l6-.8z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M3.5 3.5 21 12 3.5 20.5 6 12z"/><path d="M6 12h15"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m4 20 1-4L16.5 4.5a2 2 0 0 1 3 3L8 19z"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 1 0-5.6l2.5-2.5a4 4 0 0 1 5.6 5.6L17 12.6M14 10a4 4 0 0 1 0 5.6l-2.5 2.5a4 4 0 0 1-5.6-5.6L7 11.4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="18" r="1"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14c1 1.4 2.1 2 3.5 2s2.5-.6 3.5-2"/><circle cx="9.5" cy="10" r=".6"/><circle cx="14.5" cy="10" r=".6"/></symbol>
+    <symbol id="i-at" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M15.5 12v1.5a2 2 0 0 0 4 0V12a7.5 7.5 0 1 0-3 6"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m16 7-7.5 7.5a2.5 2.5 0 0 0 3.5 3.5L19.5 10.5a4.5 4.5 0 0 0-6.4-6.4L5.5 11.7a6 6 0 0 0 8.5 8.5L20 14.3"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5.5-5 3.5 3 3-2.5 4.5 4"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M4 3h4.5l11.5 18H15.5z"/><path d="M19.5 3 5 21"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8 5.5 5.5 0 0 1 10.6 1.5A3.3 3.3 0 0 1 17 18z"/></symbol>
+    <symbol id="i-desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="i-chevl" viewBox="0 0 24 24"><path d="m14.5 5.5-6.5 6.5 6.5 6.5"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><path d="M3.5 4.5h17v4h-17zM5 8.5v11h14v-11"/><path d="M10 13h4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-morev" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="18" r="1.4"/></symbol>
+    <symbol id="i-head" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></symbol>
+  </defs>
+</svg>
+
 <header class="nav" id="nav">
   <div class="nav__inner">
     <a class="wordmark" href="#top" aria-label="Minne, home">
@@ -34,8 +81,8 @@
     </a>
     <nav class="nav__links" aria-label="Sections">
       <a href="#demo">see it work</a>
-      <a href="#gives">what you get</a>
-      <a href="#yours">your Mac only</a>
+      <a href="#remembers">what it remembers</a>
+      <a href="#facts">the facts</a>
     </nav>
     <div class="nav__cta">
       <a class="btn btn--ghost" href="https://docs.minne.sh">Docs</a>
@@ -47,7 +94,7 @@
 
 <main id="main">
 
-<!-- ── hero ─────────────────────────────────────────────────────────── -->
+<!-- ── hero: one sentence, then the product ─────────────────────────── -->
 <section class="hero" id="top">
   <div class="hero__field" aria-hidden="true"></div>
   <div class="hero__veil" aria-hidden="true"></div>
@@ -56,8 +103,8 @@
     <p class="eyebrow">a memory for your Mac</p>
     <h1 class="hero__title">Tap one key.<br class="br-lg"> Get the reply you<br class="br-lg"> would have written.</h1>
     <p class="lede hero__lede">
-      Minne quietly remembers what you work on — the threads, the decisions, the people —
-      and writes from it wherever you type. In your words. On your machine.
+      Minne remembers what you work on and writes from it — in Slack, Gmail, X, Notion,
+      anywhere you type. In your words. On your machine.
     </p>
     <div class="hero__actions">
       <a class="btn btn--solid btn--lg" href="https://github.com/mandgie/minne/releases/latest/download/Minne.dmg">
@@ -71,146 +118,291 @@
   </div>
 </section>
 
-<!-- ── the demo: the whole product in four moments ──────────────────── -->
+<!-- ── the demo: the whole product, in the apps you already use ─────── -->
 <section class="section demo" id="demo">
   <div class="wrap">
-    <header class="section__head section__head--wide" data-reveal>
-      <p class="eyebrow eyebrow--link">[[see-it-work]]</p>
-      <h2 class="h2">You are about to write<br> something you already know.</h2>
-      <p class="lede">
-        So don't. Tap right-Option and Minne writes it — from the thread in front of you and
-        everything it has watched you do. Four ordinary moments, the same key every time.
-      </p>
-    </header>
-
     <div class="demo__stage" data-reveal>
-     <div class="rail">
-      <div class="tabs" role="tablist" aria-label="Four moments">
-        <button class="tab is-on" role="tab" id="tab-0" aria-controls="case-0" aria-selected="true" data-case="0">
-          <span class="tab__n">Replying</span>
-          <span class="tab__d">to a colleague</span>
-          <span class="tab__bar"></span>
-        </button>
-        <button class="tab" role="tab" id="tab-1" aria-controls="case-1" aria-selected="false" tabindex="-1" data-case="1">
-          <span class="tab__n">Answering</span>
-          <span class="tab__d">an email</span>
-          <span class="tab__bar"></span>
-        </button>
-        <button class="tab" role="tab" id="tab-2" aria-controls="case-2" aria-selected="false" tabindex="-1" data-case="2">
-          <span class="tab__n">Writing up</span>
-          <span class="tab__d">where a project stands</span>
-          <span class="tab__bar"></span>
-        </button>
-        <button class="tab" role="tab" id="tab-3" aria-controls="case-3" aria-selected="false" tabindex="-1" data-case="3">
-          <span class="tab__n">Asking</span>
-          <span class="tab__d">what was agreed</span>
-          <span class="tab__bar"></span>
-        </button>
+      <div class="rail">
+        <div class="tabs" role="tablist" aria-label="Four apps">
+          <button class="tab is-on" role="tab" id="tab-0" aria-controls="case-0" aria-selected="true" data-case="0">
+            <span class="tab__n">Slack</span>
+            <span class="tab__d">a reply to Ingrid</span>
+            <span class="tab__bar"></span>
+          </button>
+          <button class="tab" role="tab" id="tab-1" aria-controls="case-1" aria-selected="false" tabindex="-1" data-case="1">
+            <span class="tab__n">Gmail</span>
+            <span class="tab__d">an email that needs a time</span>
+            <span class="tab__bar"></span>
+          </button>
+          <button class="tab" role="tab" id="tab-2" aria-controls="case-2" aria-selected="false" tabindex="-1" data-case="2">
+            <span class="tab__n">X</span>
+            <span class="tab__d">a reply with the facts in it</span>
+            <span class="tab__bar"></span>
+          </button>
+          <button class="tab" role="tab" id="tab-3" aria-controls="case-3" aria-selected="false" tabindex="-1" data-case="3">
+            <span class="tab__n">Notion</span>
+            <span class="tab__d">where a project stands</span>
+            <span class="tab__bar"></span>
+          </button>
+        </div>
+
+        <div class="hud">
+          <div class="keycap" id="keycap" aria-hidden="true">
+            <span class="keycap__key">⌥</span>
+            <span class="keycap__label">right Option</span>
+          </div>
+          <p class="hud__say" id="hudSay">
+            Minne read the thread, remembered that the dinner moved, and answered the way you write.
+          </p>
+        </div>
       </div>
 
-      <div class="hud">
-        <p class="hud__say" id="hudSay">
-          Minne read the thread, remembered what you promised Ingrid, and wrote it the way you write.
-        </p>
-      </div>
-     </div>
-
-      <div class="stage" id="stage">
+      <div class="stage" id="stage" data-app="Slack">
         <div class="stage__glow" aria-hidden="true"></div>
-        <div class="keycap" id="keycap" aria-hidden="true">
-          <span class="keycap__key">⌥</span>
-          <span class="keycap__label">right Option</span>
-        </div>
 
-        <!-- 1 — a message from a colleague on a work network -->
+        <!-- 1 — Slack: a direct message from a colleague -->
         <div class="scene is-on" id="case-0" role="tabpanel" aria-labelledby="tab-0"
-             data-think="Reading the thread, checking your memory…">
-          <div class="win">
-            <div class="win__bar"><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">Messages</span></div>
-            <div class="win__body">
-              <p class="thread__day">Today</p>
-              <div class="msg">
-                <span class="ava">IB</span>
-                <div class="msg__body">
-                  <p class="msg__who">Ingrid Berg <span>· 09:42</span></p>
-                  <p class="msg__text">Can we talk before I fly out on Friday? I still need the budget, and Ada asked whether the team dinner is Wednesday or Thursday.</p>
-                </div>
-              </div>
-              <div class="composer">
-                <p class="composer__label">Write a reply…</p>
-                <p class="composer__text">Hi Ingrid — Thursday works. Shall we say 14:00 at the office? That gives us time for the Q3 budget before you fly, and I'll be at the team dinner after.</p>
-                <span class="composer__send">Send</span>
-              </div>
+             data-app="Slack"
+             data-think="Reading the thread, checking your memory…"
+             data-ground="Oslo move · Team dinner · Ada Nkemi">
+          <div class="win app app--slack">
+            <div class="app__bar">
+              <span class="lights"><i></i><i></i><i></i></span>
+              <span class="app__bar-search"><svg><use href="#i-search"/></svg>Search Nordlys</span>
             </div>
-          </div>
-        </div>
-
-        <!-- 2 — an email that needs a time -->
-        <div class="scene" id="case-1" role="tabpanel" aria-labelledby="tab-1"
-             data-think="Remembering where that work stands…">
-          <div class="win">
-            <div class="win__bar"><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">Mail</span></div>
-            <div class="win__body">
-              <p class="mail__subject">Re: retry logic — half an hour?</p>
-              <div class="msg">
-                <span class="ava ava--b">DR</span>
-                <div class="msg__body">
-                  <p class="msg__who">Daniel Roos <span>· yesterday</span></p>
-                  <p class="msg__text">Any chance you're free early next week to go through the retry logic with me? Whenever suits — I just don't want to guess at the numbers again.</p>
-                </div>
-              </div>
-              <div class="composer">
-                <p class="composer__label">Reply…</p>
-                <p class="composer__text">Tuesday works — 10:00? Good timing: the new retry numbers land Monday, so we can go through them together instead of guessing like last time.</p>
-                <span class="composer__send">Send</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 3 — a blank document and an instruction -->
-        <div class="scene" id="case-2" role="tabpanel" aria-labelledby="tab-2"
-             data-instruction="where does the Oslo move stand?"
-             data-think="Pulling the last three weeks together…">
-          <div class="win">
-            <div class="win__bar"><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">Notes</span></div>
-            <div class="win__body win__body--doc">
-              <p class="doc__title">Monday briefing</p>
-              <div class="composer composer--doc">
-                <p class="composer__label">Start writing…</p>
-                <p class="composer__text">Oslo move — as it stands today. The budget goes to Ingrid before her Friday flight. Lease dates are still open: the landlord owes us March or April. Ada takes the billing migration first, then the office setup. Team dinner moved to Thursday, 14:00 at the office.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 4 — asking the memory directly -->
-        <div class="scene scene--chat" id="case-3" role="tabpanel" aria-labelledby="tab-3"
-             data-key="⌥ Space"
-             data-keylabel="Option-Space"
-             data-think="Looking through your memory…">
-          <div class="win win--chat">
-            <div class="win__bar"><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">Minne</span></div>
-            <div class="win__body win__body--chat">
-              <p class="chat__ask">What did Ingrid and I agree on last week?</p>
-              <p class="chat__tool"><span class="chat__spin"></span><span class="chat__toolText">Looking through your memory…</span></p>
-              <div class="chat__answer">
-                <p>Three things:</p>
+            <div class="app__body">
+              <aside class="slack__side">
+                <p class="slack__ws">Nordlys <svg><use href="#i-chev"/></svg></p>
+                <p class="slack__sec">Channels</p>
                 <ul>
-                  <li>The Q3 budget goes to her <b>before her Friday flight</b>.</li>
-                  <li>The team dinner moved to <b>Thursday, 14:00</b> at the office.</li>
-                  <li>She confirms the lease dates once the landlord answers.</li>
+                  <li><b>#</b> general</li>
+                  <li><b>#</b> oslo-move</li>
+                  <li><b>#</b> billing-migration</li>
                 </ul>
-                <p class="chat__from">From what you wrote and read between 11 and 15 August.</p>
-              </div>
-              <div class="composer composer--chat">
-                <p class="composer__label">Ask your memory…</p>
+                <p class="slack__sec">Direct messages</p>
+                <ul>
+                  <li class="is-active"><i class="dot dot--on"></i> Ingrid Berg</li>
+                  <li><i class="dot"></i> Ada Nkemi</li>
+                  <li><i class="dot dot--on"></i> Daniel Roos</li>
+                </ul>
+              </aside>
+              <div class="slack__main">
+                <header class="slack__mhead m-only">
+                  <svg><use href="#i-chevl"/></svg>
+                  <span class="sava sava--ib">IB</span>
+                  <b>Ingrid Berg</b>
+                  <i class="dot dot--on"></i>
+                  <svg class="slack__mhead-r"><use href="#i-head"/></svg>
+                </header>
+                <header class="slack__head d-only">
+                  <span class="sava sava--ib">IB</span>
+                  <b>Ingrid Berg</b>
+                  <i class="dot dot--on"></i>
+                  <span class="slack__role">Head of Operations</span>
+                </header>
+                <div class="slack__msgs">
+                  <p class="slack__day"><span>Today</span></p>
+                  <div class="smsg">
+                    <span class="sava sava--ib">IB</span>
+                    <div>
+                      <p class="smsg__who">Ingrid Berg <span>9:42 AM</span></p>
+                      <p>Can we talk before I fly out on Friday? I still need the budget.</p>
+                    </div>
+                  </div>
+                  <div class="smsg smsg--cont">
+                    <span class="smsg__time">9:43</span>
+                    <div><p>Also — Ada asked whether the team dinner is Wednesday or Thursday, do you know?</p></div>
+                  </div>
+                </div>
+                <div class="composer slack__composer">
+                  <div class="slack__tools">
+                    <b>B</b><i>I</i><s>S</s><svg><use href="#i-link"/></svg><svg><use href="#i-list"/></svg><svg><use href="#i-code"/></svg>
+                  </div>
+                  <div class="composer__field">
+                    <p class="composer__label">Message Ingrid Berg</p>
+                    <p class="composer__text">Thursday, 14:00 at the office? That leaves time to go through the Q3 budget before you fly. And tell Ada the dinner is Thursday too — it moved when the Wednesday booking fell through.</p>
+                  </div>
+                  <div class="slack__foot">
+                    <span class="slack__plus"><svg><use href="#i-plus"/></svg></span>
+                    <svg><use href="#i-text"/></svg><svg><use href="#i-smile"/></svg><svg><use href="#i-at"/></svg><svg><use href="#i-clip"/></svg>
+                    <span class="composer__send slack__send"><svg><use href="#i-send"/></svg></span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- the overlay, shared by every scene -->
+        <!-- 2 — Gmail: an email that needs a time -->
+        <div class="scene" id="case-1" role="tabpanel" aria-labelledby="tab-1"
+             data-app="Gmail"
+             data-think="Remembering where that work stands…"
+             data-ground="Billing migration · Daniel Roos">
+          <div class="win app app--gmail">
+            <div class="app__bar app__bar--browser">
+              <span class="lights"><i></i><i></i><i></i></span>
+              <span class="app__url">mail.google.com</span>
+            </div>
+            <div class="gmail__top">
+              <svg class="gmail__menu"><use href="#i-menu"/></svg>
+              <span class="gmail__logo">Gmail</span>
+              <span class="gmail__search"><svg><use href="#i-search"/></svg>Search mail</span>
+              <span class="gava gava--me">MF</span>
+            </div>
+            <div class="app__body">
+              <aside class="gmail__side">
+                <span class="gmail__compose"><svg><use href="#i-pencil"/></svg>Compose</span>
+                <ul>
+                  <li class="is-active"><svg><use href="#i-inbox"/></svg>Inbox<span>3</span></li>
+                  <li><svg><use href="#i-star"/></svg>Starred</li>
+                  <li><svg><use href="#i-clock"/></svg>Snoozed</li>
+                  <li><svg><use href="#i-send"/></svg>Sent</li>
+                  <li><svg><use href="#i-file"/></svg>Drafts</li>
+                </ul>
+              </aside>
+              <div class="gmail__main">
+                <header class="gmail__mhead m-only">
+                  <svg><use href="#i-back"/></svg>
+                  <span class="gmail__mhead-r">
+                    <svg><use href="#i-archive"/></svg><svg><use href="#i-trash"/></svg><svg><use href="#i-mail"/></svg><svg><use href="#i-morev"/></svg>
+                  </span>
+                </header>
+                <p class="gmail__subject">Re: retry logic — half an hour? <span>Inbox</span></p>
+                <div class="gmsg">
+                  <span class="gava gava--dr">D</span>
+                  <div class="gmsg__body">
+                    <p class="gmsg__who"><b>Daniel Roos</b> <span>&lt;daniel@nordlys.no&gt;</span><em>Yesterday, 16:12</em></p>
+                    <p class="gmsg__to">to me <svg><use href="#i-chev"/></svg></p>
+                    <p class="gmsg__text">Any chance you're free early next week to go through the retry logic with me? Whenever suits — I just don't want to guess at the numbers again.</p>
+                    <p class="gmsg__text gmsg__text--sig">Daniel</p>
+                  </div>
+                </div>
+                <div class="composer gmail__reply">
+                  <p class="gmail__to d-only"><svg><use href="#i-reply"/></svg><span>Daniel Roos</span></p>
+                  <span class="gava gava--me gmail__qava m-only">MF</span>
+                  <div class="composer__field">
+                    <p class="composer__label m-only">Reply</p>
+                    <p class="composer__text">Tuesday works — 10:00? Good timing: the new retry numbers land Monday, so we can go through them together instead of guessing like last time.</p>
+                  </div>
+                  <div class="gmail__foot">
+                    <span class="composer__send gmail__send"><span class="d-only">Send</span><svg class="m-only"><use href="#i-send"/></svg></span>
+                    <svg><use href="#i-text"/></svg><svg><use href="#i-clip"/></svg><svg><use href="#i-link"/></svg><svg><use href="#i-smile"/></svg><svg><use href="#i-image"/></svg>
+                    <svg class="gmail__more"><use href="#i-more"/></svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 — X: a public reply that has to be right -->
+        <div class="scene" id="case-2" role="tabpanel" aria-labelledby="tab-2"
+             data-app="X"
+             data-think="Checking what you actually decided…"
+             data-ground="Billing migration · retry logic">
+          <div class="win app app--x">
+            <div class="app__bar app__bar--browser">
+              <span class="lights"><i></i><i></i><i></i></span>
+              <span class="app__url">x.com</span>
+            </div>
+            <div class="app__body">
+              <aside class="x__side">
+                <svg class="x__mark"><use href="#i-x"/></svg>
+                <ul>
+                  <li class="is-active"><svg><use href="#i-home"/></svg>Home</li>
+                  <li><svg><use href="#i-search"/></svg>Explore</li>
+                  <li><svg><use href="#i-bell"/></svg>Notifications</li>
+                  <li><svg><use href="#i-mail"/></svg>Messages</li>
+                  <li><svg><use href="#i-bookmark"/></svg>Bookmarks</li>
+                  <li><svg><use href="#i-person"/></svg>Profile</li>
+                </ul>
+                <span class="x__post">Post</span>
+              </aside>
+              <div class="x__main">
+                <header class="x__head"><svg><use href="#i-back"/></svg><b>Post</b></header>
+                <article class="xpost">
+                  <div class="xpost__who">
+                    <span class="xava xava--tl">T</span>
+                    <div><b>Tomas Lind</b><span>@tomaslind</span></div>
+                    <svg class="xpost__more"><use href="#i-more"/></svg>
+                  </div>
+                  <p class="xpost__text">What did you land on for retry backoff in the billing migration? Exponential with jitter, or fixed windows? Asking because ours just fell over again.</p>
+                  <p class="xpost__meta">11:02 · 28 Aug 2026 · <b>1,204</b> Views</p>
+                  <div class="xpost__acts">
+                    <span><svg><use href="#i-reply"/></svg>4</span>
+                    <span><svg><use href="#i-repost"/></svg>2</span>
+                    <span><svg><use href="#i-heart"/></svg>18</span>
+                    <span><svg><use href="#i-chart"/></svg></span>
+                    <span><svg><use href="#i-bookmark"/></svg></span>
+                    <span><svg><use href="#i-share"/></svg></span>
+                  </div>
+                </article>
+                <div class="composer x__reply">
+                  <p class="x__replying">Replying to <span>@tomaslind</span></p>
+                  <div class="x__row">
+                    <span class="xava xava--me">M</span>
+                    <div class="composer__field">
+                      <p class="composer__label">Post your reply</p>
+                      <p class="composer__text">Exponential with full jitter, capped at 30 s, five attempts. Fixed windows stacked the retries on the minute and took staging down twice. Final numbers land Monday — I'll write it up.</p>
+                    </div>
+                  </div>
+                  <div class="x__foot">
+                    <svg><use href="#i-image"/></svg><svg><use href="#i-smile"/></svg><svg><use href="#i-list"/></svg>
+                    <span class="composer__send x__send">Reply</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 — Notion: a blank page and an instruction -->
+        <div class="scene" id="case-3" role="tabpanel" aria-labelledby="tab-3"
+             data-app="Notion"
+             data-instruction="where does the Oslo move stand?"
+             data-think="Pulling the last three weeks together…"
+             data-ground="Oslo move · Ingrid Berg · Ada Nkemi · 11–28 Aug">
+          <div class="win app app--notion">
+            <div class="app__body">
+              <aside class="notion__side">
+                <span class="lights lights--in"><i></i><i></i><i></i></span>
+                <p class="notion__ws"><span class="notion__ws-icon">N</span>Nordlys <svg><use href="#i-chev"/></svg></p>
+                <ul class="notion__nav">
+                  <li><svg><use href="#i-search"/></svg>Search</li>
+                  <li><svg><use href="#i-home"/></svg>Home</li>
+                  <li><svg><use href="#i-inbox"/></svg>Inbox</li>
+                </ul>
+                <p class="notion__sec">Private</p>
+                <ul class="notion__pages">
+                  <li class="is-active"><span>📓</span>Monday briefing</li>
+                  <li><span>🗺️</span>Oslo move</li>
+                  <li><span>💳</span>Billing migration</li>
+                  <li><span>👥</span>Team</li>
+                  <li><span>📚</span>Reading list</li>
+                </ul>
+              </aside>
+              <div class="notion__main">
+                <header class="notion__crumbs">
+                  <svg class="notion__back m-only"><use href="#i-chevl"/></svg>
+                  <span class="d-only">📓 Monday briefing</span>
+                  <span class="notion__crumbs-r"><span class="d-only">Edited just now</span> <b class="d-only">Share</b><svg class="m-only"><use href="#i-share"/></svg><svg><use href="#i-more"/></svg></span>
+                </header>
+                <div class="notion__page">
+                  <p class="notion__icon">📓</p>
+                  <p class="notion__title">Monday briefing</p>
+                  <div class="composer notion__body">
+                    <div class="composer__field">
+                      <p class="composer__label">Write, press ‘space’ for AI, ‘/’ for commands…</p>
+                      <p class="composer__text">Oslo move — as it stands today. The budget goes to Ingrid before her Friday flight. Lease dates are still open: the landlord owes us March or April. Ada takes the billing migration first, then the office setup. Team dinner moved to Thursday, 14:00 at the office.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- the overlay, shared by every scene: Minne's panel at your caret -->
         <div class="key" id="overlay" aria-hidden="true">
           <div class="key__head">
             <svg class="spark" viewBox="0 0 24 24" focusable="false"><path d="M12 1.5c.6 4.6 1.8 6.9 4.3 8.2 1.4.7 3.2 1.2 6.2 1.6v1.4c-3 .4-4.8.9-6.2 1.6-2.5 1.3-3.7 3.6-4.3 8.2h-1.4c-.6-4.6-1.8-6.9-4.3-8.2-1.4-.7-3.2-1.2-6.2-1.6v-1.4c3-.4 4.8-.9 6.2-1.6C8.8 8.4 10 6.1 10.6 1.5Z"/></svg>
@@ -223,6 +415,7 @@
             <div class="key__skeleton"><span></span><span></span><span></span></div>
             <p class="key__text"></p>
           </div>
+          <p class="key__ground"></p>
           <div class="key__buttons">
             <span class="key__btn key__btn--primary">Insert <b>↩</b></span>
             <span class="key__btn">Copy</span>
@@ -233,95 +426,124 @@
     </div>
 
     <p class="demo__foot" data-reveal>
-      Nothing is typed into your document until you press Insert — and ⌘Z takes it straight back out.
+      Nothing is typed into the app until you press Insert — and ⌘Z takes it straight back out.
+      The same key, the same panel, in every app on your Mac.
     </p>
   </div>
 </section>
 
-<!-- ── what you get ─────────────────────────────────────────────────── -->
-<section class="section" id="gives">
-  <div class="wrap">
-    <header class="section__head" data-reveal>
-      <p class="eyebrow eyebrow--link">[[what-you-get]]</p>
-      <h2 class="h2">The part you dread<br> is the part it does.</h2>
-    </header>
-
-    <ul class="gets">
-      <li data-reveal>
-        <p class="gets__lead">You stop scrolling back.</p>
-        <p>Nobody rereads a three-week thread for fun. Minne has already been there, so the context you would have gone digging for is in the first draft.</p>
-      </li>
-      <li data-reveal>
-        <p class="gets__lead">It sounds like you.</p>
-        <p>It learns your tone from your own writing — short or warm, English or Norwegian, sign-off and all. Drafts come out sounding like a person who was paying attention.</p>
-      </li>
-      <li data-reveal>
-        <p class="gets__lead">Five minutes becomes fifteen seconds.</p>
-        <p>That is one reply. Do the arithmetic on a working week of them and you get your Friday afternoon back.</p>
-      </li>
-      <li data-reveal>
-        <p class="gets__lead">Nothing to keep up.</p>
-        <p>No tagging, no notebooks, no “capture this”. Minne watches the work you were doing anyway and remembers it for you.</p>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<!-- ── your Mac only ────────────────────────────────────────────────── -->
-<section class="section section--yours" id="yours">
-  <div class="wrap yours">
-    <div class="yours__text" data-reveal>
-      <p class="eyebrow eyebrow--link">[[your-mac-only]]</p>
-      <h2 class="h2">A memory this good<br> should only be yours.</h2>
+<!-- ── what it remembers: the folder, as it sits on disk ─────────────── -->
+<section class="section section--remembers" id="remembers">
+  <div class="wrap remembers">
+    <div class="remembers__text" data-reveal>
+      <p class="eyebrow eyebrow--link">[[what-it-remembers]]</p>
+      <h2 class="h2">It watched the work.<br> Now it's a folder of notes.</h2>
       <p class="lede">
-        Minne has no account and no server. What it remembers is a folder of plain notes on your
-        Mac — open them, edit them, delete them, take them with you.
+        While you work, Minne reads the words in the window in front of you — never a picture
+        of your screen — and keeps what matters as plain notes in <code>~/Minne</code>. People,
+        projects, decisions, days. That folder is what the drafts are written from.
       </p>
       <ul class="promise">
-        <li>Nothing is stored anywhere but your Mac. No sign-up, no tracking, no cloud copy.</li>
-        <li>It reads the words in the window you are working in — never a picture of your screen.</li>
-        <li>Card numbers and ID numbers are blanked out before anything is saved, and password fields are skipped entirely.</li>
-        <li>One button erases every last note, for good.</li>
-        <li>It runs on the AI you already pay for — Claude, ChatGPT, or a model on your own machine.</li>
+        <li>Plain markdown files on your Mac. Open them, edit them, delete them, take them with you.</li>
+        <li>No tagging, no “capture this”. It remembers the work you were doing anyway.</li>
+        <li>Nothing is stored anywhere but your Mac — no account, no server, no cloud copy.</li>
       </ul>
     </div>
 
-    <figure class="folder" data-reveal>
-      <div class="folder__win" aria-hidden="true">
-        <div class="win__bar"><span class="win__lights"><i></i><i></i><i></i></span><span class="win__title">Minne</span></div>
-        <ul class="folder__list">
-          <li><span class="folder__icon"></span>Ingrid Berg<span class="folder__meta">today</span></li>
-          <li><span class="folder__icon"></span>Oslo move<span class="folder__meta">today</span></li>
-          <li><span class="folder__icon"></span>Ada Nkemi<span class="folder__meta">yesterday</span></li>
-          <li><span class="folder__icon"></span>Billing migration<span class="folder__meta">yesterday</span></li>
-          <li><span class="folder__icon"></span>Monday 17 August<span class="folder__meta">2 days ago</span></li>
-          <li><span class="folder__icon"></span>Team dinner<span class="folder__meta">last week</span></li>
-        </ul>
+    <figure class="finder" data-reveal>
+      <div class="win finder__win" aria-hidden="true">
+        <div class="app__bar app__bar--finder">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="finder__nav"><svg><use href="#i-back"/></svg></span>
+          <span class="finder__title"><svg><use href="#i-folder"/></svg>Minne</span>
+          <span class="finder__view"><svg><use href="#i-grid"/></svg><svg><use href="#i-list"/></svg></span>
+        </div>
+        <div class="app__body">
+          <aside class="finder__side">
+            <p class="finder__sec">Favourites</p>
+            <ul>
+              <li><svg><use href="#i-cloud"/></svg>AirDrop</li>
+              <li><svg><use href="#i-clock"/></svg>Recents</li>
+              <li><svg><use href="#i-desktop"/></svg>Desktop</li>
+              <li><svg><use href="#i-file"/></svg>Documents</li>
+              <li class="is-active"><svg><use href="#i-folder"/></svg>Minne</li>
+            </ul>
+          </aside>
+          <div class="finder__cols">
+            <ul class="finder__list">
+              <li><svg><use href="#i-folder"/></svg>people<i></i></li>
+              <li><svg><use href="#i-folder"/></svg>projects<i></i></li>
+              <li><svg><use href="#i-folder"/></svg>days<i></i></li>
+              <li><svg><use href="#i-folder"/></svg>sources<i></i></li>
+              <li><svg><use href="#i-file"/></svg>index.md</li>
+              <li><svg><use href="#i-file"/></svg>log.md</li>
+              <li class="finder__sub is-active"><svg><use href="#i-file"/></svg>Oslo move.md</li>
+              <li class="finder__sub"><svg><use href="#i-file"/></svg>Billing migration.md</li>
+              <li class="finder__sub"><svg><use href="#i-file"/></svg>Team dinner.md</li>
+            </ul>
+            <div class="finder__preview">
+              <p class="finder__file">Oslo move.md</p>
+              <pre class="finder__md"># Oslo move
+
+Office move to Oslo, planned for spring.
+Owner: **Ingrid Berg**.
+
+## Where it stands
+- Q3 budget → Ingrid before her flight Fri 29 Aug
+- Lease dates open — landlord owes March or April
+- **Ada Nkemi** takes billing migration first, then office setup
+- Team dinner moved to Thu, 14:00 at the office
+
+## Sources
+[[2026-08-17]] · [[2026-08-26]] · Slack DM with Ingrid</pre>
+            </div>
+          </div>
+        </div>
       </div>
-      <figcaption>Your memory, as it sits on disk: notes with names you recognise.</figcaption>
+      <figcaption>Your memory, as it sits on disk: notes with names you recognise, in a folder you own.</figcaption>
     </figure>
   </div>
+</section>
 
+<!-- ── the facts ──────────────────────────────────────────────────── -->
+<section class="section section--facts" id="facts">
   <div class="wrap">
-    <div class="egress" data-reveal>
-      <p class="eyebrow eyebrow--link">[[what-leaves]]</p>
-      <h3 class="egress__title">What leaves your Mac, exactly</h3>
-      <p class="egress__intro">
-        The only network traffic Minne makes is requests to the AI provider you signed in
-        with — your account, your key — plus one anonymous version check a day against
-        GitHub, which you can turn off. There is no Minne server to talk to, and no
-        telemetry. This is what each feature sends, and nothing else goes anywhere:
-      </p>
-      <dl class="egress__ledger">
-        <div><dt>draft</dt><dd>the field you are writing in, the window around it, and the notes Minne recalls — one model request.</dd></div>
-        <div><dt>chat</dt><dd>your question, and the notes the answer needs.</dd></div>
-        <div><dt>sync</dt><dd>recent captures, in batches, already masked, to be distilled into notes.</dd></div>
-        <div><dt>sign-in</dt><dd>one OAuth exchange with that same provider. An API key stays on your Mac and is shown to no one else.</dd></div>
-        <div><dt>updates</dt><dd>once a day, an anonymous ask to GitHub for the latest version number — nothing of yours attached, and Settings can turn it off.</dd></div>
-        <div><dt>never</dt><dd>the folder itself. No backup, no cloud sync, no upload path in the code.</dd></div>
-      </dl>
-      <p class="egress__note">Want even that to stay home? Point Minne at Ollama on your own machine and model traffic never leaves it.</p>
-    </div>
+    <header class="section__head" data-reveal>
+      <p class="eyebrow eyebrow--link">[[the-facts]]</p>
+      <h2 class="h2">The short version.</h2>
+    </header>
+
+    <dl class="facts" data-reveal>
+      <div><dt>Price</dt><dd>Free. MIT licensed, and the source is yours to read.</dd></div>
+      <div><dt>Runs on</dt><dd>macOS 14 and later. A menu-bar app, no window to keep open.</dd></div>
+      <div><dt>The key</dt><dd>Right-Option, in any text field. ⌥ Space opens a chat with your memory.</dd></div>
+      <div><dt>The AI</dt><dd>The one you already pay for — Claude or ChatGPT with your own sign-in — or Ollama on your machine.</dd></div>
+      <div><dt>Your data</dt><dd>Stays on your Mac. No account, no Minne server, no telemetry. Card and ID numbers are blanked before anything is saved; password fields are skipped.</dd></div>
+      <div><dt>Undo</dt><dd>Nothing is inserted until you press Insert. One button erases every note, for good.</dd></div>
+    </dl>
+
+    <!-- The egress ledger: the trust claim stated as an audit, not a vibe.
+         Mirrors SettingsModel.egressLine and the README — change one, change all three. -->
+    <details class="egress" data-reveal>
+      <summary>What leaves your Mac, exactly</summary>
+      <div class="egress__inner">
+        <p class="egress__intro">
+          The only network traffic Minne makes is requests to the AI provider you signed in
+          with — your account, your key — plus one anonymous version check a day against
+          GitHub, which you can turn off. There is no Minne server to talk to, and no
+          telemetry. This is what each feature sends, and nothing else goes anywhere:
+        </p>
+        <dl class="egress__ledger">
+          <div><dt>draft</dt><dd>the field you are writing in, the window around it, and the notes Minne recalls — one model request.</dd></div>
+          <div><dt>chat</dt><dd>your question, and the notes the answer needs.</dd></div>
+          <div><dt>sync</dt><dd>recent captures, in batches, already masked, to be distilled into notes.</dd></div>
+          <div><dt>sign-in</dt><dd>one OAuth exchange with that same provider. An API key stays on your Mac and is shown to no one else.</dd></div>
+          <div><dt>updates</dt><dd>once a day, an anonymous ask to GitHub for the latest version number — nothing of yours attached, and Settings can turn it off.</dd></div>
+          <div><dt>never</dt><dd>the folder itself. No backup, no cloud sync, no upload path in the code.</dd></div>
+        </dl>
+        <p class="egress__note">Want even that to stay home? Point Minne at Ollama on your own machine and model traffic never leaves it.</p>
+      </div>
+    </details>
   </div>
 </section>
 
@@ -364,7 +586,7 @@
       <svg class="spark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.5c.6 4.6 1.8 6.9 4.3 8.2 1.4.7 3.2 1.2 6.2 1.6v1.4c-3 .4-4.8.9-6.2 1.6-2.5 1.3-3.7 3.6-4.3 8.2h-1.4c-.6-4.6-1.8-6.9-4.3-8.2-1.4-.7-3.2-1.2-6.2-1.6v-1.4c3-.4 4.8-.9 6.2-1.6C8.8 8.4 10 6.1 10.6 1.5Z"/></svg>
       minne
     </p>
-    <p class="foot__meta">MIT licensed · this page has no trackers and loads nothing from anywhere else</p>
+    <p class="foot__meta">MIT licensed · this page has no trackers and loads nothing from anywhere else · Slack, Gmail, X and Notion are trademarks of their owners; the windows above are drawn, not screenshots, and imply no affiliation</p>
     <nav class="foot__links" aria-label="Elsewhere">
       <a href="https://github.com/mandgie/minne">Source</a>
       <a href="https://github.com/mandgie/minne/releases/latest">Releases</a>

@@ -1,10 +1,11 @@
 /* Minne — the demo stage.
  *
- * One mechanism, four moments. Each scene is already in the markup with its
- * finished text in a data attribute; this file empties it, then plays the
- * story: the caret waiting, the key going down, Minne's panel appearing and
- * thinking, the draft streaming in, Insert, and the words landing in the
- * field. Then it moves to the next moment.
+ * One mechanism, four apps. Each scene is a drawn replica of an app — Slack,
+ * Gmail, X, Notion — already in the markup with its finished text in the
+ * field; this file empties it, then plays the story: the caret waiting, the
+ * key going down, Minne's panel appearing and thinking, the draft streaming
+ * in, Insert, and the words landing in the field. Then it moves to the next
+ * app.
  *
  * Without this file the page still reads: every scene shows its finished
  * state. With prefers-reduced-motion the same is true, and the tabs simply
@@ -22,9 +23,7 @@
      file at all. Take a copy, then let the story put it back. */
   scenes.forEach(function (scene) {
     var field = scene.querySelector(".composer__text");
-    var ask = scene.querySelector(".chat__ask");
     scene.draft = field ? field.textContent.trim() : "";
-    scene.question = ask ? ask.textContent.trim() : "";
   });
   var tabs = [].slice.call(document.querySelectorAll(".tab"));
   var overlay = document.getElementById("overlay");
@@ -35,15 +34,14 @@
   var status = overlay.querySelector(".key__status");
   var draftText = overlay.querySelector(".key__text");
   var context = overlay.querySelector(".key__ctx");
-  var keycapKey = keycap.querySelector(".keycap__key");
-  var keycapLabel = keycap.querySelector(".keycap__label");
+  var ground = overlay.querySelector(".key__ground");
 
-  /* What each moment says underneath, and how long it runs. */
+  /* What each moment says underneath. */
   var SAYS = [
-    "Minne read the thread, remembered what you promised Ingrid, and wrote it the way you write.",
-    "It knew where that work stands, so the reply says something instead of asking for a time.",
-    "An instruction, not a prompt: it turned three weeks of work into the note you needed.",
-    "Or skip the writing and just ask. No scrolling back, no “what did we decide?”."
+    "Minne read the thread, remembered that the dinner moved, and answered the way you write.",
+    "It knew where the retry work stands, so the reply says something instead of asking for a time.",
+    "A public reply with the facts in it — what you actually decided, not a confident guess.",
+    "An instruction, not a prompt: three weeks of work became the note you needed."
   ];
 
   var timers = [];
@@ -69,7 +67,7 @@
 
   /* Every transient state a scene can be in, so switching never leaves one
      behind. `is-on` is not in the list: that is which scene is showing. */
-  var STATES = ["is-caret", "is-landing", "is-searching", "is-answered", "is-fading", "has-text"];
+  var STATES = ["is-caret", "is-landing", "is-fading", "has-text"];
   function clearStates(scene) {
     STATES.forEach(function (name) {
       scene.classList.remove(name);
@@ -83,8 +81,6 @@
     draftText.textContent = "";
     var field = scene.querySelector(".composer__text");
     if (field) field.textContent = "";
-    var ask = scene.querySelector(".chat__ask");
-    if (ask) ask.textContent = "";
   }
 
   /* The finished state, which is also what a visitor without JavaScript
@@ -94,11 +90,6 @@
     if (field) {
       field.textContent = scene.draft || "";
       scene.classList.add("has-text");
-    }
-    var ask = scene.querySelector(".chat__ask");
-    if (ask) {
-      ask.textContent = scene.question || "";
-      scene.classList.add("is-answered");
     }
   }
 
@@ -116,9 +107,9 @@
     });
     var scene = scenes[index];
     hudSay.textContent = SAYS[index] || "";
-    keycapKey.textContent = scene.dataset.key || "⌥";
-    keycapLabel.textContent = scene.dataset.keylabel || "right Option";
-    context.textContent = scene.querySelector(".win__title").textContent;
+    stage.dataset.app = scene.dataset.app || "";
+    context.textContent = scene.dataset.app || "";
+    ground.textContent = scene.dataset.ground || "";
     scene.classList.add("is-fading");
 
     if (!animate) {
@@ -135,7 +126,6 @@
   var runMs = 15000;
 
   function play(index, scene) {
-    var chat = scene.classList.contains("scene--chat");
     var instruction = scene.dataset.instruction;
     var draft = scene.draft || "";
     var field = scene.querySelector(".composer__text");
@@ -150,11 +140,10 @@
         type(field, instruction, 42);
       });
       t += 1350;
-    } else if (!chat) {
-      scene.classList.add("is-caret");
-      t += 500;
     } else {
-      t += 300;
+      // Long enough to read the message before the key goes down.
+      scene.classList.add("is-caret");
+      t += 1300;
     }
 
     // The key goes down.
@@ -166,25 +155,6 @@
       scene.classList.remove("is-caret");
     });
     t += 420;
-
-    if (chat) {
-      var ask = scene.querySelector(".chat__ask");
-      at(t, function () {
-        type(ask, scene.question || "", 26);
-      });
-      t += 1500;
-      at(t, function () {
-        scene.classList.add("is-searching");
-        scene.querySelector(".chat__toolText").textContent = "Looking through your memory…";
-      });
-      t += 1700;
-      at(t, function () {
-        scene.classList.add("is-answered");
-        scene.querySelector(".chat__toolText").textContent = "Looked through your memory";
-      });
-      runMs = t + 4200;
-      return;
-    }
 
     // Minne wakes up at the caret and thinks.
     at(t, function () {
@@ -204,9 +174,10 @@
     // Ready, then Insert.
     at(t, function () {
       stage.classList.remove("is-writing");
+      stage.classList.add("is-ready");
       status.textContent = "Draft ready";
     });
-    t += 1050;
+    t += 1250;
     at(t, function () {
       stage.classList.add("is-inserting");
     });
@@ -214,23 +185,23 @@
 
     // The words land in the field and Minne gets out of the way.
     at(t, function () {
-      stage.classList.remove("is-open", "is-inserting");
+      stage.classList.remove("is-open", "is-inserting", "is-ready");
       scene.classList.add("is-landing", "has-text");
       if (instruction) field.textContent = "";
       type(field, draft, 9, function () {
         scene.classList.remove("is-landing");
       });
     });
-    runMs = t + 3200;
+    runMs = t + 3400;
   }
 
-  /* ── switching between moments ────────────────────────────────────── */
+  /* ── switching between apps ───────────────────────────────────────── */
 
   var current = 0;
   var running = false;
   var advance = 0;
 
-  function go(index, fromClick) {
+  function go(index) {
     current = (index + scenes.length) % scenes.length;
     show(current, !reduce && running);
     clearTimeout(advance);
@@ -243,12 +214,11 @@
     advance = setTimeout(function () {
       go(current + 1);
     }, runMs);
-    if (fromClick) return;
   }
 
   tabs.forEach(function (tab, i) {
     tab.addEventListener("click", function () {
-      go(i, true);
+      go(i);
     });
     tab.addEventListener("keydown", function (event) {
       var next = event.key === "ArrowRight" ? i + 1 : event.key === "ArrowLeft" ? i - 1 : null;
@@ -256,7 +226,7 @@
       event.preventDefault();
       var target = (next + tabs.length) % tabs.length;
       tabs[target].focus();
-      go(target, true);
+      go(target);
     });
   });
 

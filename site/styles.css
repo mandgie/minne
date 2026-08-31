@@ -2,7 +2,8 @@
    Minne — product site
    Type: Familjen Grotesk (display/UI), Source Serif 4 (prose),
          IBM Plex Mono (labels and captions). All vendored, OFL.
-   The page is built around one thing: the demo stage in the middle.
+   The page is built around one thing: the stage under the hero, where
+   Minne writes inside drawn replicas of Slack, Gmail, X and Notion.
    ───────────────────────────────────────────────────────────────────── */
 
 @font-face {
@@ -60,6 +61,9 @@
 
   --wrap: 1140px;
   --ease: cubic-bezier(0.2, 0.65, 0.2, 1);
+
+  /* the stage's inset, shared by everything that has to line up with it */
+  --pad: clamp(18px, 3.4vw, 40px);
 }
 
 *,
@@ -98,6 +102,12 @@ a:hover {
   outline: 2px solid var(--spark-lift);
   outline-offset: 3px;
   border-radius: 4px;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  color: var(--chalk);
 }
 
 .skip {
@@ -161,10 +171,7 @@ a:hover {
 
 .section__head {
   max-width: 34rem;
-  margin-bottom: clamp(44px, 5vw, 72px);
-}
-.section__head--wide {
-  max-width: 42rem;
+  margin-bottom: clamp(40px, 5vw, 64px);
 }
 .section__head .h2 {
   margin-block: 0.7rem 1.1rem;
@@ -291,25 +298,21 @@ a:hover {
 
 /* ── hero ────────────────────────────────────────────────────────── */
 
+/* Short on purpose: one sentence, two buttons, and the product begins. */
 .hero {
   position: relative;
-  min-height: min(88svh, 780px);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding-block: 150px 84px;
+  padding-block: clamp(120px, 16vw, 168px) clamp(28px, 4vw, 48px);
   isolation: isolate;
   overflow: hidden;
+  text-align: center;
 }
 
-/* The memory graph, standing still: identity, not spectacle — the demo
-   below is where the motion belongs. */
 .hero__field {
   position: absolute;
-  inset: -6% -4% -10% -4%;
+  inset: -20% -4% -10% -4%;
   z-index: -2;
-  background: url("assets/hero-static.svg") center right / cover no-repeat;
-  opacity: 0.72;
+  background: url("assets/hero-static.svg") center / cover no-repeat;
+  opacity: 0.5;
   animation: sway 48s ease-in-out infinite alternate;
 }
 @keyframes sway {
@@ -320,15 +323,13 @@ a:hover {
     transform: translate3d(-2.2%, -1.4%, 0) scale(1.06);
   }
 }
-
 .hero__veil {
   position: absolute;
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(48% 44% at 26% 46%, rgba(6, 7, 10, 0.97) 0%, rgba(6, 7, 10, 0.84) 55%, transparent 100%),
-    radial-gradient(80% 70% at 14% 50%, rgba(6, 7, 10, 0.88) 0%, rgba(6, 7, 10, 0.5) 52%, transparent 82%),
-    linear-gradient(to bottom, rgba(6, 7, 10, 0.9) 0%, transparent 24%, transparent 58%, var(--void) 97%);
+    radial-gradient(60% 70% at 50% 40%, rgba(6, 7, 10, 0.92) 0%, rgba(6, 7, 10, 0.7) 55%, transparent 100%),
+    linear-gradient(to bottom, rgba(6, 7, 10, 0.9) 0%, transparent 30%, transparent 55%, var(--void) 100%);
   pointer-events: none;
 }
 
@@ -337,32 +338,36 @@ a:hover {
   max-width: var(--wrap);
   margin-inline: auto;
   padding-inline: clamp(20px, 5vw, 40px);
+  display: grid;
+  justify-items: center;
 }
 .hero__title {
   font-family: var(--display);
   font-weight: 600;
   color: var(--chalk);
-  font-size: clamp(2.55rem, 5.6vw, 4.6rem);
-  line-height: 1.0;
+  font-size: clamp(2.5rem, 5.4vw, 4.4rem);
+  line-height: 1;
   letter-spacing: -0.042em;
   margin: 1.1rem 0 0;
-  max-width: 16ch;
+  max-width: 17ch;
 }
 .hero__lede {
-  max-width: 33rem;
-  margin: 1.5rem 0 0;
+  max-width: 36rem;
+  margin: 1.4rem 0 0;
 }
 .hero__actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 0.7rem;
-  margin-top: 2.1rem;
+  margin-top: 2rem;
 }
 .hero__meta {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 0.5rem 1.1rem;
-  margin: 1.5rem 0 0;
+  margin: 1.4rem 0 0;
   font-family: var(--mono);
   font-size: 0.76rem;
   color: var(--mute);
@@ -376,22 +381,25 @@ a:hover {
 /* ── the demo ────────────────────────────────────────────────────── */
 
 .demo {
-  padding-top: clamp(40px, 5vw, 72px);
+  padding-top: clamp(20px, 3vw, 40px);
+  padding-bottom: clamp(64px, 8vw, 110px);
 }
 
 .demo__stage {
   position: relative;
   display: grid;
-  gap: 1.4rem;
+  gap: 1.1rem;
+  max-width: 60rem;
+  margin-inline: auto;
 }
 
 .rail {
   display: grid;
-  gap: 1.4rem;
+  gap: 1rem;
   align-content: start;
 }
 
-/* tabs */
+/* tabs — one per app */
 
 .tabs {
   display: grid;
@@ -405,7 +413,7 @@ a:hover {
   border: 1px solid var(--line-soft);
   background: rgba(255, 255, 255, 0.012);
   border-radius: 12px;
-  padding: 0.72rem 0.9rem 0.78rem;
+  padding: 0.7rem 0.9rem 0.78rem;
   text-align: left;
   cursor: pointer;
   color: var(--mute);
@@ -421,7 +429,7 @@ a:hover {
 }
 .tab__n {
   display: block;
-  font-size: 0.98rem;
+  font-size: 1rem;
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--prose);
@@ -430,8 +438,11 @@ a:hover {
 .tab__d {
   display: block;
   font-family: var(--mono);
-  font-size: 0.72rem;
-  margin-top: 0.12rem;
+  font-size: 0.7rem;
+  margin-top: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tab.is-on {
   border-color: #2f4570;
@@ -466,6 +477,62 @@ a:hover {
   }
 }
 
+/* the keycap and the line that says what just happened */
+
+.hud {
+  display: grid;
+  gap: 0.9rem 1.2rem;
+  align-items: center;
+}
+.keycap {
+  display: inline-grid;
+  justify-items: center;
+  gap: 0.4rem;
+  width: max-content;
+}
+.keycap__key {
+  display: grid;
+  place-items: center;
+  min-width: 3rem;
+  height: 2.55rem;
+  padding-inline: 0.75rem;
+  white-space: nowrap;
+  border-radius: 9px;
+  font-family: var(--display);
+  font-size: 1.15rem;
+  color: var(--chalk);
+  background: linear-gradient(180deg, #222834, #161b24);
+  box-shadow:
+    0 4px 0 #0e1219,
+    0 8px 16px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  transition:
+    transform 0.09s var(--ease),
+    box-shadow 0.09s var(--ease),
+    color 0.2s var(--ease);
+}
+.keycap.is-down .keycap__key {
+  transform: translateY(4px);
+  color: #cfe0ff;
+  box-shadow:
+    0 0 0 #0e1219,
+    0 3px 10px rgba(0, 0, 0, 0.5),
+    0 0 0 3px rgba(52, 120, 246, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+.keycap__label {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--mute);
+}
+.hud__say {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: var(--prose);
+  max-width: 40rem;
+}
+
 /* the stage: a lit desk the app windows sit on */
 
 .stage {
@@ -475,8 +542,7 @@ a:hover {
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(52, 120, 246, 0.09), transparent 62%),
     linear-gradient(180deg, #0b0e14, #080a0f);
-  padding: clamp(18px, 3.4vw, 40px);
-  min-height: 26rem;
+  padding: var(--pad);
   overflow: hidden;
 }
 .stage__glow {
@@ -496,7 +562,7 @@ a:hover {
 .js .scene.is-on {
   display: block;
 }
-/* Without JavaScript the four moments simply stack, each already finished. */
+/* Without JavaScript the four apps simply stack, each already finished. */
 html:not(.js) .scene + .scene {
   margin-top: 1.6rem;
 }
@@ -515,157 +581,127 @@ html:not(.js) .composer__label {
   }
 }
 
-/* the app window inside the stage */
+/* ── the windows: one frame, four apps ───────────────────────────── */
 
 .win {
   position: relative;
-  width: min(100%, 38rem);
-  margin-inline: auto;
+  width: 100%;
   background: #fff;
-  border-radius: 13px;
+  border-radius: 12px;
   overflow: hidden;
-  color: #16171a;
+  color: #1d1c1d;
   font-family: var(--system);
+  font-size: 14px;
+  line-height: 1.45;
   box-shadow:
     0 50px 90px -34px rgba(0, 0, 0, 0.92),
     0 2px 10px rgba(0, 0, 0, 0.4),
     inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
-.win__bar {
+.win p,
+.win ul {
+  margin: 0;
+}
+.win ul {
+  list-style: none;
+  padding: 0;
+}
+.win svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+.app {
+  height: 27rem;
+  display: flex;
+  flex-direction: column;
+}
+.app__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--side, 12.5rem) minmax(0, 1fr);
+}
+
+/* the mac title bar, and the browser's address pill when the app is a tab */
+.app__bar {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0 12px;
-  height: 36px;
-  background: linear-gradient(#f7f7f8, #ececee);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  height: 38px;
+  background: #f3f3f5;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  flex: none;
 }
-.win__lights {
+.lights {
   display: flex;
-  gap: 6px;
+  gap: 7px;
+  flex: none;
 }
-.win__lights i {
-  width: 11px;
-  height: 11px;
+.lights i {
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #febc2e;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
 }
-.win__lights i:first-child {
+.lights i:first-child {
   background: #ff5f57;
 }
-.win__lights i:last-child {
+.lights i:last-child {
   background: #28c840;
 }
-.win__title {
+.app__url,
+.app__bar-search {
   position: absolute;
-  left: 0;
-  right: 0;
-  text-align: center;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 14rem;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 7px;
   font-size: 12.5px;
-  font-weight: 600;
-  color: #4c4d55;
+  color: #5a5b60;
+  background: rgba(0, 0, 0, 0.06);
 }
-.win__body {
-  padding: 16px 18px 18px;
-  display: grid;
-  gap: 14px;
-  font-size: 14.5px;
-  line-height: 1.5;
-  min-height: 15.5rem;
-  align-content: start;
-}
-
-.thread__day,
-.mail__subject,
-.doc__title {
-  margin: 0;
-  font-size: 12px;
-  color: #8b8c94;
-  text-align: center;
-}
-.mail__subject {
-  text-align: left;
-  font-size: 15px;
-  font-weight: 700;
-  color: #16171a;
-}
-.doc__title {
-  text-align: left;
-  font-size: 17px;
-  font-weight: 700;
-  color: #16171a;
+.app__url::before {
+  content: "";
+  width: 9px;
+  height: 11px;
+  border: 1.5px solid #7a7b80;
+  border-radius: 2px;
+  box-sizing: border-box;
+  margin-right: 2px;
 }
 
-.msg {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-}
-.ava {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 11.5px;
-  font-weight: 700;
-  color: #fff;
-  background: linear-gradient(150deg, #6d7a8d, #47536a);
-  letter-spacing: 0.02em;
-}
-.ava--b {
-  background: linear-gradient(150deg, #8d7d6d, #6a5847);
-}
-.msg__who {
-  margin: 0 0 2px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.msg__who span {
-  font-weight: 400;
-  color: #9a9aa2;
-}
-.msg__text {
-  margin: 0;
-  background: #f1f2f5;
-  border-radius: 4px 14px 14px 14px;
-  padding: 9px 13px;
-}
-
-/* the field being written into */
+/* the field being written into, whatever app it is in */
 
 .composer {
   position: relative;
-  border: 1px solid rgba(0, 0, 0, 0.14);
-  border-radius: 11px;
-  padding: 11px 13px 12px;
-  min-height: 5.4rem;
+}
+.composer__field {
+  position: relative;
   display: grid;
-  align-content: start;
-  gap: 8px;
-  background: #fff;
 }
-.composer--doc {
-  border: 0;
-  padding-inline: 0;
-  min-height: 7.5rem;
-}
-.composer--chat {
-  min-height: 0;
-  background: #f1f1f4;
-  border: 0;
-  border-radius: 999px;
-  padding: 9px 14px;
+.composer__label,
+.composer__text {
+  grid-area: 1 / 1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .composer__label {
-  margin: 0;
-  color: #a3a3ab;
-}
-.composer__text {
-  margin: 0;
-  white-space: pre-wrap;
+  color: #8f8f93;
 }
 .composer__text::after {
   content: "";
@@ -674,7 +710,7 @@ html:not(.js) .composer__label {
   height: 1.05em;
   margin-left: 1px;
   vertical-align: -0.18em;
-  background: var(--spark);
+  background: currentColor;
   opacity: 0;
 }
 .scene.is-caret .composer__text::after,
@@ -689,114 +725,851 @@ html:not(.js) .composer__label {
 }
 /* Once there is text in the field, the placeholder is gone. */
 .scene.has-text .composer__label {
-  display: none;
+  visibility: hidden;
 }
 .composer__send {
-  justify-self: end;
-  font-size: 13px;
-  font-weight: 500;
-  color: #fff;
-  background: #c3c6cd;
-  border-radius: 999px;
-  padding: 5px 14px;
-  transition: background-color 0.35s var(--ease);
-}
-.scene.has-text .composer__send {
-  background: var(--spark);
+  transition:
+    background-color 0.35s var(--ease),
+    color 0.35s var(--ease),
+    opacity 0.35s var(--ease);
 }
 
-/* the chat scene */
-
-.win__body--chat {
-  gap: 10px;
-}
-.chat__ask {
-  justify-self: end;
-  max-width: 84%;
-  margin: 0;
-  padding: 8px 14px;
-  border-radius: 16px;
-  background: #edeff2;
-  min-height: 1.2em;
-}
-.chat__tool {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0;
-  font-size: 13px;
-  color: #8b8c94;
-}
-.chat__spin {
-  width: 11px;
-  height: 11px;
+/* a presence dot, Slack-style */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  border: 1.6px solid rgba(0, 0, 0, 0.16);
-  border-top-color: var(--spark);
-  animation: spin 0.8s linear infinite;
+  border: 1.5px solid currentColor;
+  vertical-align: middle;
   flex: none;
 }
-.scene.is-answered .chat__spin {
-  border: 0;
-  animation: none;
-}
-.scene.is-answered .chat__spin::before {
-  content: "✓";
-  font-size: 12px;
-  line-height: 1;
-}
-@keyframes spin {
-  to {
-    transform: rotate(1turn);
-  }
-}
-.chat__answer p {
-  margin: 0 0 0.4rem;
-}
-.chat__answer ul {
-  list-style: none;
-  margin: 0 0 0.5rem;
-  padding: 0;
-  display: grid;
-  gap: 0.25rem;
-}
-.chat__answer li {
-  padding-left: 0.9rem;
-  position: relative;
-}
-.chat__answer li::before {
-  content: "·";
-  position: absolute;
-  left: 0.2rem;
-  color: #8b8c94;
-}
-.chat__from {
-  font-size: 12.5px;
-  color: #8b8c94;
-}
-.js .scene--chat .chat__tool,
-.js .scene--chat .chat__answer {
-  display: none;
-}
-.js .scene--chat.is-searching .chat__tool,
-.js .scene--chat.is-answered .chat__tool {
-  display: flex;
-}
-.js .scene--chat.is-answered .chat__answer {
-  display: block;
+.dot--on {
+  background: #2bac76;
+  border-color: #2bac76;
 }
 
-/* the overlay Minne puts at your caret */
+/* ── Slack ───────────────────────────────────────────────────────── */
+
+.app--slack .app__bar {
+  background: #350d36;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+.app--slack .app__bar-search {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.16);
+  min-width: 18rem;
+}
+.slack__side {
+  background: #3f0e40;
+  color: rgba(255, 255, 255, 0.72);
+  padding: 8px 0 12px;
+  font-size: 14.5px;
+  overflow: hidden;
+}
+.slack__ws {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 16px 12px;
+  font-size: 17px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+.slack__ws svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+.slack__sec {
+  padding: 10px 16px 4px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.slack__side li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 16px 3px 22px;
+  white-space: nowrap;
+}
+.slack__side li b {
+  font-weight: 400;
+  opacity: 0.75;
+  width: 8px;
+}
+.slack__side li.is-active {
+  background: #1164a3;
+  color: #fff;
+}
+.slack__side .dot {
+  color: rgba(255, 255, 255, 0.6);
+}
+.slack__main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+}
+.slack__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 15px;
+  flex: none;
+}
+.slack__head .sava {
+  width: 24px;
+  height: 24px;
+  font-size: 10px;
+  border-radius: 5px;
+}
+.slack__head b {
+  font-weight: 800;
+  color: #1d1c1d;
+}
+.slack__role {
+  color: #616061;
+  font-size: 13px;
+  margin-left: 2px;
+}
+.slack__msgs {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 18px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 15px;
+  color: #1d1c1d;
+}
+.slack__day {
+  position: relative;
+  text-align: center;
+  margin-bottom: 6px;
+}
+.slack__day::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid #e0e0e0;
+}
+.slack__day span {
+  position: relative;
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sava {
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(150deg, #6d7a8d, #47536a);
+  flex: none;
+}
+.sava--ib {
+  background: linear-gradient(150deg, #e2a05a, #b0683a);
+}
+.smsg {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.smsg__who {
+  font-weight: 900;
+  line-height: 1.35;
+}
+.smsg__who span {
+  font-weight: 400;
+  font-size: 12px;
+  color: #616061;
+  margin-left: 4px;
+}
+.smsg--cont {
+  margin-top: -2px;
+}
+.smsg__time {
+  font-size: 10.5px;
+  color: #a0a0a2;
+  justify-self: center;
+  padding-top: 5px;
+}
+
+/* Slack's message box: bordered, a toolbar above, the send button below. */
+.slack__composer {
+  margin: 6px 18px 16px;
+  border: 1px solid #8d8d8d;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+.slack__tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: #f8f8f8;
+  color: #616061;
+  font-size: 13px;
+  font-family: Georgia, serif;
+}
+.slack__tools b,
+.slack__tools i,
+.slack__tools s {
+  font-family: var(--system);
+  width: 14px;
+  text-align: center;
+}
+.slack__tools svg {
+  width: 15px;
+  height: 15px;
+}
+.slack__composer .composer__field {
+  padding: 8px 12px;
+  min-height: 4.6rem;
+  font-size: 15px;
+  color: #1d1c1d;
+}
+.slack__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px 6px 10px;
+  color: #616061;
+}
+.slack__foot svg {
+  width: 17px;
+  height: 17px;
+}
+.slack__plus {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #eaeaea;
+}
+.slack__plus svg {
+  width: 14px;
+  height: 14px;
+}
+.slack__send {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  border-radius: 5px;
+  color: #b8b8ba;
+}
+.scene.has-text .slack__send {
+  background: #007a5a;
+  color: #fff;
+}
+
+/* ── Gmail ───────────────────────────────────────────────────────── */
+
+.app--gmail {
+  background: #f6f8fc;
+  color: #1f1f1f;
+}
+.gmail__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #f6f8fc;
+  flex: none;
+}
+.gmail__menu {
+  color: #444746;
+  width: 20px !important;
+  height: 20px !important;
+}
+.gmail__logo {
+  font-size: 21px;
+  color: #444746;
+  letter-spacing: -0.01em;
+  margin-right: 12px;
+}
+.gmail__logo::before {
+  content: "M";
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 20px;
+  margin-right: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #ea4335;
+  background: #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px #dfe1e5;
+  vertical-align: 2px;
+}
+.gmail__search {
+  flex: 1;
+  max-width: 24rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding-inline: 14px;
+  border-radius: 24px;
+  background: #eaf1fb;
+  color: #444746;
+  font-size: 14.5px;
+}
+.gmail__search svg {
+  width: 18px;
+  height: 18px;
+}
+.gava {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 500;
+  font-size: 14px;
+  flex: none;
+}
+.gava--me {
+  margin-left: auto;
+  background: #0b57d0;
+}
+.gava--dr {
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+  background: #7a5195;
+}
+.app--gmail .app__body {
+  --side: 12rem;
+}
+.gmail__side {
+  background: #f6f8fc;
+  padding: 4px 8px 0 8px;
+  font-size: 14px;
+  color: #1f1f1f;
+}
+.gmail__compose {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 46px;
+  padding: 0 22px 0 16px;
+  border-radius: 16px;
+  background: #c2e7ff;
+  font-weight: 500;
+  margin: 4px 0 12px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.gmail__compose svg {
+  width: 20px;
+  height: 20px;
+}
+.gmail__side li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 32px;
+  padding: 0 12px 0 20px;
+  border-radius: 0 16px 16px 0;
+  color: #1f1f1f;
+}
+.gmail__side li svg {
+  width: 18px;
+  height: 18px;
+  color: #444746;
+}
+.gmail__side li span {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+}
+.gmail__side li.is-active {
+  background: #d3e3fd;
+  font-weight: 700;
+}
+.gmail__main {
+  background: #fff;
+  border-radius: 16px 0 0 0;
+  margin: 0 0 0 4px;
+  padding: 14px 22px 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.gmail__subject {
+  font-size: 20px;
+  line-height: 1.3;
+  color: #1f1f1f;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.gmail__subject span {
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ddd;
+  color: #444746;
+}
+.gmsg {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+.gmsg__who {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.gmsg__who span {
+  color: #5e5e5e;
+  font-size: 12.5px;
+}
+.gmsg__who em {
+  font-style: normal;
+  margin-left: auto;
+  color: #5e5e5e;
+  font-size: 12.5px;
+}
+.gmsg__to {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #5e5e5e;
+  font-size: 12.5px;
+  margin-top: -2px;
+}
+.gmsg__to svg {
+  width: 14px;
+  height: 14px;
+}
+.gmsg__text {
+  margin-top: 8px !important;
+  color: #1f1f1f;
+}
+.gmsg__text--sig {
+  margin-top: 8px !important;
+}
+
+/* the reply card Gmail opens under a message */
+.gmail__reply {
+  margin: auto 0 14px 54px;
+  border-radius: 8px;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    0 2px 6px rgba(0, 0, 0, 0.08);
+  padding: 10px 14px 10px;
+  flex: none;
+}
+.gmail__to {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #444746;
+  font-size: 13px;
+  padding-bottom: 8px;
+}
+.gmail__to span {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid #dadce0;
+  color: #1f1f1f;
+}
+.gmail__reply .composer__field {
+  min-height: 3.4rem;
+  font-size: 14px;
+  color: #1f1f1f;
+}
+.gmail__foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 10px;
+  color: #444746;
+}
+.gmail__foot svg {
+  width: 18px;
+  height: 18px;
+}
+.gmail__more {
+  margin-left: auto;
+}
+.gmail__send {
+  height: 34px;
+  padding: 0 22px;
+  border-radius: 18px;
+  display: inline-grid;
+  place-items: center;
+  background: #e3e3e3;
+  color: #8a8a8a;
+  font-weight: 500;
+  font-size: 14px;
+  margin-right: 6px;
+}
+.scene.has-text .gmail__send {
+  background: #0b57d0;
+  color: #fff;
+}
+
+/* ── X ───────────────────────────────────────────────────────────── */
+
+.app--x {
+  color: #0f1419;
+}
+.app--x .app__body {
+  --side: 12.5rem;
+}
+.x__side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px 0 14px;
+  border-right: 1px solid #eff3f4;
+  font-size: 17px;
+}
+.x__mark {
+  width: 28px !important;
+  height: 28px !important;
+  margin: 6px 0 8px 10px;
+  stroke-width: 2.4 !important;
+}
+.x__side li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  width: max-content;
+}
+.x__side li svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+}
+.x__side li.is-active {
+  font-weight: 700;
+}
+.x__post {
+  margin-top: 10px;
+  height: 46px;
+  border-radius: 999px;
+  background: #0f1419;
+  color: #fff;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+.x__main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 15px;
+}
+.x__head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 16px;
+  font-size: 19px;
+  flex: none;
+}
+.x__head svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
+}
+.xpost {
+  padding: 8px 16px 0;
+  border-bottom: 1px solid #eff3f4;
+}
+.xpost__who {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.xpost__who div {
+  display: grid;
+  line-height: 1.25;
+}
+.xpost__who b {
+  font-weight: 700;
+}
+.xpost__who span {
+  color: #536471;
+}
+.xpost__more {
+  color: #536471;
+}
+.xava {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 700;
+  flex: none;
+}
+.xava--tl {
+  background: linear-gradient(150deg, #47a3ff, #1d6fd1);
+}
+.xava--me {
+  background: linear-gradient(150deg, #7c8ba3, #4d5b74);
+}
+.xpost__text {
+  font-size: 17px;
+  line-height: 1.4;
+  padding: 12px 0 10px;
+}
+.xpost__meta {
+  color: #536471;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eff3f4;
+}
+.xpost__meta b {
+  color: #0f1419;
+}
+.xpost__acts {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 8px;
+  color: #536471;
+  font-size: 13px;
+}
+.xpost__acts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.xpost__acts svg {
+  width: 18px;
+  height: 18px;
+}
+.x__reply {
+  padding: 8px 16px 12px;
+  margin-top: auto;
+  flex: none;
+}
+.x__replying {
+  color: #536471;
+  padding: 0 0 8px 50px;
+  font-size: 14.5px;
+}
+.x__replying span {
+  color: #1d9bf0;
+}
+.x__row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.x__reply .composer__field {
+  padding-top: 8px;
+  font-size: 17px;
+  min-height: 4.2rem;
+  line-height: 1.4;
+}
+.x__reply .composer__label {
+  color: #536471;
+}
+.x__foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 0 50px;
+  color: #1d9bf0;
+}
+.x__foot svg {
+  width: 19px;
+  height: 19px;
+}
+.x__send {
+  margin-left: auto;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #0f1419;
+  color: #fff;
+  font-weight: 700;
+  opacity: 0.5;
+}
+.scene.has-text .x__send {
+  opacity: 1;
+}
+
+/* ── Notion ──────────────────────────────────────────────────────── */
+
+.app--notion {
+  color: #37352f;
+}
+.app--notion .app__body {
+  --side: 13.5rem;
+}
+.notion__side {
+  background: #f7f7f5;
+  padding: 10px 8px 0;
+  font-size: 14px;
+  color: #5f5e5a;
+  border-right: 1px solid #ebebea;
+}
+.lights--in {
+  margin: 4px 0 12px 6px;
+}
+.notion__ws {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-weight: 600;
+  color: #37352f;
+}
+.notion__ws svg {
+  width: 13px;
+  height: 13px;
+}
+.notion__ws-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: #37352f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.notion__nav,
+.notion__pages {
+  display: grid;
+  gap: 1px;
+  margin-top: 8px !important;
+}
+.notion__side li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.notion__side li svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.6;
+}
+.notion__side li.is-active {
+  background: #efefed;
+  color: #37352f;
+  font-weight: 500;
+}
+.notion__sec {
+  padding: 14px 8px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #91908c;
+}
+.notion__pages span {
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+}
+.notion__main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.notion__crumbs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: #37352f;
+  flex: none;
+}
+.notion__crumbs-r {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  color: #91908c;
+  font-size: 13px;
+}
+.notion__crumbs-r b {
+  font-weight: 500;
+  color: #37352f;
+}
+.notion__crumbs-r svg {
+  width: 18px;
+  height: 18px;
+}
+.notion__page {
+  padding: 14px clamp(16px, 8%, 72px) 0;
+  overflow: hidden;
+}
+.notion__icon {
+  font-size: 40px;
+  line-height: 1;
+}
+.notion__title {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  margin: 10px 0 10px !important;
+  color: #37352f;
+}
+.notion__body .composer__field {
+  font-size: 16px;
+  line-height: 1.55;
+  min-height: 6rem;
+}
+.notion__body .composer__label {
+  color: #b9b8b4;
+}
+
+/* ── the overlay Minne puts at your caret ────────────────────────── */
 
 .key {
   position: absolute;
   z-index: 3;
   left: 50%;
-  bottom: clamp(18px, 3.4vw, 40px);
+  bottom: var(--pad);
   transform: translate(-50%, 10px);
-  width: min(26rem, calc(100% - 2rem));
+  width: min(23rem, calc(100% - 2rem));
   background: #fff;
-  border-radius: 14px;
+  border-radius: 16px;
   /* one inset, every side, matching the app's grid */
   padding: 14px;
   color: #12141a;
@@ -819,22 +1592,23 @@ html:not(.js) .composer__label {
   display: flex;
   align-items: center;
   gap: 0.42rem;
-  font-size: 14.5px;
+  font-size: 13.5px;
   /* the panel's one rule, at the same inset as everything below it */
   padding-bottom: 9px;
   border-bottom: 1px solid rgba(10, 26, 64, 0.11);
 }
 .key__head .spark {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   fill: var(--spark-ink);
 }
 .key__name {
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .key__ctx {
   color: rgba(18, 20, 26, 0.38);
+  font-size: 12.5px;
 }
 .key__ctx:not(:empty)::before {
   content: "·";
@@ -874,7 +1648,7 @@ html:not(.js) .composer__label {
 }
 .key__status {
   margin: 10px 0 0;
-  font-size: 13px;
+  font-size: 12.5px;
   color: rgba(18, 20, 26, 0.62);
 }
 /* No card behind the draft: it sits on the panel's white, on the same grid
@@ -918,7 +1692,7 @@ html:not(.js) .composer__label {
 }
 .key__text {
   margin: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 1.5;
 }
 .key__text::after {
@@ -941,15 +1715,30 @@ html:not(.js) .composer__label {
 .stage:not(.is-thinking) .key__skeleton {
   display: none;
 }
+/* Where the draft came from: the notes Minne read, named. */
+.key__ground {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: rgba(18, 20, 26, 0.38);
+  min-height: 1.2em;
+  opacity: 0;
+  transition: opacity 0.3s var(--ease);
+}
+.key__ground:not(:empty)::before {
+  content: "from ";
+}
+.stage.is-ready .key__ground {
+  opacity: 1;
+}
 .key__buttons {
   display: flex;
   gap: 8px;
-  margin-top: 13px;
+  margin-top: 12px;
 }
 /* Outlines, not grey fills: one capsule is filled blue and it is the answer;
    the rest are the ways out and weigh almost nothing on white. */
 .key__btn {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   padding: 6px 12px;
   border-radius: 999px;
@@ -976,6 +1765,7 @@ html:not(.js) .composer__label {
   background: var(--spark-ink);
   border-color: transparent;
   color: #fff;
+  font-weight: 600;
 }
 .key__btn--primary b {
   opacity: 0.72;
@@ -997,112 +1787,26 @@ html:not(.js) .composer__label {
   box-shadow: 0 0 0 4px rgba(10, 92, 222, 0.25);
 }
 
-/* the keycap and the line that says what just happened */
-
-.hud {
-  display: grid;
-  gap: 1rem 1.4rem;
-  align-items: center;
-}
-.keycap {
-  position: absolute;
-  left: clamp(18px, 3.4vw, 40px);
-  bottom: clamp(18px, 3.4vw, 34px);
-  z-index: 2;
-  display: inline-grid;
-  justify-items: center;
-  gap: 0.45rem;
-  width: max-content;
-}
-.keycap__key {
-  display: grid;
-  place-items: center;
-  min-width: 3.1rem;
-  height: 2.7rem;
-  padding-inline: 0.75rem;
-  white-space: nowrap;
-  border-radius: 9px;
-  font-family: var(--display);
-  font-size: 1.15rem;
-  color: var(--chalk);
-  background: linear-gradient(180deg, #222834, #161b24);
-  box-shadow:
-    0 4px 0 #0e1219,
-    0 8px 16px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
-  transition:
-    transform 0.09s var(--ease),
-    box-shadow 0.09s var(--ease),
-    color 0.2s var(--ease);
-}
-.keycap.is-down .keycap__key {
-  transform: translateY(4px);
-  color: #cfe0ff;
-  box-shadow:
-    0 0 0 #0e1219,
-    0 3px 10px rgba(0, 0, 0, 0.5),
-    0 0 0 3px rgba(52, 120, 246, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
-}
-.keycap__label {
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  color: var(--mute);
-}
-.hud__say {
-  margin: 0;
-  font-size: 1.02rem;
-  line-height: 1.6;
-  color: var(--prose);
-  max-width: 34rem;
-}
-
 .demo__foot {
-  margin: clamp(28px, 3.5vw, 44px) 0 0;
+  margin: clamp(28px, 3.5vw, 44px) auto 0;
   padding-left: 1.1rem;
   border-left: 2px solid var(--line);
   color: var(--mute);
   font-size: 0.98rem;
-  max-width: 40rem;
+  max-width: 60rem;
 }
 
-/* ── what you get ────────────────────────────────────────────────── */
+/* ── what it remembers ───────────────────────────────────────────── */
 
-.gets {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 2.2rem;
-}
-.gets li {
-  max-width: 30rem;
-}
-.gets__lead {
-  font-family: var(--display);
-  font-weight: 600;
-  font-size: 1.22rem;
-  letter-spacing: -0.02em;
-  color: var(--chalk);
-  margin: 0 0 0.45rem;
-}
-.gets p + p {
-  margin: 0;
-  font-size: 1.02rem;
-  line-height: 1.62;
-}
-
-/* ── your Mac only ───────────────────────────────────────────────── */
-
-.section--yours {
+.section--remembers {
   background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.014), transparent);
 }
-.yours {
+.remembers {
   display: grid;
-  gap: clamp(40px, 5vw, 76px);
+  gap: clamp(40px, 5vw, 72px);
   align-items: center;
 }
-.yours__text .h2 {
+.remembers__text .h2 {
   margin-block: 0.7rem 1.1rem;
 }
 .promise {
@@ -1110,7 +1814,7 @@ html:not(.js) .composer__label {
   margin: 1.8rem 0 0;
   padding: 0;
   display: grid;
-  gap: 1rem;
+  gap: 0.9rem;
   max-width: 32rem;
 }
 .promise li {
@@ -1131,19 +1835,211 @@ html:not(.js) .composer__label {
   box-shadow: 0 0 14px rgba(52, 120, 246, 0.65);
 }
 
-/* The egress ledger: the trust claim stated as an audit, not a vibe. */
-.egress {
-  margin-top: clamp(52px, 6vw, 84px);
-  border-top: 1px solid var(--line-soft);
-  padding-top: clamp(36px, 4vw, 52px);
+/* the Finder, on the folder */
+.finder {
+  margin: 0;
 }
-.egress__title {
-  font-family: var(--display);
-  color: var(--chalk);
+.finder__win {
+  color: #1d1d1f;
+  font-size: 13px;
+}
+.finder__win .app__body {
+  --side: 10.5rem;
+  height: 21rem;
+}
+.app__bar--finder {
+  background: #f6f6f6;
+  gap: 14px;
+}
+.finder__nav,
+.finder__view {
+  color: #7a7a7e;
+  display: inline-flex;
+  gap: 10px;
+}
+.finder__nav {
+  margin-left: 6px;
+}
+.finder__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
-  font-size: 1.35rem;
+  color: #3c3c40;
+  margin-right: auto;
+}
+.finder__title svg {
+  color: #4aa3f5;
+  stroke-width: 1.6;
+}
+.finder__side {
+  background: #ebeaee;
+  padding: 8px 6px 0;
+  border-right: 1px solid #dcdbe0;
+}
+.finder__sec {
+  font-size: 11px;
+  font-weight: 600;
+  color: #86868b;
+  padding: 4px 8px 4px;
+}
+.finder__side li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #1d1d1f;
+}
+.finder__side li svg {
+  color: #4aa3f5;
+  stroke-width: 1.7;
+}
+.finder__side li.is-active {
+  background: rgba(0, 0, 0, 0.09);
+}
+.finder__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.1fr);
+  min-height: 0;
+}
+.finder__list {
+  padding: 4px 0 !important;
+  border-right: 1px solid #e3e3e6;
+  overflow: hidden;
+}
+.finder__list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 12px;
+  white-space: nowrap;
+}
+.finder__list li:nth-child(even) {
+  background: #f5f5f7;
+}
+.finder__list li svg {
+  color: #4aa3f5;
+  stroke-width: 1.7;
+  width: 15px;
+  height: 15px;
+}
+.finder__list li:nth-child(n + 5) svg {
+  color: #9a9aa0;
+}
+.finder__list li i {
+  margin-left: auto;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+  border-left-color: #8e8e93;
+  border-left-width: 5px;
+}
+.finder__list li:nth-child(2) {
+  color: #1d1d1f;
+}
+.finder__list li:nth-child(2) i {
+  transform: rotate(90deg) translateX(1px);
+}
+/* the open folder's children */
+.finder__sub {
+  padding-left: 34px !important;
+}
+.finder__list li.is-active {
+  background: #dcdde3;
+  color: #1d1d1f;
+}
+.finder__preview {
+  padding: 12px 16px;
+  overflow: hidden;
+  background: #fff;
+}
+.finder__file {
+  font-weight: 600;
+  color: #3c3c40;
+  font-size: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #ececef;
+  margin-bottom: 8px !important;
+}
+.finder__md {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: #3c3c40;
+  white-space: pre-wrap;
+}
+.finder figcaption {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1.65;
+  color: var(--mute);
+  margin-top: 1rem;
+}
+
+/* ── the facts ───────────────────────────────────────────────────── */
+
+.facts {
+  margin: 0;
+  display: grid;
+  gap: 1.6rem 2.6rem;
+}
+.facts > div {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 1rem;
+}
+.facts dt {
+  font-family: var(--mono);
+  font-size: 0.775rem;
+  letter-spacing: 0.02em;
+  color: var(--spark-lift);
+  margin-bottom: 0.4rem;
+}
+.facts dd {
+  margin: 0;
+  color: var(--prose);
+  line-height: 1.6;
+  font-size: 1.02rem;
+}
+
+/* The egress ledger, folded: there when you want the audit, quiet otherwise. */
+.egress {
+  margin-top: clamp(40px, 5vw, 64px);
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+.egress summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 1.1rem 0;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.12rem;
   letter-spacing: -0.015em;
-  margin: 0.7rem 0 0.9rem;
+  color: var(--chalk);
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.egress summary::-webkit-details-marker {
+  display: none;
+}
+.egress summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--spark-lift);
+  border-bottom: 1.5px solid var(--spark-lift);
+  transform: rotate(-45deg);
+  transition: transform 0.25s var(--ease);
+  flex: none;
+}
+.egress[open] summary::before {
+  transform: rotate(45deg);
+}
+.egress__inner {
+  padding-bottom: 1.6rem;
 }
 .egress__intro,
 .egress__note {
@@ -1153,9 +2049,9 @@ html:not(.js) .composer__label {
   margin: 0;
 }
 .egress__ledger {
-  margin: 1.6rem 0;
+  margin: 1.4rem 0;
   display: grid;
-  gap: 0.85rem;
+  gap: 0.8rem;
   max-width: 44rem;
 }
 .egress__ledger > div {
@@ -1177,55 +2073,6 @@ html:not(.js) .composer__label {
 }
 .egress__note {
   color: var(--mute);
-}
-
-.folder {
-  margin: 0;
-}
-.folder__win {
-  background: #fff;
-  border-radius: 13px;
-  overflow: hidden;
-  font-family: var(--system);
-  color: #16171a;
-  box-shadow:
-    0 50px 90px -36px rgba(0, 0, 0, 0.92),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.14);
-}
-.folder__list {
-  list-style: none;
-  margin: 0;
-  padding: 6px 0 10px;
-  font-size: 14px;
-}
-.folder__list li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 16px;
-}
-.folder__list li:nth-child(even) {
-  background: rgba(0, 0, 0, 0.03);
-}
-.folder__meta {
-  margin-left: auto;
-  font-size: 12px;
-  color: #9a9aa2;
-}
-.folder__icon {
-  width: 15px;
-  height: 19px;
-  border-radius: 2px 4px 2px 2px;
-  background: linear-gradient(160deg, #dfe3ea, #c7ccd6);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
-  flex: none;
-}
-.folder figcaption {
-  font-family: var(--mono);
-  font-size: 0.74rem;
-  line-height: 1.65;
-  color: var(--mute);
-  margin-top: 1rem;
 }
 
 /* ── closing ─────────────────────────────────────────────────────── */
@@ -1355,6 +2202,12 @@ html:not(.js) .composer__label {
 
 /* ── at width ────────────────────────────────────────────────────── */
 
+@media (min-width: 600px) {
+  .facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (min-width: 700px) {
   .tabs {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1365,72 +2218,40 @@ html:not(.js) .composer__label {
 }
 
 @media (min-width: 900px) {
-  .gets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2.6rem 3.5rem;
+  .facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .yours {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 0.86fr);
-  }
-
-  /* Controls and commentary on the left, the moment itself on the right. */
-  .demo__stage {
-    grid-template-columns: minmax(0, 19rem) minmax(0, 1fr);
-    gap: 2.2rem;
-    align-items: start;
-  }
-  .tabs {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.45rem;
-  }
-  .rail {
-    position: sticky;
-    top: 96px;
-  }
-  .hud {
-    grid-template-columns: auto minmax(0, 1fr);
-    padding-top: 0.4rem;
-  }
-  .hud__say {
-    font-size: 0.98rem;
+  .remembers {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
   }
 
-  .stage {
-    min-height: 30rem;
-  }
-  .win {
-    margin-inline: 0;
-    width: min(100%, 34rem);
-  }
-  /* Minne opens under the caret, at the field's edge — not on top of it. */
+  /* Minne opens at the caret: over the message box, since that sits at the
+     bottom of every app and is what the draft is about to fill — and below
+     the first line in a blank page. */
   .key {
     left: auto;
-    right: 0;
-    bottom: clamp(20px, 3vw, 34px);
-    width: 24rem;
+    right: calc(var(--pad) + 1.5rem);
+    bottom: calc(var(--pad) + 0.6rem);
+    width: 23rem;
     transform: translate(0, 12px);
   }
   .stage.is-open .key {
     transform: translate(0, 0);
   }
+  .stage[data-app="Notion"] .key {
+    bottom: auto;
+    top: 14.4rem;
+    right: auto;
+    left: calc(var(--pad) + 16rem);
+    transform: translate(0, -12px);
+  }
+  .stage[data-app="Notion"].is-open .key {
+    transform: translate(0, 0);
+  }
 }
 
 @media (max-width: 899px) {
-  /* Stacked: the key you press, the app, then Minne under it. */
-  .keycap {
-    position: static;
-    justify-self: center;
-    margin-bottom: 1.1rem;
-  }
-  .stage {
-    display: grid;
-  }
-  .win {
-    width: 100%;
-  }
-  .win__body {
-    min-height: 13rem;
-  }
+  /* Stacked: the app, then Minne under it. */
   .key {
     position: relative;
     left: auto;
@@ -1442,8 +2263,9 @@ html:not(.js) .composer__label {
   .stage.is-open .key {
     transform: none;
   }
-  /* Reserve the overlay's room so the stage does not jump when it appears. */
   .stage {
+    display: grid;
+    /* Reserve the overlay's room so the stage does not jump when it appears. */
     min-height: 40rem;
   }
 }
@@ -1451,6 +2273,271 @@ html:not(.js) .composer__label {
 @media (max-width: 860px) {
   .nav__links {
     display: none;
+  }
+}
+
+/* Elements that exist only in one of the two layouts. */
+@media (min-width: 761px) {
+  .m-only {
+    display: none !important;
+  }
+}
+
+/* ── Narrow: each app becomes its own phone layout ────────────────── */
+
+@media (max-width: 760px) {
+  .d-only {
+    display: none !important;
+  }
+
+  /* No Mac chrome: on a phone the app is the whole screen. */
+  .app .app__bar,
+  .slack__side,
+  .gmail__side,
+  .gmail__top,
+  .x__side,
+  .notion__side,
+  .finder__side {
+    display: none;
+  }
+  .app {
+    height: auto;
+    min-height: 30rem;
+    border-radius: 14px;
+  }
+  .app__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Slack (iOS): a white bar with the person, messages, the box at the bottom. */
+  .slack__mhead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 17px;
+    color: #1d1c1d;
+  }
+  .slack__mhead > svg {
+    width: 22px;
+    height: 22px;
+    stroke-width: 2.2;
+  }
+  .slack__mhead .sava {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .slack__mhead b {
+    font-weight: 700;
+  }
+  .slack__mhead-r {
+    margin-left: auto;
+    color: #616061;
+  }
+  .slack__msgs {
+    padding: 10px 14px 6px;
+    font-size: 15px;
+  }
+  .slack__day {
+    display: none;
+  }
+  .sava {
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+  .smsg {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+  .slack__composer {
+    margin: 4px 10px 10px;
+    border-color: #dcdcdc;
+    border-radius: 18px;
+  }
+  .slack__tools {
+    display: none;
+  }
+  .slack__composer .composer__field {
+    min-height: 2.6rem;
+    padding: 10px 14px 4px;
+  }
+  .slack__foot {
+    padding: 2px 8px 6px 10px;
+  }
+  .slack__send {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+  }
+
+  /* Gmail (iOS): the thread, and the quick-reply bar along the bottom. */
+  .gmail__mhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 2px 14px;
+    color: #444746;
+  }
+  .gmail__mhead svg {
+    width: 22px;
+    height: 22px;
+  }
+  .gmail__mhead-r {
+    display: inline-flex;
+    gap: 22px;
+  }
+  .gmail__main {
+    border-radius: 0;
+    margin: 0;
+    padding: 0 16px 0;
+  }
+  .gmail__subject {
+    font-size: 22px;
+    line-height: 1.25;
+    padding-right: 8px;
+  }
+  .gmsg {
+    margin-top: 14px;
+    font-size: 15px;
+  }
+  .gmsg__who span {
+    display: none;
+  }
+  .gmsg__who em {
+    font-size: 12px;
+  }
+  .gmail__reply {
+    margin: auto -16px 0;
+    padding: 10px 14px 12px;
+    border-radius: 0;
+    box-shadow: none;
+    border-top: 1px solid #e0e3e7;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .gmail__qava {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+    margin-left: 0;
+  }
+  .gmail__reply .composer__field {
+    flex: 1;
+    min-height: 0;
+    padding: 9px 14px;
+    border: 1px solid #dadce0;
+    border-radius: 22px;
+    font-size: 15px;
+  }
+  .gmail__reply .composer__label {
+    color: #5e5e5e;
+  }
+  .gmail__foot {
+    display: contents;
+  }
+  .gmail__foot > svg {
+    display: none;
+  }
+  .gmail__send {
+    order: 1;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    margin: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #8a8a8a;
+  }
+  .gmail__send svg {
+    width: 20px;
+    height: 20px;
+  }
+  .scene.has-text .gmail__send {
+    background: transparent;
+    color: #0b57d0;
+  }
+
+  /* X (iOS): the post, then the reply composer as the compose sheet lays it
+     out — avatar and text across the full width, the tools and Reply below. */
+  .x__head {
+    padding: 10px 14px;
+    font-size: 19px;
+  }
+  .xpost {
+    padding-inline: 14px;
+  }
+  .x__reply {
+    padding: 10px 14px 12px;
+    border-top: 1px solid #eff3f4;
+  }
+  .x__replying {
+    padding-left: 42px;
+    font-size: 14px;
+  }
+  .x__row {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+  .x__reply .xava {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+  .x__reply .composer__field {
+    padding-top: 4px;
+    font-size: 16px;
+    min-height: 3rem;
+  }
+  .x__foot {
+    padding-left: 42px;
+  }
+  .x__send {
+    height: 32px;
+    font-size: 14px;
+  }
+
+  /* Notion (iOS): back, share and more in the bar; the page below. */
+  .notion__crumbs {
+    padding: 10px 12px;
+  }
+  .notion__back {
+    width: 22px;
+    height: 22px;
+    stroke-width: 2.2;
+  }
+  .notion__crumbs-r {
+    gap: 18px;
+    color: #37352f;
+  }
+  .notion__crumbs-r svg {
+    width: 20px;
+    height: 20px;
+  }
+  .notion__page {
+    padding: 12px 20px 0;
+  }
+  .notion__title {
+    font-size: 28px;
+  }
+
+  /* the Finder */
+  .finder__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .finder__preview {
+    display: none;
+  }
+  .finder__win .app__body {
+    height: auto;
+  }
+  .finder__win .app__bar {
+    display: flex;
+  }
+  .stage {
+    min-height: 0;
   }
 }
 
@@ -1462,7 +2549,7 @@ html:not(.js) .composer__label {
     display: none;
   }
   .hero {
-    padding-block: 118px 72px;
+    padding-block: 110px 24px;
   }
   .hero__meta {
     gap: 0.3rem 0.9rem;
@@ -1474,9 +2561,15 @@ html:not(.js) .composer__label {
     flex: 1 1 auto;
     justify-content: center;
   }
-  .win__body {
-    padding: 14px 14px 16px;
-    font-size: 14px;
+  .tab__d {
+    display: none;
+  }
+  .app__url,
+  .app__bar-search {
+    min-width: 10rem;
+  }
+  .xpost__acts span:nth-child(n + 5) {
+    display: none;
   }
   .key {
     padding: 13px;
@@ -1506,7 +2599,6 @@ html:not(.js) .composer__label {
     opacity: 0.35;
   }
   .key__skeleton span,
-  .chat__spin,
   .key__dots i {
     animation: none;
   }
