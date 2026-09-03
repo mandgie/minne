@@ -13,10 +13,18 @@
 //     `content` carries the prose the model reads.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
-import { MAX_SUMMARY_CHARS, PAGE_TYPES, LOG_PASSES, type LogPass, type PageType } from "./wiki";
+import {
+  MAX_SUMMARY_CHARS,
+  PAGE_TYPES,
+  LOG_PASSES,
+  pagePath,
+  type LogPass,
+  type PageType,
+} from "./wiki";
 import {
   DEFAULT_SEARCH_LIMIT,
   MAX_SEARCH_LIMIT,
+  type IndexEntry,
   type IndexListing,
   type Memory,
   type MemoryScope,
@@ -117,13 +125,23 @@ function listIndexTool(memory: Memory) {
     name: "list_index",
     label: "List index",
     description:
-      "The map of the wiki: index.md as it stands, plus every page with its type, summary and " +
-      "when it was last updated. Call this before creating a page — the subject may already " +
-      "have one under a different name.",
-    parameters: Type.Object({}),
-    execute: async () => {
+      "The map of the wiki: one line per page, grouped by type — the title and the first " +
+      "sentence of its summary. Call this before creating a page — the subject may already " +
+      "have one under a different name, and updating that page is almost always right. A page " +
+      "whose file is not where its title would put it shows its path in brackets; pass that " +
+      "as `path` to write_page. Pass `type` to see one kind of page only.",
+    parameters: Type.Object({
+      type: Type.Optional(
+        Type.Union(
+          PAGE_TYPES.map((type) => Type.Literal(type)),
+          { description: "Only pages of this type. Default: every page." },
+        ),
+      ),
+    }),
+    execute: async (_id, params) => {
       const listing = memory.listIndex();
-      return { content: [text(renderIndex(listing))], details: listing };
+      const options = params.type === undefined ? {} : { type: params.type as string };
+      return { content: [text(renderIndex(listing, options))], details: listing };
     },
   });
 }
@@ -254,25 +272,81 @@ export function renderPageContents(page: PageContents): string {
   return `${page.path} (${page.kind})\n\n${page.text}`;
 }
 
-export function renderIndex(listing: IndexListing): string {
+/** Group order in the map: who and what first, the diaries last. */
+const INDEX_GROUP_ORDER: readonly string[] = ["person", "project", "topic", "style", "daily"];
+
+/** Characters of summary shown per line in the map — a label, not the page. */
+export const INDEX_LINE_CHARS = 160;
+
+/**
+ * The first sentence of a summary, cut to `INDEX_LINE_CHARS`. The map exists
+ * to answer "is there a page for this already?", which the opening clause
+ * settles; the rest of the summary is one read_page away.
+ */
+export function indexLabel(summary: string | null): string {
+  if (summary === null) return "";
+  const text = summary.replace(/\s+/g, " ").trim();
+  const sentence = /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+  const label = sentence.length >= 40 ? sentence : text;
+  if (label.length <= INDEX_LINE_CHARS) return label;
+  const cut = label.lastIndexOf(" ", INDEX_LINE_CHARS - 1);
+  return `${label.slice(0, cut > 40 ? cut : INDEX_LINE_CHARS - 1).trimEnd()}…`;
+}
+
+/**
+ * The map of the wiki as the model reads it: a count line, then one line per
+ * page grouped by type — `- Title — first sentence`. The path is added only
+ * when it cannot be derived from the title (a renamed page, a hand-made file),
+ * because that is the one case write_page needs it. index.md is not repeated
+ * here: it lists the same pages with the same summaries, and the model reads
+ * this map before every ingestion batch, so every byte in it is paid for
+ * hundreds of times a day. Wanting the human file is what read_page is for.
+ */
+export function renderIndex(listing: IndexListing, options: { type?: string } = {}): string {
   if (listing.index === null && listing.pages.length === 0) {
     return "This memory has no wiki yet — no index.md, no pages.";
   }
+  const pages =
+    options.type === undefined
+      ? listing.pages
+      : listing.pages.filter((page) => page.type === options.type);
   const summary = Object.entries(listing.counts)
+    .sort(([a], [b]) => groupRank(a) - groupRank(b) || a.localeCompare(b))
     .map(([type, count]) => `${count} ${type}`)
     .join(", ");
-  const rows = listing.pages.map(
-    (page) =>
-      `${page.path} — ${page.title ?? "(no title)"} (${page.type ?? "?"}, ${page.sources} ` +
-      `citation${page.sources === 1 ? "" : "s"}, updated ${page.lastUpdated ?? "never"})\n` +
-      `  ${page.summary ?? ""}`,
-  );
-  return [
-    `${listing.pages.length} pages${summary === "" ? "" : `: ${summary}`}`,
-    "",
-    ...(rows.length === 0 ? ["(no pages yet)"] : rows),
-    "",
-    "--- index.md ---",
-    listing.index ?? "(missing)",
-  ].join("\n");
+  const groups = new Map<string, IndexEntry[]>();
+  for (const page of pages) {
+    const type = page.type ?? "unknown";
+    groups.set(type, [...(groups.get(type) ?? []), page]);
+  }
+  const sections = [...groups.entries()]
+    .sort(([a], [b]) => groupRank(a) - groupRank(b) || a.localeCompare(b))
+    .flatMap(([type, entries]) => [
+      "",
+      `## ${type} (${entries.length})`,
+      ...entries
+        .sort((a, b) => (a.title ?? a.path).localeCompare(b.title ?? b.path))
+        .map((page) => indexLine(page)),
+    ]);
+  const head =
+    options.type === undefined
+      ? `${listing.pages.length} pages${summary === "" ? "" : `: ${summary}`}`
+      : `${pages.length} of ${listing.pages.length} pages (type ${options.type})`;
+  return [head, ...(pages.length === 0 ? ["", "(no pages)"] : sections)].join("\n");
+}
+
+function groupRank(type: string): number {
+  const rank = INDEX_GROUP_ORDER.indexOf(type);
+  return rank === -1 ? INDEX_GROUP_ORDER.length : rank;
+}
+
+function indexLine(page: IndexEntry): string {
+  const title = page.title ?? "(no title)";
+  const label = indexLabel(page.summary);
+  const derivable =
+    page.title !== null &&
+    PAGE_TYPES.includes(page.type as PageType) &&
+    pagePath(page.type as PageType, page.title) === page.path;
+  const where = derivable ? "" : ` [${page.path}]`;
+  return `- ${title}${label === "" ? "" : ` — ${label}`}${where}`;
 }

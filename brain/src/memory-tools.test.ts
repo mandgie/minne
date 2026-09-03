@@ -5,8 +5,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Memory } from "./memory";
-import { memoryTools } from "./memory-tools";
+import { Memory, type IndexListing } from "./memory";
+import { INDEX_LINE_CHARS, indexLabel, memoryTools, renderIndex } from "./memory-tools";
 import { bootstrapWiki } from "./wiki";
 
 let dirs: string[] = [];
@@ -102,9 +102,68 @@ describe("write_page and append_log", () => {
 
     expect(await tools.call("read_page", { path: "wiki/ingrid-berg.md" })).toContain("Oslo, mostly.");
     expect(await tools.call("read_page", { path: "log.md" })).toContain("[[Ingrid Berg]]");
-    expect(await tools.call("list_index", {})).toContain(
-      "wiki/ingrid-berg.md — Ingrid Berg (person, 0 citations, updated 2026-08-18)",
+    const map = await tools.call("list_index", {});
+    expect(map).toContain("## person (1)");
+    expect(map).toContain("- Ingrid Berg — Colleague; runs the Oslo migration.");
+    // The path follows from the title, so the map does not spell it out.
+    expect(map).not.toContain("wiki/ingrid-berg.md");
+    // index.md is not repeated after the rows.
+    expect(map).not.toContain("--- index.md ---");
+    expect(await tools.call("list_index", { type: "project" })).toContain("0 of 1 pages");
+  });
+
+  test("the map is one line per page, grouped by type, and only spells out a path it cannot derive", () => {
+    const listing: IndexListing = {
+      index: "# Index",
+      counts: { topic: 2, person: 1 },
+      pages: [
+        {
+          path: "wiki/oslo.md",
+          title: "Oslo",
+          type: "topic",
+          summary:
+            "Where the team is moving in September, after a year of remote work. The office is by the harbour.",
+          lastUpdated: "2026-08-18",
+          sources: 3,
+        },
+        {
+          path: "wiki/kaggriculture-v200-live-the-sheep-heavy-loss-class-and-the-b.md",
+          title: "Kaggriculture — v200 live",
+          type: "topic",
+          summary: "A renamed page whose file kept its old slug.",
+          lastUpdated: "2026-09-02",
+          sources: 1,
+        },
+        {
+          path: "wiki/ingrid-berg.md",
+          title: "Ingrid Berg",
+          type: "person",
+          summary: "Colleague at Nordfjord; runs the Oslo migration.",
+          lastUpdated: "2026-08-18",
+          sources: 0,
+        },
+      ],
+    };
+    expect(renderIndex(listing)).toBe(
+      [
+        "3 pages: 1 person, 2 topic",
+        "",
+        "## person (1)",
+        "- Ingrid Berg — Colleague at Nordfjord; runs the Oslo migration.",
+        "",
+        "## topic (2)",
+        "- Kaggriculture — v200 live — A renamed page whose file kept its old slug. " +
+          "[wiki/kaggriculture-v200-live-the-sheep-heavy-loss-class-and-the-b.md]",
+        "- Oslo — Where the team is moving in September, after a year of remote work.",
+      ].join("\n"),
     );
+    expect(renderIndex(listing, { type: "person" })).toBe(
+      ["1 of 3 pages (type person)", "", "## person (1)", "- Ingrid Berg — Colleague at Nordfjord; runs the Oslo migration."].join("\n"),
+    );
+    expect(indexLabel("x".repeat(400))).toHaveLength(INDEX_LINE_CHARS);
+    // A first sentence too short to be a label falls back to the whole
+    // summary, cut on the character when there is no word boundary to use.
+    expect(indexLabel("Short. " + "y".repeat(200))).toBe("Short. " + "y".repeat(152) + "…");
   });
 
   test("a refused write comes back as a thrown error, which the loop shows the model", async () => {

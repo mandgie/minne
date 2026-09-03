@@ -180,7 +180,7 @@ describe("minne-brain --mcp", () => {
 
       const index = await session.call("list_index");
       expect(textOf(index)).toBe(renderIndex(memory.listIndex()));
-      expect(textOf(index)).toContain("wiki/oslo-trip.md");
+      expect(textOf(index)).toContain("- Oslo Trip — ");
     } finally {
       expect(await session.close()).toBe(0);
     }
@@ -204,7 +204,7 @@ describe("minne-brain --mcp", () => {
       // The refusals were results, not a crash: the server still answers.
       const index = await session.call("list_index");
       expect(index.isError).toBeUndefined();
-      expect(textOf(index)).toContain("wiki/oslo-trip.md");
+      expect(textOf(index)).toContain("- Oslo Trip — ");
     } finally {
       expect(await session.close()).toBe(0);
     }
