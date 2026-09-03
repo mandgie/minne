@@ -178,7 +178,7 @@ enum MemorySeed {
         | --- | --- |
         | `title` | Human name of the subject. Unique across the wiki — it is what `[[wikilinks]]` resolve to. |
         | `type` | One of `person`, `project`, `topic`, `daily`, `style`. (`index` and `log` are used by the two root pages.) |
-        | `summary` | One or two sentences. This is what retrieval shows before opening the page. |
+        | `summary` | One or two sentences, at most 300 characters, plain prose. This is what retrieval shows before opening the page; the agent's write tool refuses anything longer. |
         | `sources` | List of citations the page was derived from. A list, even with one entry; `[]` while a page has no citations yet. |
         | `last_updated` | `YYYY-MM-DD` (or a full ISO 8601 timestamp) of the last time the agent revised the page. `null` on a freshly bootstrapped `index.md`, which nothing has been written to yet. |
 
