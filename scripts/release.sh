@@ -83,11 +83,29 @@ cp "$(dirname "$0")/dmg-background.tiff" "$STAGING/.background/background.tiff"
 for v in "/Volumes/Minne $VERSION"*; do
     [ -e "$v" ] && hdiutil detach "$v" -force -quiet || true
 done
+# hdiutil on GitHub's macOS runners fails intermittently with "Resource busy"
+# (exit 16) on create, attach and detach — the v0.1.11 release died there after
+# a clean notarization. Nothing is wrong with the image; a short wait and a
+# second try is the documented workaround.
+retry() {
+    local attempt=1
+    until "$@"; do
+        local code=$?
+        if [ "$attempt" -ge 5 ]; then
+            echo "==> ERROR: '$1' failed $attempt times (last exit $code)" >&2
+            return "$code"
+        fi
+        echo "==> '$1' failed (exit $code), retrying in 3s ($attempt/5)" >&2
+        sleep 3
+        attempt=$((attempt + 1))
+    done
+}
+
 RW_DMG="$BUILD/Minne-rw.dmg"
 rm -f "$RW_DMG"
-hdiutil create -quiet -volname "Minne $VERSION" -srcfolder "$STAGING" \
+retry hdiutil create -volname "Minne $VERSION" -srcfolder "$STAGING" \
     -fs HFS+ -format UDRW -ov "$RW_DMG"
-MOUNT=$(hdiutil attach -readwrite -noverify -nobrowse "$RW_DMG" | awk -F'\t' 'END {print $NF}')
+MOUNT=$(retry hdiutil attach -readwrite -noverify -nobrowse "$RW_DMG" | awk -F'\t' 'END {print $NF}')
 VOLNAME=$(basename "$MOUNT")
 if [ "$VOLNAME" != "Minne $VERSION" ]; then
     echo "==> WARNING: volume mounted as '$VOLNAME' (name collision?)" >&2
@@ -117,8 +135,8 @@ if [ "$DSSTORE_SIZE" -lt 4096 ]; then
     hdiutil detach "$MOUNT" -quiet || true
     exit 1
 fi
-hdiutil detach "$MOUNT" -quiet
-hdiutil convert -quiet "$RW_DMG" -format UDZO -o "$DMG"
+retry hdiutil detach "$MOUNT"
+retry hdiutil convert "$RW_DMG" -format UDZO -o "$DMG"
 rm -f "$RW_DMG"
 rm -rf "$STAGING"
 
