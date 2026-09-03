@@ -28,6 +28,7 @@ jobs:
             echo "tag $GITHUB_REF_NAME does not match VERSION ($expected)" >&2
             exit 1
           fi
+          echo "VERSION=${expected#v}" >> "$GITHUB_ENV"
 
       # Same checks as CI — a tag must not ship anything red.
       - name: Install brain dependencies
@@ -106,6 +107,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         if: env.HAS_SIGNING == 'true'
         with:
+          name: Minne ${{ env.VERSION }}
           files: |
             build/Minne-*.dmg
             build/Minne.dmg
