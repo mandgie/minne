@@ -144,6 +144,30 @@ describe("frontmatter", () => {
     expect(report.errors[0]).toMatchObject({ code: code as LintCode, detail: field as string });
   });
 
+  test("an oversized or markup-bearing summary is a warning, not an error", () => {
+    const long = PERSON.replace(
+      "summary: Colleague at Nordfjord.",
+      `summary: ${"Colleague at Nordfjord who runs the Oslo migration. ".repeat(8)}`,
+    );
+    const longReport = lintWiki(tree({ "wiki/ingrid-berg.md": long }));
+    expect(longReport.ok).toBe(true);
+    expect(longReport.warnings[0]).toMatchObject({
+      code: "summary_invalid",
+      path: "wiki/ingrid-berg.md",
+      detail: "summary",
+    });
+    expect(longReport.warnings[0]?.message).toMatch(/at most 300/);
+
+    const leaked = PERSON.replace(
+      "summary: Colleague at Nordfjord.",
+      'summary: Colleague.</summary> <parameter name="body"># Ingrid',
+    );
+    const leakedReport = lintWiki(tree({ "wiki/ingrid-berg.md": leaked }));
+    expect(leakedReport.ok).toBe(true);
+    expect(leakedReport.warnings[0]).toMatchObject({ code: "summary_invalid" });
+    expect(leakedReport.warnings[0]?.message).toMatch(/markup/);
+  });
+
   test("last_updated may be an ISO timestamp, and null on a fresh index", () => {
     const stamped = PERSON.replace("last_updated: 2026-08-18", "last_updated: 2026-08-18T09:00:00+02:00");
     expect(lintWiki(tree({ "wiki/ingrid-berg.md": stamped })).issues).toEqual([]);

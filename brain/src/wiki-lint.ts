@@ -28,6 +28,7 @@ import {
   REQUIRED_FIELDS,
   SCHEMA_FILE,
   WIKI_DIR,
+  summaryProblem,
   wikiLinks,
   type WikiPageType,
   type WikiTree,
@@ -51,6 +52,7 @@ export type LintCode =
   | "log_entry_invalid"
   | "log_pass_unknown"
   | "no_sources"
+  | "summary_invalid"
   | "orphan";
 
 export const SEVERITIES: Readonly<Record<LintCode, Severity>> = {
@@ -71,6 +73,10 @@ export const SEVERITIES: Readonly<Record<LintCode, Severity>> = {
   log_entry_invalid: "error",
   log_pass_unknown: "warning",
   no_sources: "warning",
+  // The page is readable and reachable; its index line is just not a summary.
+  // New writes are refused outright (memory.ts), so this only ever describes
+  // what landed before the limit existed, or what the user typed by hand.
+  summary_invalid: "warning",
   orphan: "warning",
 };
 
@@ -259,6 +265,11 @@ function checkFields(
         line,
         detail: field,
       });
+      continue;
+    }
+    if (field === "summary") {
+      const problem = summaryProblem(value.replace(/\s+/g, " ").trim());
+      if (problem !== null) add("summary_invalid", path, problem, { line, detail: field });
     }
   }
 }

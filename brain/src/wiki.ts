@@ -62,6 +62,36 @@ export type LogPass = (typeof LOG_PASSES)[number];
  */
 export const CITATION_PATTERN = /^sources\/\d{4}-\d{2}-\d{2}\/\d{4}-[\p{L}\p{N}-]+\.md#\d+$/u;
 
+/**
+ * The most a page summary may hold, in characters. SCHEMA.md asks for one or
+ * two sentences; this is that in a number the tool schema, the write path and
+ * the lint can all enforce. It is a hard limit, not a target: the summary is
+ * what every index line and search hit shows, and the ingestion pass reads
+ * every one of them before every batch — a 2 KB summary costs on every turn
+ * for the life of the page. The live wiki hit 25 KB summaries (whole bodies,
+ * once with tool-call markup) before this existed.
+ */
+export const MAX_SUMMARY_CHARS = 300;
+
+/** `</summary>`, `<parameter name="body">` — a tool call leaking into text. */
+const TAG_PATTERN = /<\/?[A-Za-z][^<>]*>/;
+
+/**
+ * Why a summary is not a summary, or null when it is one. Checked on the
+ * whitespace-collapsed text: over the limit, or carrying tag-shaped markup,
+ * which is never prose and was in practice a mis-parsed tool call.
+ */
+export function summaryProblem(summary: string): string | null {
+  if (summary.length > MAX_SUMMARY_CHARS) {
+    return `summary is ${summary.length} characters; at most ${MAX_SUMMARY_CHARS} (one or two sentences)`;
+  }
+  const tag = TAG_PATTERN.exec(summary);
+  if (tag !== null) {
+    return `summary contains markup (\`${tag[0].slice(0, 40)}\`) — plain prose only`;
+  }
+  return null;
+}
+
 /** `YYYY-MM-DD`, optionally followed by a time — what `last_updated` holds. */
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 

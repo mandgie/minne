@@ -36,6 +36,7 @@ import {
   loadWikiTree,
   pagePath,
   renderPage,
+  summaryProblem,
   type LogPass,
   type PageType,
   type WikiTree,
@@ -397,6 +398,14 @@ export class Memory {
     if (title === "") throw new SchemaViolationError("a page needs a non-empty title", []);
     const summary = collapse(input.summary);
     if (summary === "") throw new SchemaViolationError("a page needs a non-empty summary", []);
+    const problem = summaryProblem(summary);
+    if (problem !== null) {
+      throw new SchemaViolationError(
+        `write refused — ${problem}. Put the detail in the body; the summary is the one- or ` +
+          `two-sentence line the index shows.`,
+        [],
+      );
+    }
 
     bootstrapWiki(this.root);
     const resolved = this.resolveWikiPage(input.path ?? pagePath(input.type, title));

@@ -13,7 +13,7 @@
 //     `content` carries the prose the model reads.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
-import { PAGE_TYPES, LOG_PASSES, type LogPass, type PageType } from "./wiki";
+import { MAX_SUMMARY_CHARS, PAGE_TYPES, LOG_PASSES, type LogPass, type PageType } from "./wiki";
 import {
   DEFAULT_SEARCH_LIMIT,
   MAX_SEARCH_LIMIT,
@@ -148,7 +148,12 @@ function writePageTool(memory: Memory) {
       title: Type.String({
         description: "The subject's name, unique in the wiki — this is what [[links]] resolve to.",
       }),
-      summary: Type.String({ description: "One or two sentences; shown by search and the index." }),
+      summary: Type.String({
+        maxLength: MAX_SUMMARY_CHARS,
+        description:
+          `One or two sentences, at most ${MAX_SUMMARY_CHARS} characters, plain prose. This is ` +
+          "the line the index and search show; everything else belongs in `body`.",
+      }),
       sources: Type.Optional(
         Type.Array(Type.String(), {
           description:

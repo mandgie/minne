@@ -9,7 +9,7 @@ import { Memory, NotFoundError, SchemaViolationError, updateIndex } from "./memo
 import { UnsafePathError } from "./memory-path";
 import { EmptyQueryError } from "./sources";
 import { seedSnapshotIndex } from "./test-support";
-import { INDEX_FILE, LOG_FILE, bootstrapWiki, loadWikiTree } from "./wiki";
+import { INDEX_FILE, LOG_FILE, MAX_SUMMARY_CHARS, bootstrapWiki, loadWikiTree } from "./wiki";
 import { lintWiki } from "./wiki-lint";
 
 const CLOCK = new Date("2026-08-18T09:15:07");
@@ -99,6 +99,40 @@ describe("write_page", () => {
     expect(read(memory, INDEX_FILE)).toContain(
       "- [[Oslo Trip]] — Moving the team to Oslo in September.",
     );
+  });
+
+  test("a summary longer than one or two sentences is refused, and nothing is written", () => {
+    const memory = makeMemory();
+    const before = read(memory, INDEX_FILE);
+    const essay = "The team is moving to Oslo in September. ".repeat(10);
+    expect(essay.length).toBeGreaterThan(MAX_SUMMARY_CHARS);
+    expect(() =>
+      memory.writePage({ type: "project", title: "Oslo Trip", summary: essay }),
+    ).toThrow(SchemaViolationError);
+    expect(() =>
+      memory.writePage({ type: "project", title: "Oslo Trip", summary: essay }),
+    ).toThrow(/at most 300/);
+    expect(read(memory, INDEX_FILE)).toBe(before);
+    expect(() => read(memory, "wiki/oslo-trip.md")).toThrow();
+  });
+
+  test("a summary carrying tool-call markup is refused", () => {
+    const memory = makeMemory();
+    const leaked =
+      'Colleague at Nordfjord.</summary> <sources>["sources/2026-08-17/1400-mail.md#3"]' +
+      '</sources> <parameter name="body"># Ingrid';
+    expect(() =>
+      memory.writePage({ type: "person", title: "Ingrid Berg", summary: leaked }),
+    ).toThrow(/markup/);
+    expect(() => read(memory, "wiki/ingrid-berg.md")).toThrow();
+  });
+
+  test("a summary at the limit is accepted", () => {
+    const memory = makeMemory();
+    const summary = "x".repeat(MAX_SUMMARY_CHARS);
+    const result = memory.writePage({ type: "topic", title: "Limit", summary });
+    expect(result.created).toBe(true);
+    expect(parseFrontmatter(read(memory, "wiki/limit.md")).fields.summary).toBe(summary);
   });
 
   test("the written tree lints clean", () => {

@@ -41,7 +41,7 @@ import {
   type SyncPassSummary,
   type SyncState,
 } from "./sync-state";
-import { bootstrapWiki, loadWikiTree } from "./wiki";
+import { MAX_SUMMARY_CHARS, bootstrapWiki, loadWikiTree } from "./wiki";
 import { formatLintReport, lintWiki } from "./wiki-lint";
 
 /** The model to run a pass with, or the reason there is none. */
@@ -204,9 +204,12 @@ are unsure. In short:
 - Pages live in wiki/ and come in five types: person, project, topic, daily
   (wiki/daily/YYYY-MM-DD.md, one per day, linking to what that day touched), and
   style (wiki/style/, one per app the user writes in).
-- Every page needs a one- or two-sentence summary and cites the snapshots it was
-  derived from. Every claim you write must come from a capture you actually
-  read; cite it inline in backticks when the claim is specific.
+- Every page needs a summary of one or two sentences — at most ${MAX_SUMMARY_CHARS}
+  characters, plain prose, no markup — and cites the snapshots it was derived
+  from. The summary is the line the index shows; write_page refuses a longer
+  one, so put every detail in the body. Every claim you write must come from a
+  capture you actually read; cite it inline in backticks when the claim is
+  specific.
 - Links are [[Title]] and must resolve, so write the page you link to first.
 - Never invent. If a capture is ambiguous, write less.
 
@@ -257,6 +260,9 @@ can be fixed from what the wiki already knows:
   summary rather than inventing a source.
 - a summary that no longer describes the page's body is stale — rewrite the
   summary to match what the page now says, and refresh nothing else.
+- summary_invalid — the summary is too long or carries markup. Read the page and
+  write_page it again with a one- or two-sentence summary (at most
+  ${MAX_SUMMARY_CHARS} characters), keeping the body and citations as they are.
 - broken_link — either create the page that is missing, or reword the sentence
   so it does not link to something that does not exist.
 
