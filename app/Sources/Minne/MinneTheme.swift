@@ -56,6 +56,28 @@ enum MinneTheme {
         _ = fontsRegistered
     }
 
+    /// Where the bundled faces live. SwiftPM's generated `Bundle.module` only
+    /// looks beside the executable and at the absolute `.build` path of the
+    /// machine that compiled it, then traps — so the shipped .app, where
+    /// `scripts/build.sh` puts the bundle under Contents/Resources, crashed at
+    /// launch on every Mac except the CI runner (0.1.5–0.1.11). Look inside
+    /// the .app first; `Bundle.module` is consulted only for bare `swift
+    /// build` / `swift test` products, where its build-path fallback is what
+    /// finds the bundle.
+    private static let resourceBundle: Bundle? = {
+        let name = "Minne_Minne.bundle"
+        let main = Bundle.main
+        for dir in [main.resourceURL, main.bundleURL] {
+            if let dir, let bundle = Bundle(url: dir.appendingPathComponent(name)) {
+                return bundle
+            }
+        }
+        // Inside a .app with no bundle `Bundle.module` would fatalError. nil
+        // is what lets the accessors fall back to SF, as the header promises.
+        if main.bundleURL.pathExtension == "app" { return nil }
+        return Bundle.module
+    }()
+
     /// `true` when both faces registered. Computed once; the `lazy` is what
     /// makes repeat calls free and keeps registration off every font lookup.
     private static let fontsRegistered: Bool = {
@@ -63,7 +85,7 @@ enum MinneTheme {
         var allOK = true
         for name in names {
             guard
-                let url = Bundle.module.url(
+                let url = resourceBundle?.url(
                     forResource: name, withExtension: "ttf", subdirectory: "Fonts")
             else {
                 BrainClient.log("theme: \(name).ttf missing from the bundle — falling back to SF")
