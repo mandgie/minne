@@ -277,6 +277,20 @@ final class MinneApp: NSObject, NSApplicationDelegate {
                 overlay.previewDraftEditing()
             }
         }
+        // `-minneKeyPreviewHandBackAfter 1.5` hands a borrowed keyboard back
+        // that many seconds later, exactly as Return or Escape in the field
+        // would. It is the only way to watch the hand-back from outside the
+        // app — a window-list poller proving the panel never leaves the screen
+        // (it did, for a frame, until 2026-09-11).
+        let handBackAfter = UserDefaults.standard.double(forKey: "minneKeyPreviewHandBackAfter")
+        if handBackAfter > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + handBackAfter) {
+                MainActor.assumeIsolated {
+                    overlay.endEditingDraft()
+                    overlay.endGuiding()
+                }
+            }
+        }
     }
 
     /// One preview: what the panel shows, which steers are in force, whether

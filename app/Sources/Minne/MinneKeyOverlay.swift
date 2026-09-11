@@ -1803,19 +1803,27 @@ final class MinneKeyOverlayController: MinneKeyPresenting {
         guard panel.wantsKey else { return false }
         borrower = nil
         panel.wantsKey = false
-        // AppKit has no "give key back" call. Ordering the panel out and
-        // straight back in is the one that works: the window server hands key
-        // status to the frontmost app's own window.
-        panel.orderOut(nil)
-        panel.orderFrontRegardless()
-        // Borrowing activated Minne (see `borrowKeyboard`); activation goes
-        // back to the app the overlay points at, so its field is focused again
-        // before anything — an insertion, the user's next keystroke — needs
-        // it. The app may have quit meanwhile; `deactivate` is the fallback
+        // AppKit has no "give key back" call, and the obvious substitute —
+        // ordering the panel out and straight back in — is exactly what a
+        // blink looks like: the overlay flashed on every Return and Escape in
+        // a field (user report, 2026-09-11). It is not needed. Borrowing
+        // activated Minne (see `borrowKeyboard`), so handing activation back
+        // to the app the overlay points at IS the hand-back: the window server
+        // moves key status to that app's own window, and this panel, which can
+        // no longer become key, is not asked again. The panel itself never
+        // moves. The app may have quit meanwhile; `deactivate` is the fallback
         // that hands activation to whoever is next in line.
         if let previous = reactivateOnEnd {
             reactivateOnEnd = nil
             if previous.isTerminated { NSApp.deactivate() } else { previous.activate() }
+        } else if NSApp.isActive {
+            // Minne was already active when it borrowed (one of its own
+            // windows was up), so there is no app to hand activation to and
+            // the window server has to be made to re-assign key on its own.
+            // Ordering out and back in is the one call that does it; the flash
+            // is confined to this case, which never has a caret in another app.
+            panel.orderOut(nil)
+            panel.orderFrontRegardless()
         }
         BrainClient.log("minne key: keyboard handed back to the app")
         return true
